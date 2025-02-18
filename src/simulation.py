@@ -44,18 +44,20 @@ def run_simulation(params, Nt, Nx, dx, dt):
         dC1dx2 = laplacian(C1, D1, dx)
         dC2dx2 = laplacian(C2, D2, dx)
         dC3dx2 = laplacian(C3, D3, dx)
+        dNdx2 = laplacian(N, D_N, dx)
 
         # Reaction terms
-        C1_new = C1 + dt * (dC1dx2 + lambda1 * C1  - mu1 * C1 - gamma1 * C1)
-        C2_new = C2 + dt * (dC2dx2 + gamma1 * C1 - gamma2 * C2 - mu2 * C2)
+        C1_new = C1 + dt * (dC1dx2 + lambda1 * C1 * N /(K_N + N)  - mu1 * C1 - gamma1 * C1)
+        C2_new = C2 + dt * (dC2dx2 + gamma1 * C1 *N /(K_N + N) - gamma2 * C2 - mu2 * C2)
         C3_new = C3 + dt * (dC3dx2 + gamma2 * C2 - mu3 * C3)
-
+        N_new = N + dt * (dNdx2 - alpha1 * C1 - alpha2 * C2 - K_N * N)
 
         # Ensure non-negative values
         C1, C2, C3 = np.maximum(C1_new, 0), np.maximum(C2_new, 0), np.maximum(C3_new, 0)
+        N = np.maximum(N_new, 0)
 
         history["C1"].append(C1.copy())
         history["C2"].append(C2.copy())
         history["C3"].append(C3.copy())
-
+        history["N"].append(N.copy())
     return x, history

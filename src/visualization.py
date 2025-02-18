@@ -17,6 +17,7 @@ def animate_simulation(x, history, Nt):
         line1.set_data(x, history["C1"][frame])
         line2.set_data(x, history["C2"][frame])
         line3.set_data(x, history["C3"][frame])
+        line4.set_data(x, history["N"][frame])
         return line1, line2, line3, line4
 
     ani = animation.FuncAnimation(fig, update, frames=Nt, interval=50)
