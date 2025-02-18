@@ -65,7 +65,7 @@ $$
 Where $M_i$ is the cell mobility, and $E$ is adhesion energy functional given by:
 
 $$
-E = \frac{\gamma}{\epsilon}\int_{\Omega} f(C_T) + \frac{\epsilon^2}{2}\abs{\nabla C_T}^2 dx
+E = \frac{\gamma}{\epsilon}\int_{\Omega} f(C_T) + \frac{\epsilon^2}{2}|{\nabla C_T}|^2 dx
 $$
 
 Where it's variational derivative is given by:
@@ -133,7 +133,7 @@ Where $\eta$ is some scalar value that desribes the effects of these contributio
 Considering the effects of the media charge, this would affect the adhesion energy of the cells. As tumor cells are negatively charged, a positively charged media would reduce the adhesion energy of the cells (cells are attracted to the media), and a negatively charged media would increase the adhesion energy of the cells (cells are repelled by the media). This could be modelled by an extra term in the adhesion energy functional $E$.
 
 $$
-E = \frac{\gamma}{\epsilon}\int_{\Omega} f(C_T) + \frac{\epsilon^2}{2}\abs{\nabla C_T}^2 dx + \int_{\Omega} \Phi(C_T) dx
+E = \frac{\gamma}{\epsilon}\int_{\Omega} f(C_T) + \frac{\epsilon^2}{2}|{\nabla C_T}|^2 dx + \int_{\Omega} \Phi(C_T) dx
 $$
 
 Where $\Phi(C_T)$ is some function of the cell density $C_T$. This could be a linear function, or a more complex function.
