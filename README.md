@@ -97,17 +97,66 @@ $$
 \nabla ^2 p = S_T - \nabla \cdot \left  ( \frac{\delta E}{\delta C_T} \nabla C_T \right )
 $$
 
-Where $S_T$ is the source of the tumor cells given by $ S_T = \lambda_S n C_S + \lambda_P n C_P + \gamma_N C_N$.
+Where $S_T$ is the source of the tumor cells given by $S_T = \lambda_S n C_S + \lambda_P n C_P + \gamma_N C_N$.
+
+Finally we can also model the nutrient field $n$ as a steady state diffusion equation (we can assume the nutrient diffusion is much faster than cell growth, as a result the time derivative is negligible):
+
+$$
+0 = \nabla ( D_n \nabla n ) - n (\omega_S^n C_S + \omega_P^n C_P + \omega_D^n C_D) + p_n (1 - C_T) (\bar n - n)
+$$
+
+Where $\omega_i^n$ is the rate of nutrient consumption by cell type $i$. $p_n$ is the permeability of the nutrient, $\bar n$ is the nutrient concentration in the media, and $D_n$ is the diffusion coefficient of the nutrient.
 
 
-This builds the system of equations for the tumor growth model. Going further, we can model the effect of other concentrations of other nutrient fields, such as oxygen, growth inhibitors, by incorporating them into the probability terms $p_0$ and $p_1$.
+This builds the system of equations for the tumor growth model. Going further, we can model the effect of other concentrations of other nutrient fields, such as oxygen, growth inhibitors, by incorporating them into the probability terms $p_0$ and $p_1$. The paper this is based on models the effects of a growth inhibitor and promoter. These extra "nutrient" fields are modelled by similar mass conservation equations.
 
+For this project, we are investigating the effect of the external media on the organoid growth. We have to adjust the model in some way to account for this. My first thoughts in the way the media could effect the growth of the model is in the following way:
 
+<ul>
+    <li>Media viscosity: This could effect the solid velocity $u_s$ by changing the adhesion energy $E$.</li>
+    <li>Media density: This could effect the solid velocity $u_s$ by changing the adhesion energy $E$.</li>
+    <li>Media intra-molecular forces: This could effect the adhesion energy $E$ directly.</li>
+    <li>Media charge: Sd tumor cells are negatively charged, a positively charged media could reduce the adhesion energy $E$ directly.</li>
+    <li>Cell proliferation rate could reduce/increase depending on mechanical stress (as the cells will have to work harder to grow against the media)</li>
+    <li>Media density could effect nutrient diffusion rate (how does diffusion into the organoid occur? does it reach the centre? etc?)</li>
+</ul>
+
+Some propositions to consider from these effects. 
+First to consider the effects that could occur from the media viscosity, density, and intra-molecular forces, is that we could adjust Darcy's Law to account for these effects. In effect this would reduce/increase the solid velocity of the cells, and thus the growth rate of the organoid.
+
+$$
+u_s = - \frac{1}{\eta} \left ( \nabla p + \frac{\delta E}{\delta C_T} \nabla C_T \right )
+$$
+
+Where $\eta$ is some scalar value that desribes the effects of these contributions to the solid velocity.
+
+Considering the effects of the media charge, this would affect the adhesion energy of the cells. As tumor cells are negatively charged, a positively charged media would reduce the adhesion energy of the cells (cells are attracted to the media), and a negatively charged media would increase the adhesion energy of the cells (cells are repelled by the media). This could be modelled by an extra term in the adhesion energy functional $E$.
+
+$$
+E = \frac{\gamma}{\epsilon}\int_{\Omega} f(C_T) + \frac{\epsilon^2}{2}\abs{\nabla C_T}^2 dx + \int_{\Omega} \Phi(C_T) dx
+$$
+
+Where $\Phi(C_T)$ is some function of the cell density $C_T$. This could be a linear function, or a more complex function.
+
+This would propagate into the variational derivative of the adhesion energy functional $E$ as follows:
+
+$$
+\frac{\delta E}{\delta C_T} = \frac{\gamma}{\epsilon} \left (f'(C_T) + \epsilon^2 \nabla^2 C_T \right ) + \frac{\delta \Phi}{\delta C_T}
+$$
+
+And thus into the mass flux $J_i$ as follows:
+
+$$
+J_i = -M_i \nabla C_i\left ( \frac{\delta E}{\delta C_i} \right )
+$$
+
+This would clearly then effect how the cells move and grow.
 
 <h3>Current Questions</h3>
 
 - What will the impact of the media be on growth? Media viscosity? Density? Intra-molecular forces?
 - How can we model the physical effect of the media on the cell growth rates? Changes in internal pressure? Reduction/increase in the adhesion energy of the cells (probably not I assume this is more of a mechanical effect of the cells intracellular forces. Unless the media is positively charged and as tumor cells are negativey charged, this could be a factor)?
+- I think from looking at these equations, I can infer that the tumor cell population is proportional the the progenitor cell population, which is in turn proportional to the stem cell population. In a spherical organoid, this implies that the tumor cells should grow in the centre (assuming a sufficiently diffused nutrient field), as this is where the cells are most dense. This makes statistical sense as the greater the cell population, the greater the chance for cell proliferation.
 
 <h3>References</h3>
 
