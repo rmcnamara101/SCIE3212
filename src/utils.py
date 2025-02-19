@@ -1,30 +1,40 @@
 
 experimental_params = {
     # self renewal rates
-    "lambda_1": 0.01,
-    "lambda_2": 1,
+    "lambda_S": 1.2,
+    "lambda_P": 1,
 
     # death rates
-    "mu_1": 0.001,
-    "mu_2": 0.001,
-    "mu_3": 0.001,
+    "mu_S": 0.001,
+    "mu_P": 0.001,
+    "mu_D": 0.001,
 
     # differentiation rates
-    "gamma_1": 0.01,
-    "gamma_2": 0.1,
-
-    # nutrient dependent rates
-    "alpha_1": 0.01,
-    "alpha_2": 0.01,
-    "alpha_3": 0.01,
-
-    # nutrient dependent rates
-    "K_N": 0.01,
-
-    # diffusion rates
-    "D_1": 0.01,
-    "D_2": 0.01,
-    "D_3": 0.01,
-    "D_N": 0.01,
+    "gamma_S": 0.01,
+    "gamma_P": 0.1,
     
+
+    # nutrient dependent rates
+    "alpha_D": 0.01,
+
+    # n
+    "gamma_N": 0.01,
+
+
+    # probability terms
+    "p_0": 0.01,
+    "p_1": 0.01,
+
+    #
+    "n_S": 0.01,
+    "n_P": 0.01,
+    "n_D": 0.01,
+    #
+    "n_max": 0.01,
+    #
+    "gamma": 0.01,
+    "epsilon": 0.01,
+    
+    #
+    "D_n": 0.01,
 }
