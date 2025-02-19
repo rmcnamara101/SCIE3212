@@ -2,8 +2,14 @@
 
 <h2>Tumor Growth Model in Differing Media</h2>
 
-<h3>Overview</h3>
+<h3>Goals</h3>
 
+<ul>
+    <li>To model the growth of a tumor in a 3D domain. Confirm parameters/model with experimental data.</li>
+    <li>To model the effect of the media on the tumor growth.</li>
+</ul>
+
+<h3>Overview</h3>
 
 This project is a model of organoid tumor growth in a 3D domain.
 The model is a system of partial differential equations (PDEs) that describe the growth of the tumor.
@@ -113,10 +119,9 @@ This builds the system of equations for the tumor growth model. Going further, w
 For this project, we are investigating the effect of the external media on the organoid growth. We have to adjust the model in some way to account for this. My first thoughts in the way the media could effect the growth of the model is in the following way:
 
 <ul>
-    <li>Media viscosity: This could effect the solid velocity $u_s$ by changing the adhesion energy $E$.</li>
-    <li>Media density: This could effect the solid velocity $u_s$ by changing the adhesion energy $E$.</li>
+    <li>Media viscosity/density: This could effect the solid velocity, but also the internal pressure $p$ of the organoid.</li>
     <li>Media intra-molecular forces: This could effect the adhesion energy $E$ directly.</li>
-    <li>Media charge: Sd tumor cells are negatively charged, a positively charged media could reduce the adhesion energy $E$ directly.</li>
+    <li>Media charge: As tumor cells are negatively charged, a positively charged media could reduce the adhesion energy $E$ directly.</li>
     <li>Cell proliferation rate could reduce/increase depending on mechanical stress (as the cells will have to work harder to grow against the media)</li>
     <li>Media density could effect nutrient diffusion rate (how does diffusion into the organoid occur? does it reach the centre? etc?)</li>
 </ul>
