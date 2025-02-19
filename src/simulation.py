@@ -21,6 +21,8 @@ import sys
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 import numpy as np
+import matplotlib
+matplotlib.use('TkAgg')
 import matplotlib.pyplot as plt
 from scipy.ndimage import laplace
 from skimage.measure import marching_cubes
@@ -28,11 +30,10 @@ from mpl_toolkits.mplot3d.art3d import Poly3DCollection
 from scipy.ndimage import gaussian_filter
 from tqdm import tqdm  # Ensure this import is present
 
-from src.utils import experimental_params
-from src.visualization import animate_tumor_slices, animate_single_slice
+from src.utils.utils import experimental_params
 
 class TumorGrowthModel:
-    def __init__(self, grid_shape=(1000, 1000, 1000), dx=0.05, dt=0.01, params=None):
+    def __init__(self, grid_shape=(50, 50, 50), dx=0.025, dt=0.01, params=None):
         """
         Initialize the simulation grid and parameters.
         :param grid_shape: Shape of the simulation grid (2D for illustration)
@@ -287,16 +288,13 @@ class TumorGrowthModel:
         src_P = self._compute_src_P()
         src_D = self._compute_src_D()
         src_N = self._compute_src_N()
+      
         
-        # Add diffusion to reaction terms for spatial spreading
-        D = 0.1  # Diffusion coefficient
-        
-        # Update cell densities with reaction-diffusion
-        self.C_S += self.dt * (src_S + D * laplace(self.C_S))
-        self.C_P += self.dt * (src_P + D * laplace(self.C_P))
-        self.C_D += self.dt * (src_D + D * laplace(self.C_D))
-        self.C_N += self.dt * (src_N + D * laplace(self.C_N))
-        
+        self.C_S += self.dt * src_S
+        self.C_P += self.dt * src_P
+        self.C_D += self.dt * src_D
+        self.C_N += self.dt * src_N
+
         # 2. Advection terms
         u_x, u_y, u_z = self._compute_solid_velocity()
         
@@ -308,6 +306,13 @@ class TumorGrowthModel:
                 np.gradient(field * u_y, self.dx, axis=1) +
                 np.gradient(field * u_z, self.dx, axis=2)
             )
+
+            J = self._compute_mass_flux(field)  # Compute the vector field J
+            # Calculate the divergence of J manually
+            divergence = np.gradient(J[0], self.dx, axis=0) + np.gradient(J[1], self.dx, axis=1) + np.gradient(J[2], self.dx, axis=2)
+            mass_flux = -divergence  # Mass flux is the negative divergence
+            field -= self.dt * mass_flux  # Update the field with mass flux
+        
         
         # 3. Nutrient diffusion with consumption
         D_n = self.params['D_n']
@@ -358,11 +363,11 @@ class TumorGrowthModel:
             self.history['differentiated cell concentration'].append(self.C_D)
             self.history['necrotic cell concentration'].append(self.C_N)
             self.history['total cell concentration'].append(self.C_total)
-            self.history['stem cell volume'].append(np.sum(self.C_S > 0) * cell_volume)
-            self.history['progenitor cell volume'].append(np.sum(self.C_P > 0) * cell_volume)
-            self.history['differentiated cell volume'].append(np.sum(self.C_D > 0) * cell_volume)
-            self.history['necrotic cell volume'].append(np.sum(self.C_N > 0) * cell_volume)
-            self.history['total cell volume'].append(np.sum(self.C_total > 0) * cell_volume)
+            self.history['stem cell volume'].append(np.sum(self.C_S) * cell_volume)
+            self.history['progenitor cell volume'].append(np.sum(self.C_P) * cell_volume)
+            self.history['differentiated cell volume'].append(np.sum(self.C_D) * cell_volume)
+            self.history['necrotic cell volume'].append(np.sum(self.C_N) * cell_volume)
+            self.history['total cell volume'].append(np.sum(self.C_total) * cell_volume)
             
             # Calculate and store the tumor radius
             center = np.array([s // 2 for s in self.grid_shape])
@@ -528,7 +533,7 @@ class TumorGrowthModel:
         ax.set_zlabel(f'Z')
         ax.set_title(f'Tumor Isosurfaces at Step {step} (Threshold = {threshold})')
         
-        plt.show()
+        #plt.show()
 
     def _draw_bounding_box(self, ax, xlim, ylim, zlim):
         """
@@ -580,6 +585,8 @@ class TumorGrowthModel:
         plt.legend()
         plt.grid(True)
         plt.show()
+
+        # plot tumor conc
 
     def animate_tumor_slices(self, steps=100, slice_pos=None, interval=100):
         """
@@ -757,18 +764,146 @@ class TumorGrowthModel:
         
         return anim
 
+    def _animate_tumor_growth_isosurfaces(self, steps=100, threshold=0.01, interval=100):
+        """
+        Create an animation of isosurfaces showing tumor growth over time.
+        
+        Parameters:
+        -----------
+        steps : int
+            Number of frames in the animation
+        threshold : float
+            Isosurface threshold for visualization
+        interval : int
+            Delay between frames in milliseconds
+        """
+        import matplotlib.animation as animation
+        
+        # Create figure
+        fig = plt.figure(figsize=(12, 10))
+        ax = fig.add_subplot(111, projection='3d')
+        
+        # Define fields and colors for plotting
+        fields = {
+            'Stem': (self.C_S, 'red'),
+            'Progenitor': (self.C_P, 'blue'),
+            'Differentiated': (self.C_D, 'green'),
+            'Necrotic': (self.C_N, 'black')
+        }
+        
+        # Initialize collections dictionary to store mesh objects
+        mesh_collections = {name: None for name in fields.keys()}
+        
+        # Initialize text annotations
+        text_annotations = {name: None for name in fields.keys()}
+        
+        def update(frame):
+            """Update function for animation""" 
+            # Update simulation
+            self._update()
+            
+            # Clear previous frame
+            ax.cla()
+            
+            # Find the bounds of the tumor
+            total_mask = np.zeros_like(self.C_S, dtype=bool)
+            for name, (field, _) in fields.items():
+                total_mask |= (field > threshold)
+            
+            if not total_mask.any():
+                return
+            
+            # Get the indices where cells exist
+            x_indices, y_indices, z_indices = np.where(total_mask)
+            
+            # Calculate bounds with padding
+            padding = 5
+            x_min, x_max = max(0, np.min(x_indices) - padding), min(self.grid_shape[0], np.max(x_indices) + padding)
+            y_min, y_max = max(0, np.min(y_indices) - padding), min(self.grid_shape[1], np.max(y_indices) + padding)
+            z_min, z_max = max(0, np.min(z_indices) - padding), min(self.grid_shape[2], np.max(z_indices) + padding)
+            
+            # Convert to spatial coordinates
+            x_min, x_max = x_min * self.dx, x_max * self.dx
+            y_min, y_max = y_min * self.dx, y_max * self.dx
+            z_min, z_max = z_min * self.dx, z_max * self.dx
+            
+            # Plot isosurfaces for each cell type
+            for name, (field, color) in fields.items():
+                # Apply Gaussian filter for smoothing
+                smoothed_field = gaussian_filter(field, sigma=1)
+                
+                if np.max(smoothed_field) < threshold:
+                    continue
+                
+                try:
+                    verts, faces, normals, _ = marching_cubes(smoothed_field, level=threshold, 
+                                                            spacing=(self.dx, self.dx, self.dx))
+                    mesh = Poly3DCollection(verts[faces], alpha=0.2)
+                    mesh.set_facecolor(color)
+                    mesh.set_edgecolor(color)
+                    ax.add_collection3d(mesh)
+                    
+                    # Add text annotation at center of isosurface
+                    center = np.mean(verts, axis=0)
+                    ax.text(center[0], center[1], center[2], 
+                        f'{name}\nVol: {np.sum(field):.1f}', 
+                        color=color, fontsize=8)
+                    
+                except Exception as e:
+                    print(f"Could not extract isosurface for {name} at frame {frame}: {e}")
+            
+            # Set axis limits and labels
+            ax.set_xlim([x_min, x_max])
+            ax.set_ylim([y_min, y_max])
+            ax.set_zlim([z_min, z_max])
+            
+            # Draw bounding box
+            self._draw_bounding_box(ax, (x_min, x_max), (y_min, y_max), (z_min, z_max))
+            
+            # Set labels and title
+            ax.set_xlabel('X')
+            ax.set_ylabel('Y')
+            ax.set_zlabel('Z')
+            ax.set_title(f'Tumor Growth')
+            
+            # Set optimal viewing angle
+            ax.view_init(elev=20, azim=frame % 360)  # Rotate view during animation
+            
+            return ax,
+
+        # Create animation
+        anim = animation.FuncAnimation(
+            fig,
+            update,
+            frames=steps,
+            interval=interval,
+            blit=False,
+            repeat=True
+        )
+        
+        # Save animation
+        #anim.save('tumor_growth_3d.gif', writer='pillow', fps=5)
+        
+        plt.show()
+        return anim
+
 if __name__ == "__main__":
-    # Initialize the model
+    # Initialize the model with a specified grid shape
     model = TumorGrowthModel(grid_shape=(100, 100, 100))
 
-    # Add initial tumor seed at center
-    center = tuple(s//2 for s in model.grid_shape)
-    model.C_S[center] = 1.0
+    # Add initial cylindrical tumor seed at the center
+    center = tuple(s // 2 for s in model.grid_shape)
+    radius = 3  # Initial radius of tumor cylinder
+    height = 5  # Use the full height of the grid
 
-    # Create animation with separate plots
-    #anim1 = model.animate_tumor_slices(steps=100)
+    x, y, z = np.ogrid[:model.grid_shape[0], :model.grid_shape[1], :model.grid_shape[2]]
+    dist_from_center = np.sqrt((x - center[0])**2 + (y - center[1])**2)
 
-    # Or create animation with overlaid contours
-    #anim2 = model.animate_single_slice(steps=100)
+    # Set initial stem cell concentration in cylinder
+    model.C_S[(dist_from_center <= radius) & (z >= 0) & (z < height)] = 1.0
 
-    model._run_simulation(steps=200)
+    # Run the simulation
+    #model._run_simulation(steps=200)
+
+    # Create animation of tumor growth using isosurfaces
+    model._animate_tumor_growth_isosurfaces(steps=300)

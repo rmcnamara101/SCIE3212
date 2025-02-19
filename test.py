@@ -1,6 +1,6 @@
 from src.simulation import run_simulation
 from src.visualization import animate_simulation
-from src.utils import experimental_params
+from src.utils.utils import experimental_params
 
 # Run the simulation
 params = experimental_params
