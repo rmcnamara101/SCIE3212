@@ -77,7 +77,7 @@ $$
 Where it's variational derivative is given by:
 
 $$
-\frac{\delta E}{\delta C_i} = \frac{\gamma}{\epsilon} \left (f'(C_i) + \epsilon \nabla^2 C_T \right )
+\frac{\delta E}{\delta C_i} = \frac{\gamma}{\epsilon} \left (f'(C_T) + \epsilon \nabla^2 C_T \right )
 $$
 
 Where $f(C_T)$ is the double well potential:
