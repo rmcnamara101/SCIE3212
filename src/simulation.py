@@ -2,13 +2,21 @@
 #######################################################################################################
 #
 #
+#   3D Tumor Growth Simulation Model outlined in the README.md
 #
+#   This is the simulation class that will be used to directly run simmulations of the tumor growth model.
+#   This is a 3 dimensional simulation, based on 5 scalar fields:
+
+#   - Stem cell density/concentration (C_S)
+#   - Progenitor cell density/concentration (C_P)
+#   - Differentiated cell density/concentration (C_D)
+#   - Necrotic cell density/concentration (C_N)
+#   - Nutrient concentration (n)
 #
-# 3D Tumor Growth Simulation Model outlined in the README.md
+#   The simulation solves the partial differential equations (PDEs) that are defined in the README.md
 #
-#
-# Author: Riley McNamara
-# Date: 2025-02-18
+#   Author: Riley McNamara
+#   Date: 2025-02-18
 #
 #
 #
