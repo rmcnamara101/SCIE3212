@@ -26,8 +26,8 @@
 #
 #   The mass flux is defined as follows:
 #
-#   J = -M ∇C_T ( δE )
-#               (δC_T)
+#   J = -M ∇( δE )
+#           (δC_T)
 #
 #
 #   This file should be used as an importable class, that will take a tumor growth 
@@ -60,18 +60,71 @@
 
 import numpy as np
 from scipy.ndimage import laplace
+from scipy.sparse import diags
+from scipy.sparse.linalg import cg
 
 from src.models.cell_production import ProductionModel
 
 class DynamicsModel:
+
     def __init__(self, model):
         self.model = model
         self.production_model = ProductionModel(self.model)
 
+    
+    def compute_cell_dynamics(self, state: dict = None) -> dict:
+        """
+        Compute the derivative dC/dt = -∇·(u C) - ∇·J for each cell type.
+        """
+        if state is None:
+            state = self.model.get_state()
+
+        # Extract cell concentrations
+        C_S = state['C_S']
+        C_P = state['C_P']
+        C_D = state['C_D']
+        C_N = state['C_N']
+
+        # Compute solid velocity u
+        ux, uy, uz = self._compute_solid_velocity(state)
+
+        # Compute mass flux J
+        Jx, Jy, Jz = self._compute_mass_current(state)
+
+        # Compute divergence of J (same for all cell types)
+        div_J = (np.gradient(Jx, self.model.dx, axis=0) +
+                np.gradient(Jy, self.model.dx, axis=1) +
+                np.gradient(Jz, self.model.dx, axis=2))
+
+        # Compute derivatives for each cell type
+        dC = {}
+        for cell_type in ['C_S', 'C_P', 'C_D', 'C_N']:
+            C = state[cell_type]
+            # Compute flux u C
+            uC_x = ux * C
+            uC_y = uy * C
+            uC_z = uz * C
+            # Compute divergence of u C
+            div_uC = (np.gradient(uC_x, self.model.dx, axis=0) +
+                    np.gradient(uC_y, self.model.dx, axis=1) +
+                    np.gradient(uC_z, self.model.dx, axis=2))
+            # dC/dt = -∇·(u C) - ∇·J
+            dC[cell_type] = -div_uC - div_J
+
+        return dC
+    
+
     def apply_cell_dynamics(self):
-        """Update the cell dynamics for the cell populations."""
-        self.update_solid_velocity_flux()
-        self.update_mass_flux()
+        """Update concentration fields based on dynamics."""
+        state = self.model.get_state()
+        dC = self.compute_cell_dynamics(state)
+        dt = self.model.dt
+        self.model.C_S += dt * dC['C_S']
+        self.model.C_P += dt * dC['C_P']
+        self.model.C_D += dt * dC['C_D']
+        self.model.C_N += dt * dC['C_N']
+        self.model._update_total_cell_density()
+
 
     def update_mass_flux(self):
         """Update the mass flux for the cell populations."""
@@ -83,7 +136,7 @@ class DynamicsModel:
         self.model.C_P -= self.model.dt * mass_flux
         self.model.C_D -= self.model.dt * mass_flux
         self.model.C_N -= self.model.dt * mass_flux
-        self.model.update_total_cell_density()
+
 
     def update_solid_velocity_flux(self):
         """
@@ -100,123 +153,93 @@ class DynamicsModel:
                 np.gradient(field * uz, self.model.dx, axis=2)
             )
 
-        self.model.update_total_cell_density()
 
-    def _compute_solid_velocity(self):
-        """
-        Compute the solid velocity field u_s based on:
-            u_s = - (∇p + (δE/δC_T) ∇C_T)
-        Returns tuple of velocity components (u_x, u_y, u_z)
-        """
-        params = self.model.params
-        C_T = self.model.C_T
-        energy_deriv = self._compute_adhesion_energy_derivative()
-        grad_C = np.gradient(C_T)
-        pressure_field = self._compute_internal_pressure()
-        grad_pressure = np.gradient(pressure_field)
-
-        # calculate solid velocity components
+    def _compute_solid_velocity(self, state):
+        C_T = state['C_S'] + state['C_P'] + state['C_D'] + state['C_N']
+        energy_deriv = self._compute_adhesion_energy_derivative(C_T)
+        grad_C = np.gradient(C_T, self.model.dx)
+        pressure_field = self._compute_internal_pressure(state)
+        grad_pressure = np.gradient(pressure_field, self.model.dx)
         ux = -(grad_pressure[0] + energy_deriv * grad_C[0])
         uy = -(grad_pressure[1] + energy_deriv * grad_C[1])
         uz = -(grad_pressure[2] + energy_deriv * grad_C[2])
-
         return ux, uy, uz
 
-    def _compute_internal_pressure(self):
-        """
-        Compute the internal pressure field by solving the Poisson equation:
-            ∇²p = S_T - ∇·((δE/δC_T) ∇C_T)
-        with S_T = λ_S n C_S + λ_P n C_P + γ_N C_N
-        
-        Returns:
-            numpy.ndarray: The pressure field solution
-        """
-        self.model.update_total_cell_density()
-        
-        # Calculate source term
-        S_T = self.production_model._compute_src_T()
-        
-        # Calculate energy derivative
-        energy_deriv = self._compute_adhesion_energy_derivative()
-        
-        # Get gradients of total concentration
-        grad_C_total = np.gradient(self.model.C_T)
-        
-        # Calculate divergence term
+
+    def _compute_internal_pressure(self, state):
+        C_T = state['C_S'] + state['C_P'] + state['C_D'] + state['C_N']
+        d_prod = self.model.cell_production.compute_cell_sources(state)
+        S_T = d_prod['C_S'] + d_prod['C_P'] + d_prod['C_D'] + d_prod.get('C_N', 0 * C_T)
+        S_T = np.clip(S_T, -1000, 1000)  # Cap source term
+        energy_deriv = self._compute_adhesion_energy_derivative(C_T)
+        grad_C_total = np.gradient(C_T, self.model.dx)
         divergence = 0
-        for i in range(3):  # For each dimension
-            # Calculate gradient of energy derivative
+        laplace_C = laplace(C_T, mode='constant')
+        for i in range(3):
             grad_energy = np.gradient(energy_deriv, self.model.dx, axis=i)
-            # Multiply with gradient of total density and add to divergence
             divergence += grad_energy * grad_C_total[i]
-        
-        # Right-hand side of Poisson equation
+        divergence += energy_deriv * laplace_C
         rhs = S_T - divergence
-        
-        # Solve Poisson equation using iterative method
-        # Initialize pressure field
-        p = np.zeros_like(rhs)
-        
-        # Parameters for iterative solver
-        max_iter = 1000
-        tolerance = 1e-6
-        dx2 = self.model.dx * self.model.dx
-        
-        # Jacobi iteration to solve ∇²p = rhs
-        for iter in range(max_iter):
-            p_old = p.copy()
-            
-            # Update pressure using discrete Laplacian
-            p[1:-1, 1:-1, 1:-1] = (
-                (p_old[2:, 1:-1, 1:-1] + p_old[:-2, 1:-1, 1:-1] +
-                p_old[1:-1, 2:, 1:-1] + p_old[1:-1, :-2, 1:-1] +
-                p_old[1:-1, 1:-1, 2:] + p_old[1:-1, 1:-1, :-2] -
-                6 * p_old[1:-1, 1:-1, 1:-1]) / dx2 - rhs[1:-1, 1:-1, 1:-1]
-            ) * (dx2 / 6)
-            
-            # Apply boundary conditions (here using Neumann BC)
-            p[0, :, :] = p[1, :, :]
-            p[-1, :, :] = p[-2, :, :]
-            p[:, 0, :] = p[:, 1, :]
-            p[:, -1, :] = p[:, -2, :]
-            p[:, :, 0] = p[:, :, 1]
-            p[:, :, -1] = p[:, :, -2]
-            
-            # Check convergence
-            error = np.max(np.abs(p - p_old))
-            if error < tolerance:
-                break
-        
+        rhs = np.clip(rhs, -1e5, 1e5)
+        print(f"Max RHS: {np.max(np.abs(rhs))}")
+
+        # Construct Laplacian operator
+        N = np.prod(self.model.grid_shape)
+        dx2 = self.model.dx ** 2
+        if dx2 == 0:
+            raise ValueError("dx is zero, cannot construct Laplacian")
+        coeff = 1 / dx2  # Scale factor
+        main_diag = -6 * coeff * np.ones(N)
+        off_diag = coeff * np.ones(N-1)
+        offsets = [
+            -self.model.grid_shape[1] * self.model.grid_shape[2],  # -z
+            -self.model.grid_shape[2],                             # -y
+            -1,                                                   # -x
+            0,                                                    # center
+            1,                                                    # +x
+            self.model.grid_shape[2],                             # +y
+            self.model.grid_shape[1] * self.model.grid_shape[2]   # +z
+        ]
+        A = diags([off_diag, off_diag, off_diag, main_diag, off_diag, off_diag, off_diag],
+                offsets, shape=(N, N))
+
+        # Solve using conjugate gradient
+        rhs_flat = rhs.ravel()
+        p_flat, info = cg(A, rhs_flat, tol=1e-3, maxiter=500)
+        if info > 0:
+            print(f"CG solver did not converge after {info} iterations")
+        elif info < 0:
+            print(f"CG solver failed with illegal input or breakdown: info {info}")
+        p = p_flat.reshape(self.model.grid_shape)
+        print(f"Max Pressure: {np.max(np.abs(p))}")
         return p
 
-    def _compute_adhesion_energy_derivative(self):
-        """
-        Compute the adhesion energy derivative for the cell populations.
-        """
-        
+
+    def _compute_adhesion_energy_derivative(self, C):
         params = self.model.params
         gamma = params['gamma']
         epsilon = params['epsilon']
-        self.model.update_total_cell_density()
-        C = self.model.C_T
-
-        # f'(C_T) for f(C_T)=1/4 * C_T^2 (1-C_T)^2 is 0.5 * C_total * (1 - C_total) * (2 * C_total - 1)
-        energy_deriv = (gamma/epsilon) * (0.5 * C * (1 - C) * (2 * C - 1) - epsilon**2 * laplace(C))
+        C = np.clip(C, 0, 1)  # Ensure physical bounds
+        f_prime = 0.5 * C * (1 - C) * (2 * C - 1)
+        laplace_C = laplace(C)
+        energy_deriv = (gamma / epsilon) * f_prime - gamma * epsilon * laplace_C
         return energy_deriv
     
-    def _compute_mass_current(self): 
-        """Compute the mass flux for the cell populations."""
-        params = self.model.params
-        C_T = self.model.C_T
-        M = params['M']
-
-        # compute the mass flux term
-        energy_deriv = self._compute_adhesion_energy_derivative()
-        grad_C = np.gradient(C_T)
-
-        Jx = -M * grad_C[0] * energy_deriv
-        Jy = -M * grad_C[1] * energy_deriv
-        Jz = -M * grad_C[2] * energy_deriv
-
-        return Jx, Jy, Jz
     
+    def _compute_mass_current(self, state=None):
+        """
+        Compute the mass flux J = -M ∇(δE/δC_T) based on total cell density.
+        Returns tuple (Jx, Jy, Jz).
+        """
+        if state is None:
+            C_T = self.model.C_T
+        else:
+            C_T = state['C_S'] + state['C_P'] + state['C_D'] + state['C_N']
+        
+        M = self.model.params["M"]
+        energy_deriv = self._compute_adhesion_energy_derivative(C_T)
+        grad_energy = np.gradient(energy_deriv, self.model.dx)
+        Jx = -M * grad_energy[0]
+        Jy = -M * grad_energy[1]
+        Jz = -M * grad_energy[2]
+        return Jx, Jy, Jz
