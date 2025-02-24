@@ -33,7 +33,7 @@ from src.visualization.animate_tumor import TumorAnimator
 
 if __name__ == "__main__":
 
-    model = TumorGrowthModel(dx = 0.0, dt = 0.001)
+    model = TumorGrowthModel(dx = 0.1, dt = 0.001)
     model.run_simulation(steps=100)
     history = model.get_history()
 
@@ -46,10 +46,10 @@ if __name__ == "__main__":
     #plotter.plot_all_isosurfaces()
 
     # uncomment to plot the volume evolution
-    #plotter.plot_volume_evolution()
+    plotter.plot_volume_evolution()
 
     # uncomment to plot the radius evolution
-    plotter.plot_radius_evolution()
+    #plotter.plot_radius_evolution()
 
 
 

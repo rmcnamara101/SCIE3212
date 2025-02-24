@@ -70,46 +70,35 @@ class ProductionModel:
         self.drug_model = drug_model
 
 
-    def compute_cell_sources(self, state: dict = None) -> dict:
-        """
-        Compute the source term derivatives for each cell population.
-        If a state dict is provided, use it instead of self.model fields.
-        """
-        if state is not None:
-            n = state['nutrient']
-            C_S = state['C_S']
-            C_P = state['C_P']
-            C_D = state['C_D']
-            C_N = state['C_N']
-        else:
-            n = self.model.nutrient
-            C_S = self.model.C_S
-            C_P = self.model.C_P
-            C_D = self.model.C_D
-            C_N = self.model.C_N
+    def compute_cell_sources(self, state):
+        C_S = state['C_S']
+        C_P = state['C_P']
+        C_D = state['C_D']
+        C_N = state['C_N']
+        n = state['nutrient']
+        params = self.model.params
+        lambda_S = params['lambda_S']
+        lambda_P = params['lambda_P']
+        mu_S = params['mu_S']
+        mu_P = params['mu_P']
+        mu_D = params['mu_D']
+        alpha_D = params['alpha_D']
+        p_0 = params['p_0']
+        p_1 = params['p_1']
 
-        lambda_S = self.model.params['lambda_S']
-        p_0 = self.model.params['p_0']
-        mu_S = self.model.params['mu_S']
         src_S = lambda_S * n * C_S * (2 * p_0 - 1) - mu_S * np.heaviside(self.model.n_S - n, 0) * C_S
-
-        lambda_P = self.model.params['lambda_P']
-        p_1 = self.model.params['p_1']
-        mu_P = self.model.params['mu_P']
         src_P = lambda_S * n * 2 * (1 - p_0) * C_S + lambda_P * n * C_P * (2 * p_1 - 1) - mu_P * np.heaviside(self.model.n_P - n, 0) * C_P
-
-        mu_D = self.model.params['mu_D']
-        alpha_D = self.model.params['alpha_D']
         src_D = lambda_P * n * 2 * (1 - p_1) * C_P - mu_D * np.heaviside(self.model.n_D - n, 0) * C_D - alpha_D * C_D
-
-        gamma_N = self.model.params['gamma_N']
         src_N = (mu_S * np.heaviside(self.model.n_S - n, 0) * C_S +
-                 mu_P * np.heaviside(self.model.n_P - n, 0) * C_P +
-                 mu_D * np.heaviside(self.model.n_D - n, 0) * C_D +
-                 alpha_D * C_D - gamma_N * C_N)
-        src_N = 0
+                mu_P * np.heaviside(self.model.n_P - n, 0) * C_P +
+                mu_D * np.heaviside(self.model.n_D - n, 0) * C_D)
 
-        # These are the time derivatives (dC/dt) for each field.
+        # Clip sources to prevent extreme values
+        src_S = np.clip(src_S, -100, 100)
+        src_P = np.clip(src_P, -100, 100)
+        src_D = np.clip(src_D, -100, 100)
+        src_N = np.clip(src_N, -100, 100)
+
         return {'C_S': src_S, 'C_P': src_P, 'C_D': src_D, 'C_N': src_N}
 
     def apply_cell_sources(self):

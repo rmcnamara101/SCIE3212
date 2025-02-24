@@ -70,7 +70,7 @@ from src.models.diffusion_dynamics import DiffusionDynamics
 
 class TumorGrowthModel:
 
-    def __init__(self, grid_shape: Tuple[int, int, int] = (50, 50, 50), dx: float = 0.025, dt: float = 0.1, params: dict = None, initial_conditions: Any = None) -> None:
+    def __init__(self, grid_shape: Tuple[int, int, int] = (50, 50, 50), dx: float = 0.1, dt: float = 0.001, params: dict = None, initial_conditions: Any = None) -> None:
         self.grid_shape = grid_shape
         self.dx = dx
         self.dt = dt
@@ -95,6 +95,7 @@ class TumorGrowthModel:
             'nutrient': self.nutrient.copy()
         }
 
+
     def set_state(self, state: dict) -> None:
         """
         Set the model state from a state dictionary and update the total cell density.
@@ -111,6 +112,7 @@ class TumorGrowthModel:
         self.nutrient = np.clip(self.nutrient, 0, None)  # Nutrient can't be negative
         self._update_total_cell_density()
 
+
     def add_state(self, state: dict, deriv: dict, factor: float) -> dict:
         """
         Return a new state that is state + factor * deriv.
@@ -119,6 +121,7 @@ class TumorGrowthModel:
         for key in state:
             new_state[key] = state[key] + factor * deriv[key]
         return new_state
+
 
     def compute_derivatives(self, state: dict) -> dict:
         """
@@ -141,6 +144,7 @@ class TumorGrowthModel:
             'nutrient': d_diff  # Diffusion module returns the nutrient derivative.
         }
         return deriv
+
 
     def _update(self):
         state = self.get_state()
@@ -165,6 +169,7 @@ class TumorGrowthModel:
             f"Max C_D: {np.max(self.C_D):.3f}, Max C_N: {np.max(self.C_N):.3f}, "
             f"Max nutrient: {np.max(self.nutrient):.3f}, Radius: {self._calculate_radius():.3f}")
         self._update_history()
+
 
     def plot_slice_C(self):
         """
@@ -252,7 +257,8 @@ class TumorGrowthModel:
         
         # Enforce the global volume fraction constraint at t=0
         self.enforce_volume_fractions()
-    
+
+
     def enforce_volume_fractions(self) -> None:
         """
         Enforce the global volume fraction constraint.
@@ -282,6 +288,7 @@ class TumorGrowthModel:
 
         # Define the host region fraction: what remains of the solid region.
         self.phi_H = phi_S - phi_T
+
 
     def _calculate_radius(self) -> float:
         """

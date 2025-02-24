@@ -60,7 +60,7 @@
 
 import numpy as np
 from scipy.ndimage import laplace
-from scipy.sparse import diags
+from scipy.sparse import diags, eye
 from scipy.sparse.linalg import cg
 
 from src.models.cell_production import ProductionModel
@@ -156,73 +156,154 @@ class DynamicsModel:
 
     def _compute_solid_velocity(self, state):
         C_T = state['C_S'] + state['C_P'] + state['C_D'] + state['C_N']
+        
+        # Calculate energy derivative with robust methods
         energy_deriv = self._compute_adhesion_energy_derivative(C_T)
+        
+        # More stable gradient calculation
         grad_C = np.gradient(C_T, self.model.dx)
+        
+        # Apply bounds to gradients
+        grad_C = list(np.gradient(C_T, self.model.dx))
+        for i in range(3):
+            grad_C[i] = np.clip(grad_C[i], -100, 100)
+
+        
+        # Get pressure with numerical stability improvements
         pressure_field = self._compute_internal_pressure(state)
-        grad_pressure = np.gradient(pressure_field, self.model.dx)
+        
+        # Calculate pressure gradient with safety checks
+        grad_pressure = list(np.gradient(pressure_field, self.model.dx))
+        
+        # Apply bounds to pressure gradients
+        for i in range(3):
+            grad_pressure[i] = np.clip(grad_pressure[i], -1e4, 1e4)
+        
+        # Calculate velocity components with bounded operations
         ux = -(grad_pressure[0] + energy_deriv * grad_C[0])
         uy = -(grad_pressure[1] + energy_deriv * grad_C[1])
         uz = -(grad_pressure[2] + energy_deriv * grad_C[2])
+        
+        # Apply final velocity clipping
+        max_velocity = 10.0  # Choose an appropriate maximum based on your model
+        ux = np.clip(ux, -max_velocity, max_velocity)
+        uy = np.clip(uy, -max_velocity, max_velocity)
+        uz = np.clip(uz, -max_velocity, max_velocity)
+        
         return ux, uy, uz
 
 
     def _compute_internal_pressure(self, state):
+        # Validate dx
+        if self.model.dx <= 0:
+            raise ValueError(f"Grid spacing dx must be positive, got {self.model.dx}")
+        self.dx = max(self.model.dx, 1e-6)
+
+        # Get total cell density and source term
         C_T = state['C_S'] + state['C_P'] + state['C_D'] + state['C_N']
-        d_prod = self.model.cell_production.compute_cell_sources(state)
+        if np.any(np.isnan(C_T)) or np.any(np.isinf(C_T)):
+            print(f"Warning: NaN or inf in C_T: {C_T.max()}")
+
+        d_prod = self.production_model.compute_cell_sources(state)
         S_T = d_prod['C_S'] + d_prod['C_P'] + d_prod['C_D'] + d_prod.get('C_N', 0 * C_T)
-        S_T = np.clip(S_T, -1000, 1000)  # Cap source term
+        S_T = np.clip(S_T, -100, 100)
+
+        # Calculate energy derivative
         energy_deriv = self._compute_adhesion_energy_derivative(C_T)
-        grad_C_total = np.gradient(C_T, self.model.dx)
+        energy_deriv = np.clip(energy_deriv, -50, 50)
+
+        # Compute divergence term
+        grad_C_total = np.gradient(C_T, self.dx)
         divergence = 0
-        laplace_C = laplace(C_T, mode='constant')
+        laplace_C = np.zeros_like(C_T)
         for i in range(3):
-            grad_energy = np.gradient(energy_deriv, self.model.dx, axis=i)
+            grad_i = np.gradient(C_T, self.dx, axis=i)
+            second_deriv = np.gradient(grad_i, self.dx, axis=i)
+            laplace_C += np.nan_to_num(second_deriv, nan=0.0)
+        
+        for i in range(3):
+            grad_energy = np.gradient(energy_deriv, self.dx, axis=i)
+            grad_energy = np.clip(grad_energy, -100, 100)
             divergence += grad_energy * grad_C_total[i]
         divergence += energy_deriv * laplace_C
+        divergence = np.clip(divergence, -1e3, 1e3)
+
+        # Right-hand side
         rhs = S_T - divergence
-        rhs = np.clip(rhs, -1e5, 1e5)
-        print(f"Max RHS: {np.max(np.abs(rhs))}")
-
-        # Construct Laplacian operator
-        N = np.prod(self.model.grid_shape)
-        dx2 = self.model.dx ** 2
-        if dx2 == 0:
-            raise ValueError("dx is zero, cannot construct Laplacian")
-        coeff = 1 / dx2  # Scale factor
-        main_diag = -6 * coeff * np.ones(N)
-        off_diag = coeff * np.ones(N-1)
-        offsets = [
-            -self.model.grid_shape[1] * self.model.grid_shape[2],  # -z
-            -self.model.grid_shape[2],                             # -y
-            -1,                                                   # -x
-            0,                                                    # center
-            1,                                                    # +x
-            self.model.grid_shape[2],                             # +y
-            self.model.grid_shape[1] * self.model.grid_shape[2]   # +z
-        ]
-        A = diags([off_diag, off_diag, off_diag, main_diag, off_diag, off_diag, off_diag],
-                offsets, shape=(N, N))
-
-        # Solve using conjugate gradient
+        rhs = np.clip(rhs, -1e4, 1e4)
         rhs_flat = rhs.ravel()
-        p_flat, info = cg(A, rhs_flat, tol=1e-3, maxiter=500)
+        if np.any(np.isnan(rhs_flat)):
+            print("Warning: NaN in rhs_flat, replacing with 0")
+            rhs_flat = np.nan_to_num(rhs_flat, nan=0.0)
+
+        # Laplacian operator construction
+        N = np.prod(self.model.grid_shape)
+        dx2 = self.dx ** 2
+
+        nx, ny, nz = self.model.grid_shape
+        offset_x = 1
+        offset_y = nx
+        offset_z = nx * ny
+        offsets = [-offset_z, -offset_y, -offset_x, 0, offset_x, offset_y, offset_z]
+
+        coeff = 1.0 / dx2
+        main_diag = -6.0 * coeff * np.ones(N)
+        off_diag = 1.0 * coeff * np.ones(N)
+
+        reg_factor = 1e-4  # Increased regularization
+        A = diags([off_diag, off_diag, off_diag, main_diag, off_diag, off_diag, off_diag],
+                offsets, shape=(N, N)) + reg_factor * eye(N)
+
+        # Improved preconditioner
+        diag_values = 1.0 / (main_diag + reg_factor)
+        if np.any(diag_values <= 0):
+            diag_values = np.abs(diag_values) + 1e-6
+        M = diags([diag_values], [0])
+
+        # Solve with CG
+        p_flat, info = cg(A, rhs_flat, maxiter=5000, M=M)
         if info > 0:
             print(f"CG solver did not converge after {info} iterations")
+            p_flat = np.zeros_like(rhs_flat)
         elif info < 0:
             print(f"CG solver failed with illegal input or breakdown: info {info}")
-        p = p_flat.reshape(self.model.grid_shape)
-        print(f"Max Pressure: {np.max(np.abs(p))}")
-        return p
+            p_flat = np.zeros_like(rhs_flat)
 
+        if np.any(np.isnan(p_flat)) or np.any(np.isinf(p_flat)):
+            print("Warning: NaN or inf in p_flat, using zeros")
+            p_flat = np.zeros_like(rhs_flat)
+
+        p = p_flat.reshape(self.model.grid_shape)
+        p = np.clip(p, -1e4, 1e4)
+        return p
 
     def _compute_adhesion_energy_derivative(self, C):
         params = self.model.params
         gamma = params['gamma']
         epsilon = params['epsilon']
-        C = np.clip(C, 0, 1)  # Ensure physical bounds
+        
+        # Make sure epsilon isn't too small to avoid numerical issues
+        epsilon = max(epsilon, 1e-6)
+        
+        # More robust clipping to physical bounds
+        C = np.clip(C, 1e-10, 1 - 1e-10)  # Avoid exact boundaries
+        
+        # Calculate the derivative with bounded values
         f_prime = 0.5 * C * (1 - C) * (2 * C - 1)
-        laplace_C = laplace(C)
+        
+        # More stable Laplacian calculation
+        laplace_C = np.zeros_like(C)
+        for i in range(3):
+            second_deriv = np.gradient(np.gradient(C, self.model.dx, axis=i), 
+                                    self.model.dx, axis=i)
+            laplace_C += second_deriv
+        
+        # Calculate energy derivative with bounded terms
         energy_deriv = (gamma / epsilon) * f_prime - gamma * epsilon * laplace_C
+        
+        # Apply final clipping to prevent extreme values
+        energy_deriv = np.clip(energy_deriv, -500, 500)
+        
         return energy_deriv
     
     
