@@ -27,10 +27,10 @@ The differentiated cells are the cells that cannot divide or differentiate furth
 The necrotic cells are the cells that are dead and do not divide or differentiate.
 
 The model is a system of diffusion-reaction equations that describe the growth of the tumor.
-We first define each of the concentration/density fields for each of the cell types $C_S(\hat x, t)$, $C_P(\hat x, t)$, $C_D(\hat x, t)$, and $C_N(\hat x, t)$.
+We first define each of the volume fraction fields for each of the cell types $C_S(\hat x, t)$, $C_P(\hat x, t)$, $C_D(\hat x, t)$, and $C_N(\hat x, t)$.
 The $\hat x$ is the spatial position and $t$ is the time.
 
-We can model the time evolution of these concentration fields using an adjusted set of equations proposed in [1].
+We can model the time evolution of these volume fraction fields using an adjusted set of equations proposed in [1].
 The equations are as follows:
 
 $$
