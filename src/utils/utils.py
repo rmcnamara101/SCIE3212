@@ -2,24 +2,24 @@
 experimental_params = {
 
     # self renewal rates
-    "lambda_S": 0.1, # self renewal of stem cells
-    "lambda_P": 0.1, # self renewal of progenitor cells
+    "lambda_S": 1, # self renewal of stem cells
+    "lambda_P": 5, # self renewal of progenitor cells
 
     # death rates
-    "mu_S": 0.01, # death rate of stem cells
-    "mu_P": 0.01, # death rate of progenitor cells
-    "mu_D": 0.01, # death rate of differentiated cells
+    "mu_S": 0.001, # death rate of stem cells
+    "mu_P": 0.001, # death rate of progenitor cells
+    "mu_D": 0.001, # death rate of differentiated cells
 
     # differentiation rates
-    "gamma_S": 0.1,
-    "gamma_P": 0.2,
+    "gamma_S": 10,
+    "gamma_P": 3,
     
 
     # nutrient dependent rates
     "alpha_D": 0.001,
 
     # n
-    "gamma_N": 1,
+    "gamma_N": 0.1,
 
 
     # probability terms

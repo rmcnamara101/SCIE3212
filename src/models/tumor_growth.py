@@ -110,7 +110,6 @@ class TumorGrowthModel:
         self.C_D = np.clip(self.C_D, 0, 1)
         self.C_N = np.clip(self.C_N, 0, 1)
         self.nutrient = np.clip(self.nutrient, 0, None)  # Nutrient can't be negative
-        self._update_total_cell_density()
 
 
     def add_state(self, state: dict, deriv: dict, factor: float) -> dict:
@@ -130,8 +129,10 @@ class TumorGrowthModel:
         """
         # Each module has been refactored to compute (not apply) its rate of change.
         d_prod = self.cell_production.compute_cell_sources(state)
+        #print(f'Production: {np.max(d_prod["C_N"])}')
         #d_prod = {'C_S': 0, 'C_P': 0, 'C_D': 0, 'C_N': 0}
         d_dyn = self.cell_dynamics.compute_cell_dynamics(state)
+        #print(f'Dynamics: {np.max(d_dyn["C_N"])}')
         #d_dyn = {'C_S': 0, 'C_P': 0, 'C_D': 0, 'C_N': 0}
         d_diff = self.diffusion_dynamics.compute_nutrient_diffusion(state)
 
@@ -163,7 +164,6 @@ class TumorGrowthModel:
             new_state[key] = state[key] + dt/6 * (k1[key] + 2*k2[key] + 2*k3[key] + k4[key])
         self.set_state(new_state)
         self.enforce_volume_fractions()
-        self._update_total_cell_density()
         print(f"Step {self.history['step'][-1]}: "
             f"Max C_S: {np.max(self.C_S):.3f}, Max C_P: {np.max(self.C_P):.3f}, "
             f"Max C_D: {np.max(self.C_D):.3f}, Max C_N: {np.max(self.C_N):.3f}, "
@@ -203,11 +203,11 @@ class TumorGrowthModel:
 
     def _initialize_history(self) -> dict:
         return {
-            'step': [0], 'stem cell concentration': [self.C_S], 'progenitor cell concentration': [self.C_P],
-            'differentiated cell concentration': [self.C_D], 'necrotic cell concentration': [self.C_N],
-            'total cell concentration': [self.C_T], 'stem cell volume': [np.sum(self.C_S) * self.dx**3], 'progenitor cell volume': [np.sum(self.C_P) * self.dx**3],
+            'step': [0], 'stem cell volume fraction': [self.C_S], 'progenitor cell volume fraction': [self.C_P],
+            'differentiated cell volume fraction': [self.C_D], 'necrotic cell volume fraction': [self.C_N],
+            'stem cell volume': [np.sum(self.C_S) * self.dx**3], 'progenitor cell volume': [np.sum(self.C_P) * self.dx**3],
             'differentiated cell volume': [np.sum(self.C_D) * self.dx**3], 'necrotic cell volume': [np.sum(self.C_N) * self.dx**3],
-            'total cell volume': [np.sum(self.C_T) * self.dx**3], 'radius': [self._calculate_radius()]
+            'radius': [self._calculate_radius()]
         }
 
 
@@ -217,16 +217,14 @@ class TumorGrowthModel:
         """
 
         self.history['step'].append(self.history['step'][-1] + 1 if self.history['step'] else 1)
-        self.history['stem cell concentration'].append(self.C_S)
-        self.history['progenitor cell concentration'].append(self.C_P)
-        self.history['differentiated cell concentration'].append(self.C_D)
-        self.history['necrotic cell concentration'].append(self.C_N)
-        self.history['total cell concentration'].append(self.C_T)
+        self.history['stem cell volume fraction'].append(self.C_S)
+        self.history['progenitor cell volume fraction'].append(self.C_P)
+        self.history['differentiated cell volume fraction'].append(self.C_D)
+        self.history['necrotic cell volume fraction'].append(self.C_N)
         self.history['stem cell volume'].append(self._compute_total_cell_volume(self.C_S))
         self.history['progenitor cell volume'].append(self._compute_total_cell_volume(self.C_P))
         self.history['differentiated cell volume'].append(self._compute_total_cell_volume(self.C_D))
         self.history['necrotic cell volume'].append(self._compute_total_cell_volume(self.C_N))
-        self.history['total cell volume'].append(self._compute_total_cell_volume(self.C_T))
         self.history['radius'].append(self._calculate_radius())
 
 
@@ -236,7 +234,6 @@ class TumorGrowthModel:
         self.C_P = np.zeros(shape)
         self.C_D = np.zeros(shape)
         self.C_N = np.zeros(shape)
-        self.C_T = np.zeros(shape)
         self.nutrient = 0.001 * np.ones(shape)
         self.n_S = self.params['p_0'] * np.ones(shape)
         self.n_P = self.params['p_1'] * np.ones(shape)
@@ -253,7 +250,6 @@ class TumorGrowthModel:
                                    (y - center[1])**2 +
                                    (z - center[2])**2)
         self.C_S[dist_from_center <= radius] = 0.5
-        self._update_total_cell_density()
         
         # Enforce the global volume fraction constraint at t=0
         self.enforce_volume_fractions()
@@ -307,12 +303,6 @@ class TumorGrowthModel:
         else:
             return 0.0  # Return 0 if there are no tumor cells
     
-
-    def _update_total_cell_density(self) -> None:
-        """
-        This function will update the total cell density
-        """
-        self.C_T = self.C_S + self.C_P + self.C_D + self.C_N
         
 
     def _compute_total_cell_volume(self, field: np.ndarray) -> float:

@@ -85,13 +85,18 @@ class ProductionModel:
         alpha_D = params['alpha_D']
         p_0 = params['p_0']
         p_1 = params['p_1']
+        gamma_N = params['gamma_N']
 
         src_S = lambda_S * n * C_S * (2 * p_0 - 1) - mu_S * np.heaviside(self.model.n_S - n, 0) * C_S
         src_P = lambda_S * n * 2 * (1 - p_0) * C_S + lambda_P * n * C_P * (2 * p_1 - 1) - mu_P * np.heaviside(self.model.n_P - n, 0) * C_P
         src_D = lambda_P * n * 2 * (1 - p_1) * C_P - mu_D * np.heaviside(self.model.n_D - n, 0) * C_D - alpha_D * C_D
         src_N = (mu_S * np.heaviside(self.model.n_S - n, 0) * C_S +
                 mu_P * np.heaviside(self.model.n_P - n, 0) * C_P +
-                mu_D * np.heaviside(self.model.n_D - n, 0) * C_D)
+                mu_D * np.heaviside(self.model.n_D - n, 0) * C_D + 
+                alpha_D * C_D -
+                gamma_N * C_N
+                )
+        #src_N = 0
 
         # Clip sources to prevent extreme values
         src_S = np.clip(src_S, -100, 100)
@@ -119,7 +124,7 @@ class ProductionModel:
         C_D += self.model.dt * (self._compute_src_D())
 
         # Necrotic Cell Source
-        #C_N += self.model.dt * (self._compute_src_N())
+        C_N += self.model.dt * (self._compute_src_N())
 
         self.model.C_S = C_S
         self.model.C_P = C_P

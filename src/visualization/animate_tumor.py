@@ -186,7 +186,7 @@ class TumorAnimator:
         return anim
 
 
-    def animate_tumor_growth_isosurfaces(self, steps=100, threshold=0.001, interval=50):
+    def animate_tumor_growth_isosurfaces(self, steps=100, threshold=0.0001, interval=50):
         """
         Create an animation of isosurfaces showing tumor growth over time.
         
@@ -206,19 +206,21 @@ class TumorAnimator:
         
         # Define fields and colors for plotting
         fields = {
-            'stem cell concentration': (self.model.C_S, 'red'),
-            'progenitor cell concentration': (self.model.C_P, 'blue'),
-            'differentiated cell concentration': (self.model.C_D, 'green'),
-            'necrotic cell concentration': (self.model.C_N, 'black')
+            'stem cell volume fraction': (self.model.C_S, 'red'),
+            'progenitor cell volume fraction': (self.model.C_P, 'blue'),
+            'differentiated cell volume fraction': (self.model.C_D, 'green'),
+            'necrotic cell volume fraction': (self.model.C_N, 'black')
         }
         
         def update(frame):
             """Update function for animation""" 
             # Clear previous frame
             ax.cla()
+
+            C_T = self.model.C_S + self.model.C_P + self.model.C_D + self.model.C_N
     
             # Find the bounds of the tumor
-            total_mask = np.zeros_like(self.model.C_T, dtype=bool)
+            total_mask = np.zeros_like(C_T, dtype=bool)
             for name, (field, _) in fields.items():
                 if name in self.simulation_history:  # Check if key exists
                     total_mask |= (self.simulation_history[name][frame] > threshold)
@@ -290,6 +292,7 @@ class TumorAnimator:
         
         plt.show()
         return anim
+
 
     def _draw_bounding_box(self, ax, xlim, ylim, zlim):
         """

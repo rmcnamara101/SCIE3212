@@ -87,15 +87,6 @@ class DynamicsModel:
 
         # Compute solid velocity u
         ux, uy, uz = self._compute_solid_velocity(state)
-
-        # Compute mass flux J
-        Jx, Jy, Jz = self._compute_mass_current(state)
-
-        # Compute divergence of J (same for all cell types)
-        div_J = (np.gradient(Jx, self.model.dx, axis=0) +
-                np.gradient(Jy, self.model.dx, axis=1) +
-                np.gradient(Jz, self.model.dx, axis=2))
-
         # Compute derivatives for each cell type
         dC = {}
         for cell_type in ['C_S', 'C_P', 'C_D', 'C_N']:
@@ -108,6 +99,13 @@ class DynamicsModel:
             div_uC = (np.gradient(uC_x, self.model.dx, axis=0) +
                     np.gradient(uC_y, self.model.dx, axis=1) +
                     np.gradient(uC_z, self.model.dx, axis=2))
+            # compute mass flux J
+            Jx, Jy, Jz = self._compute_mass_current(state, cell_type)
+            # compute divergence of mass flux
+            div_J = (np.gradient(Jx, self.model.dx, axis=0) +
+                     np.gradient(Jy, self.model.dx, axis=1) +
+                     np.gradient(Jz, self.model.dx, axis=2))
+            
             # dC/dt = -∇·(u C) - ∇·J
             dC[cell_type] = -div_uC - div_J
 
@@ -128,14 +126,20 @@ class DynamicsModel:
 
     def update_mass_flux(self):
         """Update the mass flux for the cell populations."""
-        Jx, Jy, Jz = self._compute_mass_current()
-        
-        mass_flux = (np.gradient(Jx, self.model.dx, axis=0) + np.gradient(Jy, self.model.dx, axis=1) + np.gradient(Jz, self.model.dx, axis=2))
 
-        self.model.C_S -= self.model.dt * mass_flux
-        self.model.C_P -= self.model.dt * mass_flux
-        self.model.C_D -= self.model.dt * mass_flux
-        self.model.C_N -= self.model.dt * mass_flux
+        cells = {'C_S': self.model.C_S,
+                'C_P': self.model.C_P,
+                'C_N': self.model.C_N,
+                'C_T': self.model.C_T
+                }
+        
+        for cell_type, field in cells:    
+
+           Jx, Jy, Jz = self._compute_mass_current(cell_type)
+
+           mass_flux = np.gradient(Jx, self.mode.dx, axis=0) + np.gradient(Jy, self.model.dx, axis=1) + np.gradient(Jz, self.model.dx, axis=2)
+           cells[cell_type] -= self.model.dt * mass_flux
+            
 
 
     def update_solid_velocity_flux(self):
@@ -277,6 +281,7 @@ class DynamicsModel:
         p = np.clip(p, -1e4, 1e4)
         return p
 
+
     def _compute_adhesion_energy_derivative(self, C):
         params = self.model.params
         gamma = params['gamma']
@@ -307,20 +312,47 @@ class DynamicsModel:
         return energy_deriv
     
     
-    def _compute_mass_current(self, state=None):
+    def _compute_mass_current(self, state=None, cell_field=None):
         """
         Compute the mass flux J = -M ∇(δE/δC_T) based on total cell density.
-        Returns tuple (Jx, Jy, Jz).
+        Optionally scale the flux by the local volume fraction of a specific cell type.
+        If cell_field is provided (e.g., 'C_N' for necrotic cells), then the flux is adjusted as:
+        
+            J' = (C_cell / (C_T + ε)) * J
+            
+        where C_cell is the concentration for the given cell type and C_T is the total cell density.
+        
+        Returns:
+            Tuple (Jx, Jy, Jz)
         """
+        # Compute total cell density
         if state is None:
             C_T = self.model.C_T
         else:
             C_T = state['C_S'] + state['C_P'] + state['C_D'] + state['C_N']
         
+        epsilon = 1e-10  # Small number to prevent division by zero
         M = self.model.params["M"]
+        
+        # Compute energy derivative and its gradient
         energy_deriv = self._compute_adhesion_energy_derivative(C_T)
         grad_energy = np.gradient(energy_deriv, self.model.dx)
+        
+        # Raw mass flux computed from the energy gradient
         Jx = -M * grad_energy[0]
         Jy = -M * grad_energy[1]
         Jz = -M * grad_energy[2]
+        
+        # If a specific cell field is given, scale the mass flux by its local volume fraction.
+        if cell_field is not None:
+            if state is None:
+                local_field = getattr(self.model, cell_field)
+            else:
+                local_field = state[cell_field]
+            scaling = np.where(local_field < 1e-5, 0, local_field / (C_T + epsilon))
+
+            Jx = scaling * Jx
+            Jy = scaling * Jy
+            Jz = scaling * Jz
+        
         return Jx, Jy, Jz

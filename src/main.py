@@ -28,29 +28,21 @@ import sys
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from src.models.tumor_growth import TumorGrowthModel
-from src.visualization.plot_tumor import TumorPlotter
+from src.visualization.plot_tumor import VolumeFractionPlotter
 from src.visualization.animate_tumor import TumorAnimator
 
 if __name__ == "__main__":
 
     model = TumorGrowthModel(dx = 0.1, dt = 0.001)
-    model.run_simulation(steps=100)
+    model.run_simulation(steps=200)
     history = model.get_history()
 
-    plotter = TumorPlotter(model)
+    plotter = VolumeFractionPlotter(model)
     animator = TumorAnimator(model)
+
     #uncomment to plot surface
-    #plotter.plot_tumor(step=100)
-
-    # uncomment to plot the isosurfaces
-    #plotter.plot_all_isosurfaces()
-
-    # uncomment to plot the volume evolution
-    plotter.plot_volume_evolution()
-
-    # uncomment to plot the radius evolution
-    #plotter.plot_radius_evolution()
-
+    #plotter.plot_volume_fractions(20)
+    #plotter.plot_volume_fraction_evolution('Necrotic')
 
 
     #animator.animate_tumor_slices()
