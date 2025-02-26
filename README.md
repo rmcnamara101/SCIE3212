@@ -4,7 +4,7 @@
 
 <h3>Goals</h3>
 
-<ul>v
+<ul>
     <li>To model the growth of a tumor in a 3D domain. Confirm parameters/model with experimental data.</li>
     <li>To model the effect of the media on the tumor growth.</li>
 </ul>
@@ -28,7 +28,7 @@ The necrotic cells are the cells that are dead and do not divide or differentiat
 
 The model is a system of diffusion-reaction equations that describe the growth of the tumor.
 We first define each of the volume fraction fields for each of the cell types $\varphi_S(\hat x, t)$, $\varphi_P(\hat x, t)$, $\varphi_D(\hat x, t)$, and $\varphi_N(\hat x, t)$.
-The $\hat x$ is the spatial position and $t$ is the time. We also define the host region volume fraction field $\varphi_H$. Where the condition $\varphi_T + \varphi_H = 1$ is enforced.
+The $\hat x$ is the spatial position and $t$ is the time. We also define the host region volume fraction field $\varphi_H$. Where the condition $\varphi_T + \varphi_H = \varphi_S + \varphi_P + \varphi_D + \varphi_N + \varphi_H = 1$ is enforced.
 
 We can model the time evolution of these volume fraction fields using an adjusted set of equations proposed in [1].
 The equations are as follows:
