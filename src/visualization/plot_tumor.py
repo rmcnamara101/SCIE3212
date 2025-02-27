@@ -41,21 +41,21 @@ class VolumeFractionPlotter:
         ax.legend()
         plt.show()
 
-    def plot_volume_fraction_evolution(self, cell_type: str):
+    def plot_volume_fraction_evolution(self):
         """
         Plot the evolution of the total volume fraction for a specific cell type over time.
         """
-        if cell_type not in ['Stem', 'Progenitor', 'Differentiated', 'Necrotic']:
-            raise ValueError(f"Invalid cell type: {cell_type}")
-        
-        key = f'{cell_type.lower()} cell volume fraction'
-        total_fractions = np.sum(self.simulation_history[key], axis=(1, 2, 3)) * (self.model.dx ** 3)
-        
         plt.figure(figsize=(10, 6))
-        plt.plot(self.simulation_history['step'], total_fractions, label=cell_type)
+
+        for cell_type in ['Stem', 'Progenitor', 'Differentiated', 'Necrotic']:
+
+            key = f'{cell_type.lower()} cell volume fraction'
+            total_fractions = np.sum(self.simulation_history[key], axis=(1, 2, 3)) * (self.model.dx ** 3)
+            plt.plot(self.simulation_history['step'], total_fractions, label=cell_type)
+
         plt.xlabel('Time Step')
-        plt.ylabel(f'Total {cell_type} Volume')
-        plt.title(f'{cell_type} Volume Evolution')
+        plt.ylabel(f'Total Cell Volume')
+        plt.title(f'Cell Volume Evolution')
         plt.legend()
         plt.grid(True)
         plt.show()

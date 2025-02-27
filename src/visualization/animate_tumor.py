@@ -245,7 +245,7 @@ class TumorAnimator:
             # Plot isosurfaces for each cell type
             for name, (field, color) in fields.items():
                 # Apply Gaussian filter for smoothing
-                smoothed_field = gaussian_filter(self.simulation_history[name][frame], sigma=1)
+                smoothed_field = gaussian_filter(self.simulation_history[name][frame], sigma=3)
                 
                 if np.max(smoothed_field) < threshold:
                     continue

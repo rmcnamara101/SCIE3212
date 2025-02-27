@@ -61,6 +61,26 @@
 ####################################################################################
 
 import numpy as np
+import numba as nb
+
+@nb.njit
+def compute_cell_sources(C_S, C_P, C_D, C_N, nutrient, n_S, n_P, n_D, lambda_S, lambda_P, mu_S, mu_P, mu_D, alpha_D, p_0, p_1, gamma_N):
+    H_S = np.where(n_S - nutrient > 0, 1.0, 0.0)
+    H_P = np.where(n_P - nutrient > 0, 1.0, 0.0)
+    H_D = np.where(n_D - nutrient > 0, 1.0, 0.0)
+
+    src_S = lambda_S * nutrient * C_S * (2 * p_0 - 1) - mu_S * H_S * C_S
+    src_P = lambda_S * nutrient * 2 * (1 - p_0) * C_S + lambda_P * nutrient * C_P * (2 * p_1 - 1) - mu_P * H_P * C_P
+    src_D = lambda_P * nutrient * 2 * (1 - p_1) * C_P - mu_D * H_D * C_D - alpha_D * C_D
+    src_N = mu_S * H_S * C_S + mu_P * H_P * C_P + mu_D * H_D * C_D + alpha_D * C_D - gamma_N * C_N
+
+    # Tighter clipping to prevent runaway growth
+    return (
+        np.clip(src_S, -50.0, 50.0),
+        np.clip(src_P, -50.0, 50.0),
+        np.clip(src_D, -50.0, 50.0),
+        np.clip(src_N, -50.0, 50.0)
+    )
 
 
 class ProductionModel:
@@ -70,41 +90,13 @@ class ProductionModel:
         self.drug_model = drug_model
 
 
-    def compute_cell_sources(self, state):
-        C_S = state['C_S']
-        C_P = state['C_P']
-        C_D = state['C_D']
-        C_N = state['C_N']
-        n = state['nutrient']
-        params = self.model.params
-        lambda_S = params['lambda_S']
-        lambda_P = params['lambda_P']
-        mu_S = params['mu_S']
-        mu_P = params['mu_P']
-        mu_D = params['mu_D']
-        alpha_D = params['alpha_D']
-        p_0 = params['p_0']
-        p_1 = params['p_1']
-        gamma_N = params['gamma_N']
-
-        src_S = lambda_S * n * C_S * (2 * p_0 - 1) - mu_S * np.heaviside(self.model.n_S - n, 0) * C_S
-        src_P = lambda_S * n * 2 * (1 - p_0) * C_S + lambda_P * n * C_P * (2 * p_1 - 1) - mu_P * np.heaviside(self.model.n_P - n, 0) * C_P
-        src_D = lambda_P * n * 2 * (1 - p_1) * C_P - mu_D * np.heaviside(self.model.n_D - n, 0) * C_D - alpha_D * C_D
-        src_N = (mu_S * np.heaviside(self.model.n_S - n, 0) * C_S +
-                mu_P * np.heaviside(self.model.n_P - n, 0) * C_P +
-                mu_D * np.heaviside(self.model.n_D - n, 0) * C_D + 
-                alpha_D * C_D -
-                gamma_N * C_N
-                )
-        #src_N = 0
-
-        # Clip sources to prevent extreme values
-        src_S = np.clip(src_S, -100, 100)
-        src_P = np.clip(src_P, -100, 100)
-        src_D = np.clip(src_D, -100, 100)
-        src_N = np.clip(src_N, -100, 100)
-
-        return {'C_S': src_S, 'C_P': src_P, 'C_D': src_D, 'C_N': src_N}
+    def compute_cell_sources(self, C_S, C_P, C_D, C_N, nutrient, n_S, n_P, n_D, params):
+        """Wrapper to call the Numba-optimized function."""
+        return compute_cell_sources(
+            C_S, C_P, C_D, C_N, nutrient, n_S, n_P, n_D,
+            params['lambda_S'], params['lambda_P'], params['mu_S'], params['mu_P'],
+            params['mu_D'], params['alpha_D'], params['p_0'], params['p_1'], params['gamma_N']
+        )
 
     def apply_cell_sources(self):
         """

@@ -6,9 +6,9 @@ experimental_params = {
     "lambda_P": 5, # self renewal of progenitor cells
 
     # death rates
-    "mu_S": 0.001, # death rate of stem cells
-    "mu_P": 0.001, # death rate of progenitor cells
-    "mu_D": 0.001, # death rate of differentiated cells
+    "mu_S": 0.00000001, # death rate of stem cells
+    "mu_P": 0.00000001, # death rate of progenitor cells
+    "mu_D": 0.000001, # death rate of differentiated cells
 
     # differentiation rates
     "gamma_S": 10,
@@ -19,7 +19,7 @@ experimental_params = {
     "alpha_D": 0.001,
 
     # n
-    "gamma_N": 0.1,
+    "gamma_N": 10,
 
 
     # probability terms
@@ -42,3 +42,58 @@ experimental_params = {
 
     "M": 0.001,
 }
+
+# src/utils/utils.py
+import numpy as np
+import numba as nb
+
+@nb.njit
+def gradient(field, dx, axis):
+    result = np.zeros_like(field)
+    nx, ny, nz = field.shape
+    if axis == 0:
+        for i in nb.prange(1, nx - 1):
+            for j in range(ny):
+                for k in range(nz):
+                    result[i, j, k] = (field[i+1, j, k] - field[i-1, j, k]) / (2 * dx)
+    elif axis == 1:
+        for i in nb.prange(nx):
+            for j in range(1, ny - 1):
+                for k in range(nz):
+                    result[i, j, k] = (field[i, j+1, k] - field[i, j-1, k]) / (2 * dx)
+    elif axis == 2:
+        for i in nb.prange(nx):
+            for j in range(ny):
+                for k in range(1, nz - 1):
+                    result[i, j, k] = (field[i, j, k+1] - field[i, j, k-1]) / (2 * dx)
+    return result
+
+@nb.njit
+def laplacian(field, dx):
+    result = np.zeros_like(field)
+    nx, ny, nz = field.shape
+    dx2 = dx * dx
+    for i in nb.prange(1, nx - 1):
+        for j in range(1, ny - 1):
+            for k in range(1, nz - 1):
+                result[i, j, k] = (
+                    field[i+1, j, k] + field[i-1, j, k] +
+                    field[i, j+1, k] + field[i, j-1, k] +
+                    field[i, j, k+1] + field[i, j, k-1] -
+                    6.0 * field[i, j, k]
+                ) / dx2
+    return result
+
+@nb.njit
+def divergence(ux, uy, uz, dx):
+    result = np.zeros_like(ux)
+    nx, ny, nz = ux.shape
+    for i in nb.prange(1, nx - 1):
+        for j in range(1, ny - 1):
+            for k in range(1, nz - 1):
+                result[i, j, k] = (
+                    (ux[i+1, j, k] - ux[i-1, j, k]) / (2 * dx) +
+                    (uy[i, j+1, k] - uy[i, j-1, k]) / (2 * dx) +
+                    (uz[i, j, k+1] - uz[i, j, k-1]) / (2 * dx)
+                )
+    return result
