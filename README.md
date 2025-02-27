@@ -27,26 +27,26 @@ The differentiated cells are the cells that cannot divide or differentiate furth
 The necrotic cells are the cells that are dead and do not divide or differentiate.
 
 The model is a system of diffusion-reaction equations that describe the growth of the tumor.
-We first define each of the volume fraction fields for each of the cell types $C_S(\hat x, t)$, $C_P(\hat x, t)$, $C_D(\hat x, t)$, and $C_N(\hat x, t)$.
-The $\hat x$ is the spatial position and $t$ is the time.
+We first define each of the volume fraction fields for each of the cell types $\varphi_S(\hat x, t)$, $\varphi_P(\hat x, t)$, $\varphi_D(\hat x, t)$, and $\varphi_N(\hat x, t)$.
+The $\hat x$ is the spatial position and $t$ is the time. We also define the host region volume fraction field $\varphi_H$. Where the condition $\varphi_T + \varphi_H = \varphi_S + \varphi_P + \varphi_D + \varphi_N + \varphi_H = 1$ is enforced.
 
 We can model the time evolution of these volume fraction fields using an adjusted set of equations proposed in [1].
 The equations are as follows:
 
 $$
-\frac{\partial C_S}{\partial t} + \nabla (u_s C_S) = - \nabla \cdot J_S + \lambda_S n C_S(2p_0 - 1) - \mu_S \mathcal{H}(\hat n_S - n) C_S
+\frac{\partial \varphi_S}{\partial t} + \nabla (u_s \varphi_S) = - \nabla \cdot J_S + \lambda_S n \varphi_S(2p_0 - 1) - \mu_S \mathcal{H}(\hat n_S - n) \varphi_S
 $$
 
 $$
-\frac{\partial C_P}{\partial t} + \nabla (u_s C_P) = - \nabla \cdot J_P + \lambda_S n 2C_S(1 - p_0) + \lambda_P n C_P(2p_1 - 1) - \mu_P \mathcal{H}(\hat n_P - n) C_P
+\frac{\partial \varphi_P}{\partial t} + \nabla (u_s \varphi_P) = - \nabla \cdot J_P + \lambda_S n 2\varphi_S(1 - p_0) + \lambda_P n \varphi_P(2p_1 - 1) - \mu_P \mathcal{H}(\hat n_P - n) \varphi_P
 $$
 
 $$
-\frac{\partial C_D}{\partial t} + \nabla (u_s C_D) = - \nabla \cdot J_D + \lambda_P n C_P(1 - p_1) - \mu_D \mathcal{H}(\hat n_D - n) C_D - \alpha_D C_D
+\frac{\partial \varphi_D}{\partial t} + \nabla (u_s \varphi_D) = - \nabla \cdot J_D + \lambda_P n \varphi_P(1 - p_1) - \mu_D \mathcal{H}(\hat n_D - n) \varphi_D - \alpha_D C_D
 $$
 
 $$
-\frac{\partial C_N}{\partial t} + \nabla (u_s C_N) = - \nabla \cdot J_N + \mu_S \mathcal{H}(\hat n_S - n) C_S + \mu_P \mathcal{H}(\hat n_P - n) C_P + \mu_D \mathcal{H}(\hat n_D - n) C_D + \alpha_D C_D - \gamma_N C_N
+\frac{\partial \varphi_N}{\partial t} + \nabla (u_s \varphi_N) = - \nabla \cdot J_N + \mu_S \mathcal{H}(\hat n_S - n) \varphi_S + \mu_P \mathcal{H}(\hat n_P - n) \varphi_P + \mu_D \mathcal{H}(\hat n_D - n) \varphi_D + \alpha_D \varphi_D - \gamma_N \varphi_N
 $$
 
 The parameters are defined as follows:
@@ -65,34 +65,34 @@ The parameters are defined as follows:
 The mass flux of each cell type is given by the generalised Fick's law:
 
 $$
-J_i = -M_i \nabla C_i\left ( \frac{\delta E}{\delta C_i} \right )
+J_i = -M_i \nabla \varphi_i\left ( \frac{\delta E}{\delta \varphi_i} \right )
 $$
 
 Where $M_i$ is the cell mobility, and $E$ is adhesion energy functional given by:
 
 $$
-E = \frac{\gamma}{\epsilon}\int_{\Omega} f(C_T) + \frac{\epsilon^2}{2}|{\nabla C_T}|^2 dx
+E = \frac{\gamma}{\epsilon}\int_{\Omega} f(C_T) + \frac{\epsilon^2}{2}|{\nabla \varphi_T}|^2 dx
 $$
 
 Where it's variational derivative is given by:
 
 $$
-\frac{\delta E}{\delta C_i} = \frac{\gamma}{\epsilon} \left (f'(C_T) + \epsilon^2 \nabla^2 C_T \right )
+\frac{\delta E}{\delta \varphi_i} = \frac{\gamma}{\epsilon} \left (f'(\varphi_T) + \epsilon^2 \nabla^2 \varphi_T \right )
 $$
 
-Where $f(C_T)$ is the double well potential:
+Where $f(\varphi_T)$ is the double well potential:
 
 $$
-f(C_T) = \frac{1}{4}C_T^2(1 - C_T)^2
+f(\varphi_T) = \frac{1}{4}\varphi_T^2(1 - \varphi_T)^2
 $$
 
-Note that $C_T = C_S + C_P + C_D + C_N$ is the total cell density.
+Note that $\varphi_T = \varphi_S + \varphi_P + \varphi_D + \varphi_N$ is the total cell density.
 
 
 Now that we have the mass flux, we can model the solid velocity $u_s$ as:
 
 $$
-u_s = - \left ( \nabla p + \frac{\delta E}{\delta C_T} \nabla C_T \right )
+u_s = - \left ( \nabla p + \frac{\delta E}{\delta \varphi_T} \nabla \varphi_T \right )
 $$
 
 Where $p$ is the internal pressure field. This equation is Darcy's Law, where the first term describes the internal pressure generating an outward flow of the solid material, and the second term describes the opposition to the flow due to the adhesion energy (how much the cells want to stick together).
@@ -100,15 +100,15 @@ Where $p$ is the internal pressure field. This equation is Darcy's Law, where th
 The internal pressure $p$ is given by:
 
 $$
-\nabla ^2 p = S_T - \nabla \cdot \left  ( \frac{\delta E}{\delta C_T} \nabla C_T \right )
+\nabla ^2 p = S_T - \nabla \cdot \left  ( \frac{\delta E}{\delta \varphi_T} \nabla \varphi_T \right )
 $$
 
-Where $S_T$ is the source of the tumor cells given by $S_T = \lambda_S n C_S + \lambda_P n C_P + \gamma_N C_N$.
+Where $S_T$ is the source of the tumor cells given by $S_T = \lambda_S n \varphi_S + \lambda_P n \varphi_P + \gamma_N \varphi_N$.
 
 Finally we can also model the nutrient field $n$ as a steady state diffusion equation (we can assume the nutrient diffusion is much faster than cell growth, as a result the time derivative is negligible):
 
 $$
-0 = \nabla ( D_n \nabla n ) - n (\omega_S^n C_S + \omega_P^n C_P + \omega_D^n C_D) + p_n (1 - C_T) (\bar n - n)
+0 = \nabla ( D_n \nabla n ) - n (\omega_S^n \varphi_S + \omega_P^n \varphi_P + \omega_D^n \varphi_D) + p_n (1 - \varphi_T) (\bar n - n)
 $$
 
 Where $\omega_i^n$ is the rate of nutrient consumption by cell type $i$. $p_n$ is the permeability of the nutrient, $\bar n$ is the nutrient concentration in the media, and $D_n$ is the diffusion coefficient of the nutrient.
@@ -130,7 +130,7 @@ Some propositions to consider from these effects.
 First to consider the effects that could occur from the media viscosity, density, and intra-molecular forces, is that we could adjust Darcy's Law to account for these effects. In effect this would reduce/increase the solid velocity of the cells, and thus the growth rate of the organoid.
 
 $$
-u_s = - \frac{1}{\eta} \left ( \nabla p + \frac{\delta E}{\delta C_T} \nabla C_T \right )
+u_s = - \frac{1}{\eta} \left ( \nabla p + \frac{\delta E}{\delta \varphi_T} \nabla \varphi_T \right )
 $$
 
 Where $\eta$ is some scalar value that desribes the effects of these contributions to the solid velocity.
@@ -138,21 +138,21 @@ Where $\eta$ is some scalar value that desribes the effects of these contributio
 Considering the effects of the media charge, this would affect the adhesion energy of the cells. As tumor cells are negatively charged, a positively charged media would reduce the adhesion energy of the cells (cells are attracted to the media), and a negatively charged media would increase the adhesion energy of the cells (cells are repelled by the media). This could be modelled by an extra term in the adhesion energy functional $E$.
 
 $$
-E = \frac{\gamma}{\epsilon}\int_{\Omega} f(C_T) + \frac{\epsilon^2}{2}|{\nabla C_T}|^2 dx + \int_{\Omega} \Phi(C_T) dx
+E = \frac{\gamma}{\epsilon}\int_{\Omega} f(\varphi_T) + \frac{\epsilon^2}{2}|{\nabla \varphi_T}|^2 dx + \int_{\Omega} \Phi(\varphi_T) dx
 $$
 
-Where $\Phi(C_T)$ is some function of the cell density $C_T$. This could be a linear function, or a more complex function.
+Where $\Phi(\varphi_T)$ is some function of the cell density $\varphi_T$. This could be a linear function, or a more complex function.
 
 This would propagate into the variational derivative of the adhesion energy functional $E$ as follows:
 
 $$
-\frac{\delta E}{\delta C_T} = \frac{\gamma}{\epsilon} \left (f'(C_T) + \epsilon^2 \nabla^2 C_T \right ) + \frac{\delta \Phi}{\delta C_T}
+\frac{\delta E}{\delta \varphi_T} = \frac{\gamma}{\epsilon} \left (f'(\varphi_T) + \epsilon^2 \nabla^2 \varphi_T \right ) + \frac{\delta \Phi}{\delta \varphi_T}
 $$
 
 And thus into the mass flux $J_i$ as follows:
 
 $$
-J_i = -M_i \nabla C_i\left ( \frac{\delta E}{\delta C_i} \right )
+J_i = -M_i \nabla \varphi_i\left ( \frac{\delta E}{\delta \varphi_i} \right )
 $$
 
 This would clearly then effect how the cells move and grow.
