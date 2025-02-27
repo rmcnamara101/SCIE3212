@@ -18,7 +18,7 @@ class VolumeFractionPlotter:
         
         # Define cell types and colors
         cell_types = {
-            'Stem': ('stem cell volume fraction', 'red'),
+            'Healthy': ('Healthy cell volume fraction', 'red'),
             'Progenitor': ('progenitor cell volume fraction', 'blue'),
             'Differentiated': ('differentiated cell volume fraction', 'green'),
             'Necrotic': ('necrotic cell volume fraction', 'black')
@@ -47,7 +47,7 @@ class VolumeFractionPlotter:
         """
         plt.figure(figsize=(10, 6))
 
-        for cell_type in ['Stem', 'Progenitor', 'Differentiated', 'Necrotic']:
+        for cell_type in ['Healthy', 'Progenitor', 'Differentiated', 'Necrotic']:
 
             key = f'{cell_type.lower()} cell volume fraction'
             total_fractions = np.sum(self.simulation_history[key], axis=(1, 2, 3)) * (self.model.dx ** 3)
@@ -73,62 +73,6 @@ class VolumeFractionPlotter:
         plt.title('Total Tumor Volume Evolution')
         plt.legend()
         plt.grid(True)
-        plt.show()
-
-    def plot_all_isosurfaces(self, threshold=0.1):
-        """
-        Plot isosurfaces for all cell volume fractions in one 3D plot with a lower threshold.
-        """
-        fields = {
-            'Stem': (self.simulation_history['stem cell volume fraction'][-1], 'red'),
-            'Progenitor': (self.simulation_history['progenitor cell volume fraction'][-1], 'blue'),
-            'Differentiated': (self.simulation_history['differentiated cell volume fraction'][-1], 'green'),
-            'Necrotic': (self.simulation_history['necrotic cell volume fraction'][-1], 'black')
-        }
-        
-        fig = plt.figure(figsize=(10, 10))
-        ax = fig.add_subplot(111, projection='3d')
-        
-        total_mask = np.zeros_like(self.simulation_history['stem cell volume fraction'][-1], dtype=bool)
-        for name, (field, _) in fields.items():
-            total_mask |= (field > threshold)
-        
-        if not total_mask.any():
-            print("No cells above threshold found.")
-            return
-        
-        x_indices, y_indices, z_indices = np.where(total_mask)
-        padding = 5
-        x_min, x_max = max(0, np.min(x_indices) - padding), min(self.model.grid_shape[0], np.max(x_indices) + padding)
-        y_min, y_max = max(0, np.min(y_indices) - padding), min(self.model.grid_shape[1], np.max(y_indices) + padding)
-        z_min, z_max = max(0, np.min(z_indices) - padding), min(self.model.grid_shape[2], np.max(z_indices) + padding)
-        x_min, x_max = x_min * self.model.dx, x_max * self.model.dx
-        y_min, y_max = y_min * self.model.dx, y_max * self.model.dx
-        z_min, z_max = z_min * self.model.dx, z_max * self.model.dx
-        
-        for name, (field, color) in fields.items():
-            smoothed_field = gaussian_filter(field, sigma=1)
-            if np.max(smoothed_field) < threshold:
-                continue
-            try:
-                verts, faces, normals, _ = marching_cubes(smoothed_field, level=threshold, spacing=(self.model.dx, self.model.dx, self.model.dx))
-                mesh = Poly3DCollection(verts[faces], alpha=0.2)
-                mesh.set_facecolor(color)
-                mesh.set_edgecolor(color)
-                ax.add_collection3d(mesh)
-                center = np.mean(verts, axis=0)
-                ax.text(center[0], center[1], center[2], name, color=color, fontsize=12)
-            except Exception as e:
-                print(f"Could not extract isosurface for {name}: {e}")
-        
-        ax.set_xlim([x_min, x_max])
-        ax.set_ylim([y_min, y_max])
-        ax.set_zlim([z_min, z_max])
-        self._draw_bounding_box(ax, (x_min, x_max), (y_min, y_max), (z_min, z_max))
-        ax.set_xlabel('X')
-        ax.set_ylabel('Y')
-        ax.set_zlabel('Z')
-        ax.set_title(f'Tumor Isosurfaces at Step {self.simulation_history["step"][-1]}')
         plt.show()
 
     def plot_radius_evolution(self):

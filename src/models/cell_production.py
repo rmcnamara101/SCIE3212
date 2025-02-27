@@ -4,26 +4,26 @@
 #
 #   Cell Production Model
 #
-#   This model computes the production of the cell concentration fields
+#   This model computes the production of the cell volume fraction fields
 #   based on the nutrient concentration and the drug concentration.
 #
 #   The production of the cell concentration fields is defined as follows:
 #
-#   dC = Src_S + Src_P + Src_D + Src_N 
+#   dC = Src_H + Src_P + Src_D + Src_N 
 #   dt
 #
-#   where Src_S, Src_P, Src_D, and Src_N are the source terms for the stem cells,
+#   where Src_h, Src_P, Src_D, and Src_N are the source terms for the stem cells,
 #   progenitor cells, differentiated cells, and necrotic cells, respectively.
 #
 #   The source terms are defined and computed using the following formulas::
 #
-#   Src_S = λ_S n C_S (2p_0 -1) - μ_S H(n_S - n) C_S
+#   Src_H = λ_S n phi_H (2p_0 -1) - μ_S H(n_S - n) phi_H
 #
-#   Src_P = λ_S n 2(1 - p_0) C_S + λ_P n C_P (2p_1 - 1) - μ_P H(n_P - n) C_P
+#   Src_P = λ_S n 2(1 - p_0) phi_H + λ_P n phi_P (2p_1 - 1) - μ_P H(n_P - n) phi_P
 #
-#   Src_D = λ_P n 2(1 - p_1) C_P - μ_D H(n_D - n) C_D - α_D C_D
+#   Src_D = λ_P n 2(1 - p_1) phi_P - μ_D H(n_D - n) phi_D - α_D phi_D
 #
-#   Src_N = μ_S H(n_S - n) C_S + μ_P H(n_P - n) C_P + μ_D H(n_D - n) C_D + α_D C_D - γ_N C_N
+#   Src_N = μ_S H(n_S - n) phi_H + μ_P H(n_P - n) phi_P + μ_D H(n_D - n) C_phi + α_D phi_D - γ_N phi_N
 #
 #   where: λ terms refer to cell proliferation, the μ terms refer to cell death,
 #   the α terms refer to cell differentiation, and the γ term refers to necrotic cell dissolution.
@@ -34,8 +34,8 @@
 #
 #
 #   This file should be used as an importable class, that will take a tumor growth 
-#   model as an argument, will be able to update the concentration fields of the tumor
-#   based on the source terms.
+#   model as an argument, will be able to calculate the derivatives of the volume fraction
+#   fields of the tumor based on the source terms.
 #
 #   This class should be used in the following way:
 #
@@ -43,12 +43,12 @@
 #
 #   model = TumorGrowthModel()
 #   cell_production = ProductionModel(model)
-#   cell_production.update_cell_sources()
+#   cell_production.compute_cell_sources()
 #
 #   </code>
 #
 #
-#   This will directly update the concentration fields of the tumor model.
+#   This will return a set of derivatives that can be applied to the volume fraction fields.
 #
 #
 # Author:
@@ -64,15 +64,15 @@ import numpy as np
 import numba as nb
 
 @nb.njit
-def compute_cell_sources(C_S, C_P, C_D, C_N, nutrient, n_S, n_P, n_D, lambda_S, lambda_P, mu_S, mu_P, mu_D, alpha_D, p_0, p_1, gamma_N):
+def compute_cell_sources(phi_H, phi_P, phi_D, phi_N, nutrient, n_S, n_P, n_D, lambda_S, lambda_P, mu_S, mu_P, mu_D, alpha_D, p_0, p_1, gamma_N):
     H_S = np.where(n_S - nutrient > 0, 1.0, 0.0)
     H_P = np.where(n_P - nutrient > 0, 1.0, 0.0)
     H_D = np.where(n_D - nutrient > 0, 1.0, 0.0)
 
-    src_S = lambda_S * nutrient * C_S * (2 * p_0 - 1) - mu_S * H_S * C_S
-    src_P = lambda_S * nutrient * 2 * (1 - p_0) * C_S + lambda_P * nutrient * C_P * (2 * p_1 - 1) - mu_P * H_P * C_P
-    src_D = lambda_P * nutrient * 2 * (1 - p_1) * C_P - mu_D * H_D * C_D - alpha_D * C_D
-    src_N = mu_S * H_S * C_S + mu_P * H_P * C_P + mu_D * H_D * C_D + alpha_D * C_D - gamma_N * C_N
+    src_S = lambda_S * nutrient * phi_H * (2 * p_0 - 1) - mu_S * H_S * phi_H
+    src_P = lambda_S * nutrient * 2 * (1 - p_0) * phi_H + lambda_P * nutrient * phi_P * (2 * p_1 - 1) - mu_P * H_P * phi_P
+    src_D = lambda_P * nutrient * 2 * (1 - p_1) * phi_P - mu_D * H_D * phi_D - alpha_D * phi_D
+    src_N = mu_S * H_S * phi_H + mu_P * H_P * phi_P + mu_D * H_D * phi_D + alpha_D * phi_D - gamma_N * phi_N
 
     # Tighter clipping to prevent runaway growth
     return (
@@ -90,154 +90,10 @@ class ProductionModel:
         self.drug_model = drug_model
 
 
-    def compute_cell_sources(self, C_S, C_P, C_D, C_N, nutrient, n_S, n_P, n_D, params):
+    def compute_cell_sources(self, phi_H, phi_P, phi_D, phi_N, nutrient, n_S, n_P, n_D, params):
         """Wrapper to call the Numba-optimized function."""
         return compute_cell_sources(
-            C_S, C_P, C_D, C_N, nutrient, n_S, n_P, n_D,
+            phi_H, phi_P, phi_D, phi_N, nutrient, n_S, n_P, n_D,
             params['lambda_S'], params['lambda_P'], params['mu_S'], params['mu_P'],
             params['mu_D'], params['alpha_D'], params['p_0'], params['p_1'], params['gamma_N']
         )
-
-    def apply_cell_sources(self):
-        """
-        Compute source terms for cell populations based on growth dynamics.
-        """
-   
-
-        C_S, C_P, C_D, C_N = self.model.C_S, self.model.C_P, self.model.C_D, self.model.C_N
-
-        # Stem Cell Source
-        C_S += self.model.dt * (self._compute_src_S())
-
-        # Progenitor Cell Source
-        C_P += self.model.dt * (self._compute_src_P())
-
-        # Differentiated Cell Source
-        C_D += self.model.dt * (self._compute_src_D())
-
-        # Necrotic Cell Source
-        C_N += self.model.dt * (self._compute_src_N())
-
-        self.model.C_S = C_S
-        self.model.C_P = C_P
-        self.model.C_D = C_D
-        self.model.C_N = C_N
-
-   
-    def _compute_src_S(self) -> np.ndarray:
-        """
-        Compute the source term for the stem cells.
-        src_S = \lamda_S n C_S (2p_0 -1) - \mu_S H(\hat {n_S} - n) C_S
-        """
-        lambda_S = self.model.params['lambda_S']
-        p_0 = self.model.params['p_0']
-        mu_S = self.model.params['mu_S']
-
-        n = self.model.nutrient
-        C_S = self.model.C_S
-        n_S = self.model.n_S
-        src_S = lambda_S * n * C_S * (2 * p_0 - 1) - mu_S * np.heaviside(n_S - n, 0) * C_S    
-        return src_S
-
-
-    def _compute_src_P(self) -> np.ndarray:
-        """
-        Compute the source term for the prologenitor cells.
-        src_P = \lambda_S n 2(1 - p_0) C_S + \lambda_P n C_P (2p_1 - 1) - \mu_P H(\hat {n_P} - n) C_P
-        """
-        lambda_S = self.model.params['lambda_S']
-        lambda_P = self.model.params['lambda_P']
-        n = self.model.nutrient
-        p_0 = self.model.params['p_0']
-        p_1 = self.model.params['p_1']
-        C_S = self.model.C_S
-        C_P = self.model.C_P
-        mu_P = self.model.params['mu_P']
-        n_P = self.model.n_P
-        src_P = lambda_S * n * 2 * (1 - p_0) * C_S + lambda_P * n * C_P * (2 * p_1 - 1) - mu_P * np.heaviside(n_P - n, 0) * C_P
-        return src_P
-
-
-    def _compute_src_D(self) -> np.ndarray:
-        """
-        Compute the source term for the differentiated cells.
-        src_D = \lambda_P n 2(1 - p_1) C_P - \mu_D H(\hat {n_D} - n) C_D - \alpha_D C_D
-        """
-        lambda_P = self.model.params['lambda_P']
-        n = self.model.nutrient
-        p_1 = self.model.params['p_1']
-        C_P = self.model.C_P
-        C_D = self.model.C_D
-        mu_D = self.model.params['mu_D']
-        n_D = self.model.n_D
-        alpha_D = self.model.params['alpha_D']
-        src_D = lambda_P * n * 2 * (1 - p_1) * C_P - mu_D * np.heaviside(n_D - n, 0) * C_D - alpha_D * C_D
-        return src_D
-
-
-    def _compute_src_N(self) -> np.ndarray:
-        """
-        Compute the source term for the nutrient.
-        src_N = \mu_S H(\hat {n_S} - n) C_S + \mu_P H(\hat {n_P} - n) C_P + \mu_D H(\hat {n_D} - n) C_D + \alpha_D C_D - \gamma_N C_N
-        """
-        n_S = self.model.n_S
-        n_P = self.model.n_P
-        n_D = self.model.n_D
-
-        n = self.model.nutrient
-
-        C_S = self.model.C_S
-        C_P = self.model.C_P
-        C_D = self.model.C_D
-        C_N = self.model.C_N
-        mu_S = self.model.params['mu_S']
-        mu_P = self.model.params['mu_P']
-        mu_D = self.model.params['mu_D']
-        alpha_D = self.model.params['alpha_D']
-        gamma_N = self.model.params['gamma_N']
-        src_N = mu_S * np.heaviside(n_S - n, 0) * C_S + mu_P * np.heaviside(n_P - n, 0) * C_P + mu_D * np.heaviside(n_D - n, 0) * C_D + alpha_D * C_D - gamma_N * C_N
-        return src_N
-
-
-    def _compute_src_T(self) -> np.ndarray:
-        """
-        Compute the source term for the total cell density.
-        src_T = \lambda_S n C_S + \lambda_P n C_P + \gamma_N C_N
-        """
-        lambda_S = self.model.params['lambda_S']
-        lambda_P = self.model.params['lambda_P']
-        n = self.model.nutrient
-        C_S = self.model.C_S
-        C_P = self.model.C_P
-        C_N = self.model.C_N
-        gamma_N = self.model.params['gamma_N']
-        src_T = lambda_S * n * C_S + lambda_P * n * C_P - gamma_N * C_N
-        src_T = self._compute_src_N() + self._compute_src_S() + self._compute_src_P() + self._compute_src_D()
-        return src_T
-
-
-    def _compute_p0(self):
-        """
-        Compute the p0 parameter based on the nutrient concentration.
-        """
-        if self.drug_model is not None:
-            # this is the area where the effects of the drug can be implemented
-            pass
-        else:
-            # a more complex application of p_0 can be implemented here
-            p_0 = self.model.params['p_0']
-            return p_0
-
-
-    def _compute_p1(self):
-        """
-        Compute the p1 parameter based on the nutrient concentration.
-        """
-        if self.drug_model is not None:
-            # this is the area where the effects of the drug can be implemented
-            pass
-        else:
-            # a more complex application of p_1 can be implemented here
-            p_1 = self.model.params['p_1']
-            return p_1
-
