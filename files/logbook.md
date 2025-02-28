@@ -63,13 +63,12 @@ Where $\omega_i^n$ refers to the uptake rate of the nutrient $n$ of each cell po
 We can now finally define the source terms for each cell population.
 Each source term is defined as: 
 
-|----------------------|------------------------------------------------------------------------------------------------------------------------------------------------------------|
 | Cell Type            | Source Terms                                                                                                                                               |
 |----------------------|------------------------------------------------------------------------------------------------------------------------------------------------------------|
 | Healthy Cells        | $\lambda_H n \varphi_H(2p_0 -1) - \mu_H \mathbb{H}(n_s - n)\varphi_H$                                                                                      |
 | Progenitor Cells     | $\lambda_H n 2\varphi_S(1 - p_0) + \lambda_P n \varphi_P(2p_1 - 1) - \mu_P \mathbb{H} (n_P -n)\varphi_P$                                                   |
 | Differentiated Cells | $\lambda_P n 2\varphi_P(1-p_1) - \mu_D\mathbb{H}(n_D - n)\varphi_D - \alpha_D \varphi_D$                                                                   |
-| Necrotic Cells       | $ \mu_H \mathbb{H}(n_s - n)\varphi_H + \mu_P \mathbb{H} (n_P -n)\varphi_P + \mu_D\mathbb{H}(n_D - n)\varphi_D + \alpha_D \varphi_D - \gamma_N \varphi_N$   |
+| Necrotic Cells       | $\mu_H \mathbb{H}(n_s - n)\varphi_H + \mu_P \mathbb{H} (n_P -n)\varphi_P + \mu_D\mathbb{H}(n_D - n)\varphi_D + \alpha_D \varphi_D - \gamma_N \varphi_N$   |
 
 Where $\lambda_i$ refers to self proliferation rates, $\mu_i$ refers to the death rates, $n_i$ refers to the required satiety levels, $\alpha_i$ refers to aptosis rates, $\gamma_i$ refers to lysis rates.
 

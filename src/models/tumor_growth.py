@@ -82,8 +82,10 @@ class TumorGrowthModel:
 
     def run_simulation(self, steps=100):
         """Run the simulation for a given number of steps."""
+        step = 0
         for _ in tqdm(range(steps), desc="Running Simulation"):
-            self._update()
+            step += 1
+            self._update(step)
 
 
     def run_and_save_simulation(self, steps: int, name: str) -> None:
@@ -109,7 +111,7 @@ class TumorGrowthModel:
         return self.history
 
 
-    def _update(self) -> None:
+    def _update(self, step) -> None:
         """Perform one RK4 time step with stability checks."""
         state = (self.phi_H, self.phi_P, self.phi_D, self.phi_N, self.nutrient)
 
@@ -134,7 +136,8 @@ class TumorGrowthModel:
             setattr(self, field, update)
 
         self._enforce_volume_fractions()
-        self._update_history()
+        if step % 5 == 0:
+            self._update_history()
 
 
     def _compute_derivatives(self, state):

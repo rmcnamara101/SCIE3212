@@ -86,7 +86,7 @@ $$
 f(\varphi_T) = \frac{1}{4}\varphi_T^2(1 - \varphi_T)^2
 $$
 
-Note that $\varphi_T = \varphi_S + \varphi_P + \varphi_D + \varphi_N$ is the total cell density.
+Note that $\varphi_T = \varphi_S + \varphi_P + \varphi_D + \varphi_N$ is the total cell volume fraction.
 
 
 Now that we have the mass flux, we can model the solid velocity $u_s$ as:
