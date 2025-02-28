@@ -122,3 +122,5 @@ Where $I_i$ is each ingredient field, and $f$ is some function that can represen
 
 - I want to also explore how I can add properly add uncertainties through the model, as we talked about in some of the earlier meetings, as I expect any data that we get from G4L is some sort of percentage range of concentration or densiy of cell types. Thus these errors should also propogate out to the final state of the model.
 
+- I also need to tweak the growth rates in its current state to represent reality. I don't know if this should be done by experimental verification or by constants pre-defined in literature (if they exist).
+

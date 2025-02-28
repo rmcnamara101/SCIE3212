@@ -108,6 +108,6 @@ def load_simulation_history(file_name: str) -> dict:
 
 if __name__ == "__main__":
 
-    model = TumorGrowthModel(grid_shape = (200, 200, 200), dx = 0.1, dt = 0.001)
+    model = TumorGrowthModel(grid_shape = (200, 200, 200), dx = 0.01, dt = 0.0001)
     #run_simulation(model, steps = 20)
-    run_and_save_simulation(model, 300, '28/2/25')
+    run_and_save_simulation(model, 300, '28-2-25_2')
