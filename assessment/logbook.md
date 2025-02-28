@@ -88,3 +88,40 @@ We can then also define the time parameter $dt$.
 The units of the simulation are defined by the values dx and dt. 
 
 Currently at this point in time I have a working simulation based on these equations. 
+
+<h3> 28/2/25 </h3>
+
+I have implemented functionality into the code to be able to run larger simulations and save them to a file, where analysis can be done afterwards. This makes things much easier and quicker, so simulations can be run overnight etc, and then the sim can be analysed easily after. See model_exploration jupyter notebook for how to do this.
+
+I have a few questions about where to head next, should talk to Gloria/ Mark about the direction to head next. But my initial thoughts is about how we can capture the impact of the host fluid that the organoids are grown in. My initial instict is there are two routes that could be taken, in terms of how the model is built. I could explore physical effects of the fluid, that I would suspect would manifest in the mass flux. The biggest effect this would have is altering the adhesion energy functional in some way, which would in turn effect how the cells move along the adhesion energy gradients. Or I could explore how different ingredient concentrations of the host media interact with the source terms. This would drive growth through the solid velocity term, but would require some altering of the growth/death/proliferation elements are calculated. They would be functions of the ingredients of the host fluid, and I would have to implement functionality for many different nutrient fields, that represent the ingredients of the host fluid. Each ingredient field would just abide by some diffusion equation. 
+
+This is a representations of the simulation:
+
+
+
+                                   λ                            λ
+                             |-----------|             |--------------|
+                             \/          |             \/             |
+                    |---------------|         |------------------|         |----------------------|    μ    |-----------------|    γ                           
+                    | Healthy Cells |   -->   | Progenitor Cells |   -->   | Differentiated Cells |   -->   | Necroctic Cells |   -->
+                    |---------------|   p0    |------------------|   p1    |----------------------|         |-----------------|
+                            |                          |                                                             |
+                            |--------------------------|-------------------------------------------------------------|
+                            μ                          μ
+
+
+
+Questions:
+
+- How important is it to have these 3 cell types (nectrotic is irrelevant only there for the physical effects). Simon at work said may potentially not have to consider the progenitor cell population and that I could potentially have a cell evolution of just: Healthy -> Differentiated -> nectrotic
+
+- We could incorporate the effects of the ingredient fields in two ways. Either through the self renewal rates (λ), and death rates (μ). Or through the cell progression probabilities (p0, and p1). The ingredients either directly effect how quickly the cells self renew, or die, or they directly effect the probabilities for cell differentiation. Currently in the simulation p0 and p1 are just constants, but in the orginial paper they take into account certain growth inhibitors etc, so there is a method already to include something like this in that fashion. 
+
+This could be implemented in the model by introducing an effective renewal rate:
+
+$$ \lambda_{eff} = \lambda_i \prod_i f(I_i)$$
+
+Where $I_i$ is each ingredient field, and $f$ is some function that can represent how the ingredient effects that cell type's growth.
+
+- I want to also explore how I can add properly add uncertainties through the model, as we talked about in some of the earlier meetings, as I expect any data that we get from G4L is some sort of percentage range of concentration or densiy of cell types. Thus these errors should also propogate out to the final state of the model.
+

@@ -16,6 +16,10 @@ class SimulationAnalyzer:
         self.radius_data = compute_total_radius(self.history, threshold=0.05)
         self.metadata = self.history['Simulation Metadata']
 
+    def get_simulation_metadata(self):
+        """Return metadata about the simulation."""
+        return self.metadata
+
     def plot_volumes(self, smooth_window=5, normalize=None):
         """Plot total volumes of cell types over time with optional smoothing and normalization.
         
