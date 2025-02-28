@@ -86,6 +86,22 @@ class TumorGrowthModel:
             self._update()
 
 
+    def run_and_save_simulation(self, steps: int, name: str) -> None:
+        """
+        Run the simulation and save history data as a NumPy .npz file.
+        
+        Args:
+            steps (int): Number of simulation steps to run.
+            name (str): Base name for the output file.
+        """
+        self.run_simulation(steps=steps)
+        history = self.get_history()
+        history['Simulation Metadata'] = {'dx': self.dx, 'dt': self.dt, 'steps': steps}
+        
+        file_str = f"data/{name}_sim_data.npz"
+        np.savez(file_str, **history)
+
+
     def get_history(self) -> dict:
         """
         This function will return the history of the simulation
