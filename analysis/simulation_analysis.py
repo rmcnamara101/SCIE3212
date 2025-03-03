@@ -35,44 +35,49 @@ class SimulationAnalyzer:
         steps, healthy, progenitor, differentiated, necrotic, total = self.volume_data
         
         # Ensure smooth_window is odd
-        if smooth_window % 2 == 0:
-            smooth_window += 1
+        #if smooth_window % 2 == 0:
+        #    smooth_window += 1
         
         # Apply smoothing if window > 1
-        if smooth_window > 1:
-            healthy = savgol_filter(healthy, smooth_window, 3)
-            progenitor = savgol_filter(progenitor, smooth_window, 3)
-            differentiated = savgol_filter(differentiated, smooth_window, 3)
-            necrotic = savgol_filter(necrotic, smooth_window, 3)
-            total = savgol_filter(total, smooth_window, 3)
+        #if smooth_window > 1:
+        #    healthy = savgol_filter(healthy, smooth_window, 3)
+        #    progenitor = savgol_filter(progenitor, smooth_window, 3)
+        #    differentiated = savgol_filter(differentiated, smooth_window, 3)
+        #    necrotic = savgol_filter(necrotic, smooth_window, 3)
+        #    total = savgol_filter(total, smooth_window, 3)
         
         # Normalize volumes
-        if normalize == 'initial' and total[0] != 0:
-            initial_total = total[0]
-            healthy /= initial_total
-            progenitor /= initial_total
-            differentiated /= initial_total
-            necrotic /= initial_total
-            total /= initial_total
-        elif normalize == 'max':
-            max_total = np.max(total)
-            healthy /= max_total
-            progenitor /= max_total
-            differentiated /= max_total
-            necrotic /= max_total
-            total /= max_total
+        #if normalize == 'initial':
+        #    initial_total = total[0]
+        #    if initial_total != 0:
+        #        healthy /= initial_total
+        #        progenitor /= initial_total
+        #        differentiated /= initial_total
+        #        necrotic /= initial_total
+        #        total /= initial_total
+        #    else:
+        #        print("Warning: Initial total volume is zero, skipping normalization.")
+        #elif normalize == 'max':
+        #    max_total = np.max(total)
+        #    if max_total != 0:
+        #        healthy /= max_total
+        #        progenitor /= max_total
+        #        differentiated /= max_total
+        #        necrotic /= max_total
+        #        total /= max_total
+        #    else:
+        #        print("Warning: Maximum total volume is zero, skipping normalization.")
         
         plt.figure(figsize=(10, 6))
-        plt.plot(steps, healthy, label='Healthy')
         plt.plot(steps, progenitor, label='Progenitor')
         plt.plot(steps, differentiated, label='Differentiated')
         plt.plot(steps, necrotic, label='Necrotic')
-        plt.plot(steps, total, label='Total', linestyle='--', color='black')
-        plt.xlabel('Time Step')
+        plt.plot(steps, healthy, label='Healthy')
+        plt.plot(steps, total, label='Total', linestyle='--', color='black', alpha=0.7)
+        plt.xlabel(f'Time step % 10 ')
         plt.ylabel('Volume (summed cell fraction)' if not normalize else 'Normalized Volume')
         plt.title('Tumor Cell Volume Evolution')
         plt.legend()
-        plt.grid(True, linestyle='--', alpha=0.7)
         plt.show()
 
     def plot_radius(self, smooth_window=5):
@@ -193,16 +198,19 @@ class SimulationAnalyzer:
         plt.tight_layout()
         plt.show()
 
-    def plot_cross_section(self, step_index, plane='XY', index=None, smooth_sigma=2.0):
+    def plot_cross_section(self, step_index, cell_type='healthy', plane='XY', index=None, smooth_sigma=2.0):
         """
-        Plot 2D cross-sections of tumor fields with smoothed contours.
+        Plot 2D cross-sections of a specified cell type with smoothed contours.
         
         Args:
             step_index (int): Index of the time step to visualize.
+            cell_type (str): The cell type to plot ('healthy', 'progenitor', 'differentiated', 'necrotic').
             plane (str): Plane to slice ('XY', 'XZ', 'YZ'). Defaults to 'XY'.
             index (int, optional): Index along the perpendicular axis. Defaults to midpoint.
             smooth_sigma (float): Standard deviation for Gaussian smoothing. 0 for no smoothing.
         """
+        if cell_type not in ['healthy', 'progenitor', 'differentiated', 'necrotic']:
+            raise ValueError("Cell type must be 'healthy', 'progenitor', 'differentiated', or 'necrotic'")
         fields = {
             'healthy': self.history['healthy cell volume fraction'][step_index],
             'progenitor': self.history['progenitor cell volume fraction'][step_index],
@@ -221,44 +229,45 @@ class SimulationAnalyzer:
             else:
                 raise ValueError("Plane must be 'XY', 'XZ', or 'YZ'")
         
-        fig, axes = plt.subplots(1, 4, figsize=(20, 5), sharex=True, sharey=True)
+        field = fields[cell_type]
         
-        for ax, (cell_type, field) in zip(axes, fields.items()):
-            if plane == 'XY':
-                slice_ = field[:, :, index]
-                x, y = np.arange(shape[0]), np.arange(shape[1])
-                ax.set_xlabel('X')
-                ax.set_ylabel('Y')
-            elif plane == 'XZ':
-                slice_ = field[:, index, :]
-                x, y = np.arange(shape[0]), np.arange(shape[2])
-                ax.set_xlabel('X')
-                ax.set_ylabel('Z')
-            elif plane == 'YZ':
-                slice_ = field[index, :, :]
-                x, y = np.arange(shape[1]), np.arange(shape[2])
-                ax.set_xlabel('Y')
-                ax.set_ylabel('Z')
-            
-            # Smooth the slice with Gaussian filter if sigma > 0
-            if smooth_sigma > 0:
-                slice_ = gaussian_filter(slice_, sigma=smooth_sigma)
-            
-            # Create finer grid for interpolation
-            x_fine, y_fine = np.linspace(x.min(), x.max(), 100), np.linspace(y.min(), y.max(), 100)
-            X, Y = np.meshgrid(x, y)
-            X_fine, Y_fine = np.meshgrid(x_fine, y_fine)
-            
-            # Interpolate data onto finer grid
-            slice_fine = griddata((X.flatten(), Y.flatten()), slice_.flatten(), 
-                                 (X_fine, Y_fine), method='cubic')
-            
-            # Plot filled contours
-            contour = ax.contourf(X_fine, Y_fine, slice_fine, levels=10, cmap='Greens', vmin=0, vmax=1)
-            fig.colorbar(contour, ax=ax)
-            ax.set_title(cell_type.capitalize())
+        fig, ax = plt.subplots(figsize=(6, 5))
         
-        fig.suptitle(f'Cross-Section {plane} at index {index}, Step {step_index}')
+        if plane == 'XY':
+            slice_ = field[:, :, index]
+            x, y = np.arange(shape[0]), np.arange(shape[1])
+            ax.set_xlabel('X')
+            ax.set_ylabel('Y')
+        elif plane == 'XZ':
+            slice_ = field[:, index, :]
+            x, y = np.arange(shape[0]), np.arange(shape[2])
+            ax.set_xlabel('X')
+            ax.set_ylabel('Z')
+        elif plane == 'YZ':
+            slice_ = field[index, :, :]
+            x, y = np.arange(shape[1]), np.arange(shape[2])
+            ax.set_xlabel('Y')
+            ax.set_ylabel('Z')
+        
+        # Smooth the slice with Gaussian filter if sigma > 0
+        if smooth_sigma > 0:
+            slice_ = gaussian_filter(slice_, sigma=smooth_sigma)
+        
+        # Create finer grid for interpolation
+        x_fine, y_fine = np.linspace(x.min(), x.max(), 100), np.linspace(y.min(), y.max(), 100)
+        X, Y = np.meshgrid(x, y)
+        X_fine, Y_fine = np.meshgrid(x_fine, y_fine)
+        
+        # Interpolate data onto finer grid
+        slice_fine = griddata((X.flatten(), Y.flatten()), slice_.flatten(), 
+                             (X_fine, Y_fine), method='cubic')
+        
+        # Plot filled contours
+        contour = ax.contourf(X_fine, Y_fine, slice_fine, levels=10, cmap='viridis', vmin=0, vmax=1)
+        fig.colorbar(contour, ax=ax)
+        ax.set_title(f'{cell_type.capitalize()} Cross-Section')
+        
+        fig.suptitle(f'Cross-Section {plane} at index {index}, Step {step_index}, {cell_type.capitalize()}')
         plt.show()
 
     def animate_cross_section(self, plane='XY', index=None, interval=200, save_as=None):

@@ -31,6 +31,8 @@ sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from src.models.tumor_growth import TumorGrowthModel
 from src.visualization.plot_tumor import VolumeFractionPlotter
 from src.visualization.animate_tumor import TumorAnimator
+from src.models.initial_conditions import SphericalTumor
+from src.utils.utils import experimental_params
 
 def run_and_save_simulation(model: TumorGrowthModel, steps: int, name: str):
     """
@@ -106,8 +108,36 @@ def load_simulation_history(file_name: str) -> dict:
         raise ValueError(f"Error loading simulation history from {file_name}: {str(e)}")
     
 
+def main():
+    # Simulation parameters defined here
+    grid_shape = (200, 200, 200)
+    dx = 0.1
+    dt = 0.0001
+    params = experimental_params
+    steps = 400
+    save_steps = 10
+
+    # Create the initial condition
+    initial_conditions = SphericalTumor(grid_shape, radius=5, nutrient_value=0.001)
+
+    # Initialize the model with the initial condition
+    model = TumorGrowthModel(
+        grid_shape=grid_shape,
+        dx=dx,
+        dt=dt,
+        params=params,
+        initial_conditions=initial_conditions,
+        save_steps=save_steps
+    )
+
+    # Run the simulation
+    model.run_and_save_simulation(steps=steps, name="spherical_tumor")
+
+    # Access the simulation history (optional)
+    #history = model.get_history()
+    #print(f"Simulation history: keys: {history.keys()} steps: {len(history['step'])} ")
+    #print(f"Simulation finished")
+
 if __name__ == "__main__":
 
-    model = TumorGrowthModel(grid_shape = (200, 200, 200), dx = 0.1, dt = 0.0001, save_steps = 10)
-    #run_simulation(model, steps = 20)
-    run_and_save_simulation(model, 400, '2-3-25')
+    main()

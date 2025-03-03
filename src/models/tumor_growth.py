@@ -56,26 +56,36 @@
 #######################################################################################################
 #######################################################################################################
 
+
 import numpy as np
 from tqdm import tqdm
-from typing import Any
+from typing import Any, Tuple
 
 from src.utils.utils import experimental_params
 from src.models.cell_production import ProductionModel
 from src.models.cell_dynamics import DynamicsModel
 from src.models.diffusion_dynamics import DiffusionDynamics
+from src.models.initial_conditions import InitialCondition
 
 
 class TumorGrowthModel:
-    def __init__(self, grid_shape=(50, 50, 50), dx=0.1, dt=0.001, params=None, initial_conditions=None, save_steps=1):
+    def __init__(self, grid_shape: Tuple = (50, 50, 50), dx: float = 0.1, dt: float = 0.001, params: dict = None, initial_conditions: InitialCondition = None, save_steps: int = 1):
         self.grid_shape = grid_shape
         self.dx = dx
         self.dt = dt
         self.params = params or experimental_params
-        self._initialize_fields(initial_conditions)
-        self.history = self._initialize_history()
+        
         self.save_steps = save_steps
         
+        # Initialize the fields using the initial conditions
+        if initial_conditions is None:
+            raise ValueError("Initial conditions must be provided.")
+        
+        self.initial_conditions = initial_conditions
+        self._initialize_fields(initial_conditions)
+
+        self.history = self._initialize_history()
+
         self.cell_production = ProductionModel(self)
         self.cell_dynamics = DynamicsModel(self)
         self.diffusion_dynamics = DiffusionDynamics(self)
@@ -99,7 +109,7 @@ class TumorGrowthModel:
         """
         self.run_simulation(steps=steps)
         history = self.get_history()
-        history['Simulation Metadata'] = {'dx': self.dx, 'dt': self.dt, 'steps': steps}
+        history['Simulation Metadata'] = {'dx': self.dx, 'dt': self.dt, 'steps': steps, 'save_steps': self.save_steps}
         
         file_str = f"data/{name}_sim_data.npz"
         np.savez(file_str, **history)
@@ -185,32 +195,20 @@ class TumorGrowthModel:
         self.history['necrotic cell volume fraction'].append(self.phi_N)
    
 
-    def _initialize_fields(self, initial_conditions: Any = None) -> None:
+    def _initialize_fields(self, initial_conditions: InitialCondition) -> None:
         shape = self.grid_shape
         
-        # Initialize all fields at once
-        self.phi_H = np.zeros(shape)
-        self.phi_P = np.zeros(shape)
-        self.phi_D = np.zeros(shape)
-        self.phi_N = np.zeros(shape)
-        self.nutrient = 0.001 * np.ones(shape)
+        initial_conditions.initialize(self.params)
         
-        # Use broadcasting for parameter fields
-        self.n_H = self.params['p_0'] * np.ones(shape)
-        self.n_P = self.params['p_1'] * np.ones(shape)
-        self.n_D = np.ones(shape)
-        self.phi_R = np.zeros(shape)
-        
-        # Pre-compute distance grid for initialization and radius calculation
-        center = np.array([s // 2 for s in shape])
-        x, y, z = np.ogrid[:shape[0], :shape[1], :shape[2]]
-        dist_from_center = np.sqrt((x - center[0])**2 + (y - center[1])**2 + (z - center[2])**2)
-        self._distance_grid = dist_from_center  # Store for reuse
-        
-        # Use boolean masking for more efficient initialization
-        self.phi_H[dist_from_center <= 5] = 1
-        self.phi_D[dist_from_center <= 5] = 1
-        self.phi_P[dist_from_center <= 5] = 1
+        self.phi_H = initial_conditions.phi_H
+        self.phi_P = initial_conditions.phi_P
+        self.phi_D = initial_conditions.phi_D
+        self.phi_N = initial_conditions.phi_N
+        self.nutrient = initial_conditions.nutrient
+        self.n_H = initial_conditions.n_H
+        self.n_P = initial_conditions.n_P
+        self.n_D = initial_conditions.n_D
+        self.phi_R = initial_conditions.phi_R
         
         # Enforce the global volume fraction constraint
         self._enforce_volume_fractions()
@@ -240,4 +238,6 @@ class TumorGrowthModel:
         
         # Define the host region fraction
         self.phi_R = phi_S - phi_T
+
+
 

@@ -124,3 +124,8 @@ Where $I_i$ is each ingredient field, and $f$ is some function that can represen
 
 - I also need to tweak the growth rates in its current state to represent reality. I don't know if this should be done by experimental verification or by constants pre-defined in literature (if they exist).
 
+<h3> 3-3-25 </h3>
+
+Today is the day before meeting up with my supervisor just to go over the basis of the mathematical model. I am running some larger simulations, there are some strange artifacts, but Im not sure how significant they are. For example there seems to be some "leakage" of the cells from the central tumor, Im not sure if its an issue with the plotting, or just the simulation. I also need some other plotting method, its so hard to see whats really happening. The problem is the simulations take so long if I am doing any meaningful simulations, they take so long. But I think it is time to start getting ready to implement a cell cycle model that is accurate to the ovarian cancer cells that I think we are investigating. This means researching growth rates, death rates, etc, if they are in the literature, or potentially matching physical data to the simualtion. This I assume are the next steps of the project. Until that I think that I need to find suitable simulation parameters to confirm simulational growth matches reality. 
+
+Also want to note that currently the sim has some issues if all the cell types are set to the exact same value at the start. They seem to couple and are all the same value essentially for the whole simulation.
