@@ -67,13 +67,14 @@ from src.models.diffusion_dynamics import DiffusionDynamics
 
 
 class TumorGrowthModel:
-    def __init__(self, grid_shape=(50, 50, 50), dx=0.1, dt=0.001, params=None, initial_conditions=None):
+    def __init__(self, grid_shape=(50, 50, 50), dx=0.1, dt=0.001, params=None, initial_conditions=None, save_steps=1):
         self.grid_shape = grid_shape
         self.dx = dx
         self.dt = dt
         self.params = params or experimental_params
         self._initialize_fields(initial_conditions)
         self.history = self._initialize_history()
+        self.save_steps = save_steps
         
         self.cell_production = ProductionModel(self)
         self.cell_dynamics = DynamicsModel(self)
@@ -136,7 +137,7 @@ class TumorGrowthModel:
             setattr(self, field, update)
 
         self._enforce_volume_fractions()
-        if step % 5 == 0:
+        if step % self.save_steps == 0:
             self._update_history()
 
 
@@ -207,8 +208,9 @@ class TumorGrowthModel:
         self._distance_grid = dist_from_center  # Store for reuse
         
         # Use boolean masking for more efficient initialization
-        self.phi_H[dist_from_center <= 3] = 0.2
-        self.phi_D[dist_from_center <= 3] = 0.5
+        self.phi_H[dist_from_center <= 5] = 1
+        self.phi_D[dist_from_center <= 5] = 1
+        self.phi_P[dist_from_center <= 5] = 1
         
         # Enforce the global volume fraction constraint
         self._enforce_volume_fractions()

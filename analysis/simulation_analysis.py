@@ -11,7 +11,9 @@ class SimulationAnalyzer:
     """Analyzer for tumor growth simulation data from NPZ files."""
     
     def __init__(self, filepath):
-        """Initialize with the path to an NPZ file containing simulation history."""
+        """
+        Initialize with the path to an NPZ file containing simulation history.
+        """
         self.filepath = filepath
         self.history = load_simulation_history(filepath)
         self.volume_data = compute_total_volumes(self.history)
@@ -74,7 +76,8 @@ class SimulationAnalyzer:
         plt.show()
 
     def plot_radius(self, smooth_window=5):
-        """Plot tumor radius over time with optional smoothing.
+        """
+        Plot tumor radius over time with optional smoothing.
         
         Args:
             smooth_window (int): Window size for Savitzky-Golay smoothing (odd number).
@@ -98,7 +101,8 @@ class SimulationAnalyzer:
         plt.show()
 
     def plot_3d_at_step(self, step_index, levels=None, colors=None, mode='isosurface'):
-        """Plot 3D visualization of tumor fields at a specific time step with multiple modes.
+        """
+        Plot 3D visualization of tumor fields at a specific time step with multiple modes.
         
         Args:
             step_index (int): Index of the time step to visualize.
@@ -149,7 +153,8 @@ class SimulationAnalyzer:
         plt.show()
 
     def plot_3d_multiple_steps(self, step_indices, levels=None, colors=None):
-        """Plot 3D isosurfaces for multiple time steps in one figure.
+        """
+        Plot 3D isosurfaces for multiple time steps in one figure.
         
         Args:
             step_indices (list): List of time step indices to visualize.
@@ -189,7 +194,8 @@ class SimulationAnalyzer:
         plt.show()
 
     def plot_cross_section(self, step_index, plane='XY', index=None, smooth_sigma=2.0):
-        """Plot 2D cross-sections of tumor fields with smoothed contours.
+        """
+        Plot 2D cross-sections of tumor fields with smoothed contours.
         
         Args:
             step_index (int): Index of the time step to visualize.
@@ -256,7 +262,8 @@ class SimulationAnalyzer:
         plt.show()
 
     def animate_cross_section(self, plane='XY', index=None, interval=200, save_as=None):
-        """Animate 2D cross-sections of tumor fields over time.
+        """
+        Animate 2D cross-sections of tumor fields over time.
         
         Args:
             plane (str): Plane to slice ('XY', 'XZ', 'YZ'). Defaults to 'XY'.
