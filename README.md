@@ -5,6 +5,7 @@
 <h3>Goals</h3>
 
 https://dx.doi.org/10.5281/zenodo.14428535
+https://www.science.org/doi/full/10.1126/sciadv.abm5952
 
 <ul>
     <li>To model the growth of a tumor in a 3D domain. Confirm parameters/model with experimental data.</li>
