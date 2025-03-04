@@ -4,6 +4,8 @@
 
 <h3>Goals</h3>
 
+https://dx.doi.org/10.5281/zenodo.14428535
+
 <ul>
     <li>To model the growth of a tumor in a 3D domain. Confirm parameters/model with experimental data.</li>
     <li>To model the effect of the media on the tumor growth.</li>
