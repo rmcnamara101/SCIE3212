@@ -103,7 +103,9 @@ Python 3.8+ recommended.
 1. Clone or download this repository.
 2. Install Python dependencies:
 
+```
 pip install -r requirements.txt
+```
 
 Or manually install the required libraries:
 - numpy
@@ -120,17 +122,21 @@ Ensure you have a C/C++ compiler available (if using Numba on certain platforms)
 
 1. Clone this repo:
 
+```
 git clone https://github.com/your_user/tumor_growth_project.git
 cd tumor_growth_project
+```
 
 2. Install dependencies:
 
+```
 pip install -r requirements.txt
+```
 
 3. Run the main simulation script:
-
+```
 python main.py
-
+```
 Output: The simulation data are saved (by default) to data/<simulation_name>_sim_data.npz. Intermediate fields are also stored in a Python dictionary for post-processing or visualization.
 
 ---
@@ -140,7 +146,7 @@ Output: The simulation data are saved (by default) to data/<simulation_name>_sim
 ### 1. Import the Model
 
 You can write a custom script to import and run the model directly:
-
+```
 import numpy as np
 from src.models.tumor_growth import TumorGrowthModel
 from src.models.initial_conditions import SphericalTumor
@@ -166,13 +172,13 @@ model.run_simulation(steps=100)
 # Retrieve the simulation history
 history = model.get_history()
 print(f"Number of saved timesteps: {len(history['step'])}")
-
+```
 ### 2. Using main.py
 
 A simpler approach is to just run:
-
+```
 python main.py
-
+```
 This internally creates a TumorGrowthModel, runs it for a default number of steps, and saves or visualizes the results.
 
 ---
