@@ -1,17 +1,26 @@
 Tumor Growth Model
 This repository contains a 3D tumor growth simulation framework implemented in Python. It solves a system of partial differential equations (PDEs) modeling various cell populations (stem, progenitor, differentiated, and necrotic cells) and a nutrient field. The simulation evolves these fields over time according to biological mechanisms such as cell proliferation, death, differentiation, and nutrient diffusion/consumption.
 
-Table of Contents
+<h3>Table of Contents</h3>
 
 -Overview
+
 -Features
+
 -Project Structure
+
 -Installation & Requirements
+
 -Quick Start
+
 -Usage
+
 -Simulation Workflow
+
 -Parameter Reference
+
 -Contributing
+
 -License
 
 
@@ -46,29 +55,29 @@ History Tracking: Stores all fields at specified intervals for post-processing.
 
 <h2>Project Structure</h2>
 
-SCIE3121/
-├─ src/
-│  ├─ models/
-│  │  ├─ cell_production.py      <- Source terms for cell population PDEs
-│  │  ├─ cell_dynamics.py        <- Cell advection and mass flux
-│  │  ├─ diffusion_dynamics.py   <- Nutrient diffusion and consumption
-│  │  ├─ tumor_growth.py         <- Main TumorGrowthModel class orchestrating the simulation
-│  │
-│  ├─ visualization/
-│  │  ├─ plot_tumor.py           <- Plotting routines (e.g., volume fraction slices, surfaces)
-│  │  └─ animate_tumor.py        <- Animation routines for time evolution
-│  │
-│  ├─ utils/
-│  │  ├─ utils.py                <- Utility functions (numerical methods, etc.)
-│  │  └─ ...                     <- Other helpers
-│  ├─ initial_conditions/
-│  │  ├─ __init__.py
-│  │  └─ initial_conditions.py   <- Classes to define the tumor initial condition
-│  └─ ...
-├─ main.py                       <- Entry point for running and testing simulations
-├─ README.md                     <- Project documentation (this file)
-├─ requirements.txt              <- Python dependencies (if provided)
-└─ data/                         <- Folder to store output files, e.g. NPZ simulation results
+            SCIE3121/
+            ├─ src/
+            │  ├─ models/
+            │  │  ├─ cell_production.py      <- Source terms for cell population PDEs
+            │  │  ├─ cell_dynamics.py        <- Cell advection and mass flux
+            │  │  ├─ diffusion_dynamics.py   <- Nutrient diffusion and consumption
+            │  │  ├─ tumor_growth.py         <- Main TumorGrowthModel class orchestrating the simulation
+            │  │
+            │  ├─ visualization/
+            │  │  ├─ plot_tumor.py           <- Plotting routines (e.g., volume fraction slices, surfaces)
+            │  │  └─ animate_tumor.py        <- Animation routines for time evolution
+            │  │
+            │  ├─ utils/
+            │  │  ├─ utils.py                <- Utility functions (numerical methods, etc.)
+            │  │  └─ ...                     <- Other helpers
+            │  ├─ initial_conditions/
+            │  │  ├─ __init__.py
+            │  │  └─ initial_conditions.py   <- Classes to define the tumor initial condition
+            │  └─ ...
+            ├─ main.py                       <- Entry point for running and testing simulations
+            ├─ README.md                     <- Project documentation (this file)
+            ├─ requirements.txt              <- Python dependencies (if provided)
+            └─ data/                         <- Folder to store output files, e.g. NPZ simulation results
 
 
 <h3>Key Files:</h3>
