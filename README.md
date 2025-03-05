@@ -49,29 +49,29 @@ This code numerically solves these coupled PDEs using finite differences, levera
 
 ## Project Structure
 
-SCIE3121/
-├── src/
-│   ├── models/
-│   │   ├── cell_production.py      # Source terms for cell population PDEs
-│   │   ├── cell_dynamics.py        # Cell advection and mass flux
-│   │   ├── diffusion_dynamics.py   # Nutrient diffusion and consumption
-│   │   ├── tumor_growth.py         # Main TumorGrowthModel class orchestrating the simulation
-│   │
-│   ├── visualization/
-│   │   ├── plot_tumor.py           # Plotting routines (e.g., volume fraction slices, surfaces)
-│   │   └── animate_tumor.py        # Animation routines for time evolution
-│   │
-│   ├── utils/
-│   │   ├── utils.py                # Utility functions (numerical methods, etc.)
-│   │   └── ...                     # Other helpers
-│   ├── initial_conditions/
-│   │   ├── __init__.py
-│   │   └── initial_conditions.py   # Classes to define the tumor initial condition
-│   └── ...
-├── main.py                         # Entry point for running and testing simulations
-├── README.md                       # Project documentation (this file)
-├── requirements.txt                # Python dependencies (if provided)
-└── data/                           # Folder to store output files, e.g., NPZ simulation results
+      SCIE3121/
+      ├── src/
+      │   ├── models/
+      │   │   ├── cell_production.py      # Source terms for cell population PDEs
+      │   │   ├── cell_dynamics.py        # Cell advection and mass flux
+      │   │   ├── diffusion_dynamics.py   # Nutrient diffusion and consumption
+      │   │   ├── tumor_growth.py         # Main TumorGrowthModel class orchestrating the simulation
+      │   │
+      │   ├── visualization/
+      │   │   ├── plot_tumor.py           # Plotting routines (e.g., volume fraction slices, surfaces)
+      │   │   └── animate_tumor.py        # Animation routines for time evolution
+      │   │
+      │   ├── utils/
+      │   │   ├── utils.py                # Utility functions (numerical methods, etc.)
+      │   │   └── ...                     # Other helpers
+      │   ├── initial_conditions/
+      │   │   ├── __init__.py
+      │   │   └── initial_conditions.py   # Classes to define the tumor initial condition
+      │   └── ...
+      ├── main.py                         # Entry point for running and testing simulations
+      ├── README.md                       # Project documentation (this file)
+      ├── requirements.txt                # Python dependencies (if provided)
+      └── data/                           # Folder to store output files, e.g., NPZ simulation results
 
 ### Key Files
 
