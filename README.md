@@ -239,7 +239,7 @@ Contributions in the form of bug reports, feature requests, or pull requests are
 
 ## License
 
-This project does not have an explicit license in the source code. You may add an open-source license (e.g., MIT, GPL) if desired. Until then, please contact the author or repository owner for usage permissions.
+This project does not have an explicit license in the source code. 
 
 ---
 
