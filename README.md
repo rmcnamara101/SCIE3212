@@ -1,170 +1,246 @@
-<h1>SCIE3212</h1>
+# Tumor Growth Model
 
-<h2>Tumor Growth Model in Differing Media</h2>
+This repository contains a 3D tumor growth simulation framework implemented in Python. It solves a system of partial differential equations (PDEs) modeling various cell populations (stem, progenitor, differentiated, and necrotic cells) and a nutrient field. The simulation evolves these fields over time according to biological mechanisms such as cell proliferation, death, differentiation, and nutrient diffusion/consumption.
 
-<h3>Goals</h3>
+---
 
-<ul>
-    <li>To model the growth of a tumor in a 3D domain. Confirm parameters/model with experimental data.</li>
-    <li>To model the effect of the media on the tumor growth.</li>
-</ul>
+## Table of Contents
 
-<h3>Overview</h3>
+1. Overview
+2. Features
+3. Project Structure
+4. Installation & Requirements
+5. Quick Start
+6. Usage
+7. Simulation Workflow
+8. Parameter Reference
+9. Contributing
+10. License
 
-This project is a model of organoid tumor growth in a 3D domain.
-The model is a system of partial differential equations (PDEs) that describe the growth of the tumor.
-The approach of this model is considering tumor growth as the interplay between the follwing cell types:
-<ul>
-    <li>Stem Cells (SC)</li>
-    <li>Progenitor Cells (PC)</li>
-    <li>Differentiated Cells (DC)</li>
-    <li>Necrotic Cells (NC)</li>
-</ul>
+---
 
-The stem cells are the healthy cells that can divide and differentiate into the other two cell types.
-The progenitor cells are the cells that can divide and differentiate into the differentiated cells.
-The differentiated cells are the cells that cannot divide or differentiate further.
-The necrotic cells are the cells that are dead and do not divide or differentiate.
+## Overview
 
-The model is a system of diffusion-reaction equations that describe the growth of the tumor.
-We first define each of the volume fraction fields for each of the cell types $\varphi_S(\hat x, t)$, $\varphi_P(\hat x, t)$, $\varphi_D(\hat x, t)$, and $\varphi_N(\hat x, t)$.
-The $\hat x$ is the spatial position and $t$ is the time. We also define the host region volume fraction field $\varphi_H$. Where the condition $\varphi_T + \varphi_H = \varphi_S + \varphi_P + \varphi_D + \varphi_N + \varphi_H = 1$ is enforced.
+Tumor progression involves many interacting biological processes, including:
 
-We can model the time evolution of these volume fraction fields using an adjusted set of equations proposed in [1].
-The equations are as follows:
+- Cell Production
+  Stem cells, progenitor cells, and differentiated cells expand or die out according to nutrient availability and biologically motivated source terms.
 
-$$
-\frac{\partial \varphi_S}{\partial t} + \nabla (u_s \varphi_S) = - \nabla \cdot J_S + \lambda_S n \varphi_S(2p_0 - 1) - \mu_S \mathcal{H}(\hat n_S - n) \varphi_S
-$$
+- Cell Dynamics
+  The cells move and redistribute in space driven by solid velocity (pressure gradients, adhesion energy) and mass flux (gradients of adhesion energy).
 
-$$
-\frac{\partial \varphi_P}{\partial t} + \nabla (u_s \varphi_P) = - \nabla \cdot J_P + \lambda_S n 2\varphi_S(1 - p_0) + \lambda_P n \varphi_P(2p_1 - 1) - \mu_P \mathcal{H}(\hat n_P - n) \varphi_P
-$$
+- Nutrient Diffusion
+  Nutrient diffuses throughout the domain and is consumed by the growing tumor.
 
-$$
-\frac{\partial \varphi_D}{\partial t} + \nabla (u_s \varphi_D) = - \nabla \cdot J_D + \lambda_P n \varphi_P(1 - p_1) - \mu_D \mathcal{H}(\hat n_D - n) \varphi_D - \alpha_D C_D
-$$
+This code numerically solves these coupled PDEs using finite differences, leveraging Numba-accelerated functions for better performance.
 
-$$
-\frac{\partial \varphi_N}{\partial t} + \nabla (u_s \varphi_N) = - \nabla \cdot J_N + \mu_S \mathcal{H}(\hat n_S - n) \varphi_S + \mu_P \mathcal{H}(\hat n_P - n) \varphi_P + \mu_D \mathcal{H}(\hat n_D - n) \varphi_D + \alpha_D \varphi_D - \gamma_N \varphi_N
-$$
+---
 
-The parameters are defined as follows:
-<ul>
-    <li>$\lambda_i$ is the rate of i cell division.</li>
-    <li>$\mu_i$ is the rate of i cell death.</li>
-    <li>$\gamma_N$ is the lysis rate of necrotic cells.</li>
-    <li>$\alpha_D$ is the apoptosis rate of differentiated cells.</li>
-    <li>$u_s$ is the solid velocity.</li>
-    <li>$p_0$ is the probability of stem cell division.</li>
-    <li>$p_1$ is the probability of progenitor cell division.</li>
-    <li>$J_i$ is the flux of i cell.</li>
-    <li>$\hat n_i$ is the required nutrient level for i cell.</li>
-</ul>
+## Features
 
-The mass flux of each cell type is given by the generalised Fick's law:
+- Multiple Cell Populations: Stem cells, progenitor cells, differentiated cells, necrotic cells.
+- Nutrient Field: A scalar field representing nutrient concentration, which can diffuse and be consumed by the tumor.
+- Volume Fraction Enforcement: Ensures the sum of cell populations does not exceed a specified maximum volume fraction.
+- Configurable Parameters: Growth rates, death rates, diffusion coefficients, etc.
+- Runge-Kutta Integration: Time-stepping using a 4th-order Runge-Kutta scheme with clipping to maintain numerical stability.
+- History Tracking: Stores all fields at specified intervals for post-processing.
 
-$$
-J_i = -M_i \nabla \varphi_i\left ( \frac{\delta E}{\delta \varphi_i} \right )
-$$
+---
 
-Where $M_i$ is the cell mobility, and $E$ is adhesion energy functional given by:
+## Project Structure
 
-$$
-E = \frac{\gamma}{\epsilon}\int_{\Omega} f(C_T) + \frac{\epsilon^2}{2}|{\nabla \varphi_T}|^2 dx
-$$
+      SCIE3121/
+      ├── src/
+      │   ├── models/
+      │   │   ├── cell_production.py      # Source terms for cell population PDEs
+      │   │   ├── cell_dynamics.py        # Cell advection and mass flux
+      │   │   ├── diffusion_dynamics.py   # Nutrient diffusion and consumption
+      │   │   ├── tumor_growth.py         # Main TumorGrowthModel class orchestrating the simulation
+      │   │
+      │   ├── visualization/
+      │   │   ├── plot_tumor.py           # Plotting routines (e.g., volume fraction slices, surfaces)
+      │   │   └── animate_tumor.py        # Animation routines for time evolution
+      │   │
+      │   ├── utils/
+      │   │   ├── utils.py                # Utility functions (numerical methods, etc.)
+      │   │   └── ...                     # Other helpers
+      │   ├── initial_conditions/
+      │   │   ├── __init__.py
+      │   │   └── initial_conditions.py   # Classes to define the tumor initial condition
+      │   └── ...
+      ├── main.py                         # Entry point for running and testing simulations
+      ├── README.md                       # Project documentation (this file)
+      ├── requirements.txt                # Python dependencies (if provided)
+      └── data/                           # Folder to store output files, e.g., NPZ simulation results
 
-Where it's variational derivative is given by:
+### Key Files
 
-$$
-\frac{\delta E}{\delta \varphi_i} = \frac{\gamma}{\epsilon} \left (f'(\varphi_T) + \epsilon^2 \nabla^2 \varphi_T \right )
-$$
+- tumor_growth.py
+  Defines the TumorGrowthModel class. Creates and updates the major fields (cell types, nutrient), applies time steps, and tracks simulation history.
 
-Where $f(\varphi_T)$ is the double well potential:
+- cell_production.py
+  Implements the source terms (production, death, differentiation) for each cell population.
 
-$$
-f(\varphi_T) = \frac{1}{4}\varphi_T^2(1 - \varphi_T)^2
-$$
+- cell_dynamics.py
+  Handles the advection and mass flux of cells. It computes velocity fields from pressure and adhesion energy gradients, then updates each cell population accordingly.
 
-Note that $\varphi_T = \varphi_S + \varphi_P + \varphi_D + \varphi_N$ is the total cell volume fraction.
+- diffusion_dynamics.py
+  Handles the diffusion and consumption of the nutrient field. Uses a finite difference Laplacian plus a nutrient consumption term proportional to total cell density.
 
+- main.py
+  Example usage and entry point. Shows how to:
+  - Initialize the tumor model
+  - Run the simulation
+  - Save the history
+  - Optionally visualize or animate results
 
-Now that we have the mass flux, we can model the solid velocity $u_s$ as:
+---
 
-$$
-u_s = - \left ( \nabla p + \frac{\delta E}{\delta \varphi_T} \nabla \varphi_T \right )
-$$
+## Installation & Requirements
 
-Where $p$ is the internal pressure field. This equation is Darcy's Law, where the first term describes the internal pressure generating an outward flow of the solid material, and the second term describes the opposition to the flow due to the adhesion energy (how much the cells want to stick together).
+Python 3.8+ recommended.
 
-The internal pressure $p$ is given by:
+1. Clone or download this repository.
+2. Install Python dependencies:
 
-$$
-\nabla ^2 p = S_T - \nabla \cdot \left  ( \frac{\delta E}{\delta \varphi_T} \nabla \varphi_T \right )
-$$
+```
+pip install -r requirements.txt
+```
 
-Where $S_T$ is the source of the tumor cells given by $S_T = \lambda_S n \varphi_S + \lambda_P n \varphi_P + \gamma_N \varphi_N$.
+Or manually install the required libraries:
+- numpy
+- numba
+- scipy
+- matplotlib (for visualization, if desired)
+- tqdm
 
-Finally we can also model the nutrient field $n$ as a steady state diffusion equation (we can assume the nutrient diffusion is much faster than cell growth, as a result the time derivative is negligible):
+Ensure you have a C/C++ compiler available (if using Numba on certain platforms).
 
-$$
-0 = \nabla ( D_n \nabla n ) - n (\omega_S^n \varphi_S + \omega_P^n \varphi_P + \omega_D^n \varphi_D) + p_n (1 - \varphi_T) (\bar n - n)
-$$
+---
 
-Where $\omega_i^n$ is the rate of nutrient consumption by cell type $i$. $p_n$ is the permeability of the nutrient, $\bar n$ is the nutrient concentration in the media, and $D_n$ is the diffusion coefficient of the nutrient.
+## Quick Start
 
+1. Clone this repo:
 
-This builds the system of equations for the tumor growth model. Going further, we can model the effect of other concentrations of other nutrient fields, such as oxygen, growth inhibitors, by incorporating them into the probability terms $p_0$ and $p_1$. The paper this is based on models the effects of a growth inhibitor and promoter. These extra "nutrient" fields are modelled by similar mass conservation equations.
+```
+git clone https://github.com/your_user/tumor_growth_project.git
+cd tumor_growth_project
+```
 
-For this project, we are investigating the effect of the external media on the organoid growth. We have to adjust the model in some way to account for this. My first thoughts in the way the media could effect the growth of the model is in the following way:
+2. Install dependencies:
 
-<ul>
-    <li>Media viscosity/density: This could effect the solid velocity, but also the internal pressure $p$ of the organoid.</li>
-    <li>Media intra-molecular forces: This could effect the adhesion energy $E$ directly.</li>
-    <li>Media charge: As tumor cells are negatively charged, a positively charged media could reduce the adhesion energy $E$ directly.</li>
-    <li>Cell proliferation rate could reduce/increase depending on mechanical stress (as the cells will have to work harder to grow against the media)</li>
-    <li>Media density could effect nutrient diffusion rate (how does diffusion into the organoid occur? does it reach the centre? etc?)</li>
-</ul>
+```
+pip install -r requirements.txt
+```
 
-Some propositions to consider from these effects. 
-First to consider the effects that could occur from the media viscosity, density, and intra-molecular forces, is that we could adjust Darcy's Law to account for these effects. In effect this would reduce/increase the solid velocity of the cells, and thus the growth rate of the organoid.
+3. Run the main simulation script:
+```
+python main.py
+```
+Output: The simulation data are saved (by default) to data/<simulation_name>_sim_data.npz. Intermediate fields are also stored in a Python dictionary for post-processing or visualization.
 
-$$
-u_s = - \frac{1}{\eta} \left ( \nabla p + \frac{\delta E}{\delta \varphi_T} \nabla \varphi_T \right )
-$$
+---
 
-Where $\eta$ is some scalar value that desribes the effects of these contributions to the solid velocity.
+## Usage
 
-Considering the effects of the media charge, this would affect the adhesion energy of the cells. As tumor cells are negatively charged, a positively charged media would reduce the adhesion energy of the cells (cells are attracted to the media), and a negatively charged media would increase the adhesion energy of the cells (cells are repelled by the media). This could be modelled by an extra term in the adhesion energy functional $E$.
+### 1. Import the Model
 
-$$
-E = \frac{\gamma}{\epsilon}\int_{\Omega} f(\varphi_T) + \frac{\epsilon^2}{2}|{\nabla \varphi_T}|^2 dx + \int_{\Omega} \Phi(\varphi_T) dx
-$$
+You can write a custom script to import and run the model directly:
+```
+import numpy as np
+from src.models.tumor_growth import TumorGrowthModel
+from src.models.initial_conditions import SphericalTumor
+from src.utils.utils import experimental_params
 
-Where $\Phi(\varphi_T)$ is some function of the cell density $\varphi_T$. This could be a linear function, or a more complex function.
+# Create your initial conditions
+grid_shape = (50, 50, 50)
+initial_conditions = SphericalTumor(grid_shape, radius=5, nutrient_value=0.001)
 
-This would propagate into the variational derivative of the adhesion energy functional $E$ as follows:
+# Instantiate the model
+model = TumorGrowthModel(
+    grid_shape=grid_shape,
+    dx=0.1,
+    dt=0.001,
+    params=experimental_params,
+    initial_conditions=initial_conditions,
+    save_steps=10
+)
 
-$$
-\frac{\delta E}{\delta \varphi_T} = \frac{\gamma}{\epsilon} \left (f'(\varphi_T) + \epsilon^2 \nabla^2 \varphi_T \right ) + \frac{\delta \Phi}{\delta \varphi_T}
-$$
+# Run simulation
+model.run_simulation(steps=100)
 
-And thus into the mass flux $J_i$ as follows:
+# Retrieve the simulation history
+history = model.get_history()
+print(f"Number of saved timesteps: {len(history['step'])}")
+```
+### 2. Using main.py
 
-$$
-J_i = -M_i \nabla \varphi_i\left ( \frac{\delta E}{\delta \varphi_i} \right )
-$$
+A simpler approach is to just run:
+```
+python main.py
+```
+This internally creates a TumorGrowthModel, runs it for a default number of steps, and saves or visualizes the results.
 
-This would clearly then effect how the cells move and grow.
+---
 
-<h3>Current Questions</h3>
+## Simulation Workflow
 
-- What will the impact of the media be on growth? Media viscosity? Density? Intra-molecular forces?
-- How can we model the physical effect of the media on the cell growth rates? Changes in internal pressure? Reduction/increase in the adhesion energy of the cells (probably not I assume this is more of a mechanical effect of the cells intracellular forces. Unless the media is positively charged and as tumor cells are negativey charged, this could be a factor)?
-- I think from looking at these equations, I can infer that the tumor cell population is proportional the the progenitor cell population, which is in turn proportional to the stem cell population. In a spherical organoid, this implies that the tumor cells should grow in the centre (assuming a sufficiently diffused nutrient field), as this is where the cells are most dense. This makes statistical sense as the greater the cell population, the greater the chance for cell proliferation.
+1. Initialize Fields:
+   A user-specified initial condition sets up each cell population fraction and nutrient field.
+   Example: A spherical tumor region in the domain, with uniform nutrient outside.
 
-<h3>References</h3>
+2. Production & Death:
+   The PDE source terms (growth, death, differentiation) are computed via cell_production.py.
 
-<p>
-    [1] https://pmc.ncbi.nlm.nih.gov/articles/PMC5756149/#S7
-</p>
+3. Cell Dynamics:
+   Velocities and mass fluxes are computed to account for movement of each population from local gradients of pressure and adhesion energy. Implemented in cell_dynamics.py.
+
+4. Nutrient Diffusion:
+   A diffusion equation plus a consumption term from total cell density is solved for the nutrient field (in diffusion_dynamics.py).
+
+5. Time Integration:
+   The model uses a 4th-order Runge-Kutta scheme with stability checks (clipping large derivatives).
+
+6. Volume Fraction Enforcement:
+   If the total cell fraction surpasses a maximum (e.g., 1), it is rescaled to ensure no overlap beyond physical constraints.
+
+7. History & Outputs:
+   At user-defined intervals (save_steps), the volume fraction fields and step count are stored in the model history. These can be saved as NPZ files for further analysis or visualization.
+
+---
+
+## Parameter Reference
+
+Some typical parameters (accessible via model.params) include:
+
+- lambda_S, lambda_P: Growth/proliferation rates for stem & progenitor cells.
+- mu_S, mu_P, mu_D: Death rates for stem, progenitor, and differentiated cells.
+- alpha_D: Differentiation rate into necrotic cells.
+- D_n: Nutrient diffusion coefficient.
+- gamma_N: Necrotic cell dissolution rate.
+- p_0, p_1: Probabilities that govern branching between different cell fates.
+- dx, dt: Spatial and temporal discretization.
+- phi_S: Maximum total volume fraction limit.
+- M, gamma, epsilon: Parameters controlling adhesion energy and mass flux.
+
+You can edit or provide your own parameter dictionary to fine-tune the simulation.
+
+---
+
+## Contributing
+
+Contributions in the form of bug reports, feature requests, or pull requests are welcome. Please:
+
+1. Fork the repository
+2. Create a new branch for your changes
+3. Open a pull request with a clear description
+
+---
+
+## License
+
+This project does not have an explicit license in the source code. 
+
+---
+
+Enjoy exploring tumor growth dynamics! Feel free to adapt this framework for your own research or educational projects. If you find any issues or would like to suggest improvements, open an issue or pull request.
