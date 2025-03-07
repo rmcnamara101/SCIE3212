@@ -115,6 +115,7 @@ class TumorGrowthModel:
         np.savez(file_str, **history)
 
 
+
     def get_history(self) -> dict:
         """
         This function will return the history of the simulation

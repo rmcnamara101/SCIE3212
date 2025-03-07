@@ -61,7 +61,7 @@
 import numpy as np
 import numba as nb
 from src.utils.utils import gradient, laplacian, divergence
-from src.models.cell_production import compute_cell_sources
+from src.models.cell_production import compute_cell_sources, compute_cell_sources_scie3121_model
 
 
 @nb.njit
@@ -75,7 +75,7 @@ def compute_cell_dynamics(phi_H, phi_P, phi_D, phi_N, nutrient, dx, gamma, epsil
     Jx_S, Jy_S, Jz_S = compute_mass_current(phi_H, C_T, dx, gamma, epsilon, M)
     Jx_P, Jy_P, Jz_P = compute_mass_current(phi_P, C_T, dx, gamma, epsilon, M)
     Jx_D, Jy_D, Jz_D = compute_mass_current(phi_D, C_T, dx, gamma, epsilon, M)
-    Jx_N, Jy_N, Jz_N = compute_mass_current(phi_N, C_T, dx, gamma, epsilon, M)
+    Jx_N, Jy_N, Jz_N = compute_mass_current(phi_N, C_T, dx, gamma, epsilon, 0.000001)
 
     dC_S = -divergence(ux * phi_H, uy * phi_H, uz * phi_H, dx) - divergence(Jx_S, Jy_S, Jz_S, dx)
     dC_P = -divergence(ux * phi_P, uy * phi_P, uz * phi_P, dx) - divergence(Jx_P, Jy_P, Jz_P, dx)
@@ -85,14 +85,56 @@ def compute_cell_dynamics(phi_H, phi_P, phi_D, phi_N, nutrient, dx, gamma, epsil
     return dC_S, dC_P, dC_D, dC_N
 
 @nb.njit
+def compute_cell_dynamics_scie3121_model(phi_H, phi_D, phi_N, nutrient, dx, gamma, epsilon, M, lambda_H, lambda_D, mu_H, mu_D, mu_N, p_H, p_D, n_H, n_D):
+    """
+    Compute dynamics derivatives: -∇·(u \phi) - ∇·J.
+    Returns: dphi_S, dphi_P, dphi_D, dphi_N as NumPy arrays.
+    """
+    phi_T = phi_H + phi_D + phi_N
+    ux, uy, uz = compute_solid_velocity_scie3121_model(phi_H, phi_D, phi_N, nutrient, dx, gamma, epsilon, lambda_H, lambda_D, mu_H, mu_D, mu_N, p_H, p_D, n_H, n_D)
+    Jx_S, Jy_S, Jz_S = compute_mass_current(phi_H, phi_T, dx, gamma, epsilon, M)
+    Jx_D, Jy_D, Jz_D = compute_mass_current(phi_D, phi_T, dx, gamma, epsilon, M)
+    Jx_N, Jy_N, Jz_N = compute_mass_current(phi_N, phi_T, dx, gamma, epsilon, 0.000001)
+
+    dphi_S = -divergence(ux * phi_H, uy * phi_H, uz * phi_H, dx) - divergence(Jx_S, Jy_S, Jz_S, dx)
+    dphi_D = -divergence(ux * phi_D, uy * phi_D, uz * phi_D, dx) - divergence(Jx_D, Jy_D, Jz_D, dx)
+    dphi_N = -divergence(ux * phi_N, uy * phi_N, uz * phi_N, dx) - divergence(Jx_N, Jy_N, Jz_N, dx)
+
+    return dphi_S, dphi_D, dphi_N
+
+@nb.njit
 def compute_solid_velocity(phi_H, phi_P, phi_D, phi_N, nutrient, dx, gamma, epsilon, lambda_S, lambda_P, mu_S, mu_P, mu_D, alpha_D, p_0, p_1, gamma_N, n_S, n_P, n_D):
-    C_T = phi_H + phi_P + phi_D + phi_N
+    C_T = phi_H + phi_D + phi_N
     pressure = compute_internal_pressure(phi_H, phi_P, phi_D, phi_N, nutrient, dx, gamma, epsilon, lambda_S, lambda_P, mu_S, mu_P, mu_D, alpha_D, p_0, p_1, gamma_N, n_S, n_P, n_D)
     energy_deriv = compute_adhesion_energy_derivative(C_T, dx, gamma, epsilon)
     
     grad_C_x = gradient(C_T, dx, 0)
     grad_C_y = gradient(C_T, dx, 1)
     grad_C_z = gradient(C_T, dx, 2)
+    grad_p_x = gradient(pressure, dx, 0)
+    grad_p_y = gradient(pressure, dx, 1)
+    grad_p_z = gradient(pressure, dx, 2)
+
+    ux = -(grad_p_x + energy_deriv * grad_C_x)
+    uy = -(grad_p_y + energy_deriv * grad_C_y)
+    uz = -(grad_p_z + energy_deriv * grad_C_z)
+
+    max_velocity = 10.0
+    ux = np.clip(ux, -max_velocity, max_velocity)
+    uy = np.clip(uy, -max_velocity, max_velocity)
+    uz = np.clip(uz, -max_velocity, max_velocity)
+
+    return ux, uy, uz
+
+@nb.njit
+def compute_solid_velocity_scie3121_model(phi_H, phi_D, phi_N, nutrient, dx, gamma, epsilon, lambda_H, lambda_D, mu_H, mu_D, mu_N, p_H, p_D, n_H, n_D):
+    phi_T = phi_H + phi_D + phi_N
+    pressure = compute_internal_pressure_scie3121_model(phi_H, phi_D, phi_N, nutrient, dx, gamma, epsilon, lambda_H, lambda_D, mu_H, mu_D, mu_N, p_H, p_D, n_H, n_D)
+    energy_deriv = compute_adhesion_energy_derivative(phi_T, dx, gamma, epsilon)
+    
+    grad_C_x = gradient(phi_T, dx, 0)
+    grad_C_y = gradient(phi_T, dx, 1)
+    grad_C_z = gradient(phi_T, dx, 2)
     grad_p_x = gradient(pressure, dx, 0)
     grad_p_y = gradient(pressure, dx, 1)
     grad_p_z = gradient(pressure, dx, 2)
@@ -125,6 +167,31 @@ def compute_internal_pressure(phi_H, phi_P, phi_D, phi_N, nutrient, dx, gamma, e
 
     divergence = grad_energy_x * grad_C_x + grad_energy_y * grad_C_y + grad_energy_z * grad_C_z + energy_deriv * laplace_C
     rhs = S_T - divergence
+    rhs = np.clip(rhs, -1e3, 1e3)  # Stabilize RHS
+
+    p = np.zeros_like(rhs)
+    for _ in range(10):
+        p_new = laplacian(p, dx) * dx * dx + rhs
+        p = np.clip((p_new + p) / 2.0, -1e3, 1e3)  # Tighter bounds
+    return p
+
+@nb.njit
+def compute_internal_pressure_scie3121_model(phi_H, phi_D, phi_N, nutrient, dx, gamma, epsilon, lambda_H, lambda_D, mu_H, mu_D, mu_N, p_H, p_D, n_H, n_D):
+    phi_T = phi_H + phi_D + phi_N
+    src_H, src_D, src_N = compute_cell_sources_scie3121_model(phi_H, phi_D, phi_N, nutrient, n_H, n_D, lambda_H, lambda_D, mu_H, mu_D, p_H, p_D, mu_N)
+    Src_T = src_H + src_D + src_N
+
+    energy_deriv = compute_adhesion_energy_derivative(phi_T, dx, gamma, epsilon)
+    laplace_C = laplacian(phi_T, dx)
+    grad_C_x = gradient(phi_T, dx, 0)
+    grad_C_y = gradient(phi_T, dx, 1)
+    grad_C_z = gradient(phi_T, dx, 2)
+    grad_energy_x = gradient(energy_deriv, dx, 0)
+    grad_energy_y = gradient(energy_deriv, dx, 1)
+    grad_energy_z = gradient(energy_deriv, dx, 2)
+
+    divergence = grad_energy_x * grad_C_x + grad_energy_y * grad_C_y + grad_energy_z * grad_C_z + energy_deriv * laplace_C
+    rhs = Src_T - divergence
     rhs = np.clip(rhs, -1e3, 1e3)  # Stabilize RHS
 
     p = np.zeros_like(rhs)
@@ -174,3 +241,17 @@ class DynamicsModel:
             params['mu_D'], params['alpha_D'], params['p_0'], params['p_1'], params['gamma_N'],
             self.model.n_H, self.model.n_P, self.model.n_D
         )
+    
+
+class SCIE3121_DynamicsModel(DynamicsModel):
+    def __init__(self, model):
+        super().__init__(model)
+    
+    def compute_cell_dynamics(self, phi_H, phi_D, phi_N, nutrient, dx, params):
+        return compute_cell_dynamics_scie3121_model(
+            phi_H, phi_D, phi_N, nutrient, dx, 
+            params['gamma'], params['epsilon'], params['M'],
+            params['lambda_H'], params['lambda_D'], params['mu_H'], params['mu_D'], params['mu_N'],
+            params['p_H'], params['p_D'], self.model.n_H, self.model.n_D
+        )
+    

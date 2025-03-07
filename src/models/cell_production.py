@@ -82,6 +82,20 @@ def compute_cell_sources(phi_H, phi_P, phi_D, phi_N, nutrient, n_S, n_P, n_D, la
         np.clip(src_N, -50.0, 50.0)
     )
 
+@nb.njit
+def compute_cell_sources_scie3121_model(phi_H, phi_D, phi_N, nutrient, n_H, n_D, lambda_H, lambda_D, mu_H, mu_D, p_H, p_D, mu_N):
+    H_H = np.where(n_H - nutrient > 0, 1.0, 0.0)
+    H_D = np.where(n_D - nutrient > 0, 1.0, 0.0)
+
+    src_H = lambda_H * nutrient * phi_H * (2 * p_H - 1) - mu_H * H_H * phi_H
+    src_D = 2 * lambda_H * nutrient  * (1 - p_H) * phi_H + lambda_D * nutrient * phi_D * (2 * p_D - 1) - mu_D * H_D * phi_D 
+    src_N = mu_H * H_H * phi_H + mu_D * H_D * phi_D - mu_N * phi_N
+
+    return (
+        np.clip(src_H, -50.0, 50.0),
+        np.clip(src_D, -50.0, 50.0),
+        np.clip(src_N, -50.0, 50.0)
+    )
 
 class ProductionModel:
 
@@ -96,4 +110,20 @@ class ProductionModel:
             phi_H, phi_P, phi_D, phi_N, nutrient, n_S, n_P, n_D,
             params['lambda_S'], params['lambda_P'], params['mu_S'], params['mu_P'],
             params['mu_D'], params['alpha_D'], params['p_0'], params['p_1'], params['gamma_N']
+        )
+
+class SCIE3121_MODEL:
+
+    def __init__(self, model, drug_model = None):
+        self.model = model
+        self.drug_model = drug_model
+        self.params = self.model.params
+
+    def compute_cell_sources(self, phi_H, phi_D, phi_N, nutrient, n_H, n_D, params):
+        """Wrapper to call the Numba-optimized function."""
+        return compute_cell_sources_scie3121_model(
+            phi_H, phi_D, phi_N, nutrient,
+            n_H, n_D, params['lambda_H'], params['lambda_D'],
+            params['mu_H'], params['mu_D'], params['p_H'], params['p_D'],
+            params['mu_N']
         )

@@ -7,7 +7,7 @@ from matplotlib.animation import FuncAnimation
 from scipy.interpolate import griddata
 from scipy.ndimage import gaussian_filter
 
-class SimulationAnalyzer:
+class scie3121SimulationAnalyzer:
     """Analyzer for tumor growth simulation data from NPZ files."""
     
     def __init__(self, filepath):
@@ -16,6 +16,7 @@ class SimulationAnalyzer:
         """
         self.filepath = filepath
         self.history = load_simulation_history(filepath)
+        print(self.history.keys())
         self.volume_data = compute_total_volumes(self.history)
         self.radius_data = compute_total_radius(self.history, threshold=0.05)
         self.metadata = self.history['Simulation Metadata']
@@ -32,7 +33,7 @@ class SimulationAnalyzer:
             normalize (str, optional): 'initial' to normalize by initial total volume,
                                        'max' to normalize by maximum total volume.
         """
-        steps, healthy, progenitor, differentiated, necrotic, total = self.volume_data
+        steps, healthy, diseased, necrotic, total = self.volume_data
         
         # Ensure smooth_window is odd
         #if smooth_window % 2 == 0:
@@ -69,8 +70,7 @@ class SimulationAnalyzer:
         #        print("Warning: Maximum total volume is zero, skipping normalization.")
         
         plt.figure(figsize=(10, 6))
-        plt.plot(steps, progenitor, label='Progenitor')
-        plt.plot(steps, differentiated, label='Differentiated')
+        plt.plot(steps, diseased, label='Differentiated')
         plt.plot(steps, necrotic, label='Necrotic')
         plt.plot(steps, healthy, label='Healthy')
         plt.plot(steps, total, label='Total', linestyle='--', color='black', alpha=0.7)
@@ -116,14 +116,13 @@ class SimulationAnalyzer:
             mode (str): Visualization mode ('isosurface', 'voxel', 'scatter'). Defaults to 'isosurface'.
         """
         if levels is None:
-            levels = {'healthy': 0.1, 'progenitor': 0.1, 'differentiated': 0.1, 'necrotic': 0.1}
+            levels = {'healthy': 0.1, 'diseased': 0.1, 'necrotic': 0.1}
         if colors is None:
-            colors = {'healthy': 'green', 'progenitor': 'blue', 'differentiated': 'red', 'necrotic': 'black'}
+            colors = {'healthy': 'green', 'diseased': 'red', 'necrotic': 'black'}
         
         fields = {
             'healthy': self.history['healthy cell volume fraction'][step_index],
-            'progenitor': self.history['progenitor cell volume fraction'][step_index],
-            'differentiated': self.history['differentiated cell volume fraction'][step_index],
+            'diseased': self.history['diseased cell volume fraction'][step_index],
             'necrotic': self.history['necrotic cell volume fraction'][step_index]
         }
         
@@ -168,9 +167,9 @@ class SimulationAnalyzer:
             colors (dict, optional): Colors for each cell type.
         """
         if levels is None:
-            levels = {'healthy': 0.1, 'progenitor': 0.1, 'differentiated': 0.1, 'necrotic': 0.1}
+            levels = {'healthy': 0.1, 'diseased': 0.1, 'necrotic': 0.1}
         if colors is None:
-            colors = {'healthy': 'green', 'progenitor': 'blue', 'differentiated': 'red', 'necrotic': 'black'}
+            colors = {'healthy': 'green',  'differentiated': 'red', 'necrotic': 'black'}
         
         fig = plt.figure(figsize=(12, 10))
         
@@ -178,8 +177,7 @@ class SimulationAnalyzer:
             ax = fig.add_subplot(1, len(step_indices), i, projection='3d')
             fields = {
                 'healthy': self.history['healthy cell volume fraction'][step_index],
-                'progenitor': self.history['progenitor cell volume fraction'][step_index],
-                'differentiated': self.history['differentiated cell volume fraction'][step_index],
+                'diseased': self.history['diseased cell volume fraction'][step_index],
                 'necrotic': self.history['necrotic cell volume fraction'][step_index]
             }
             
@@ -217,14 +215,16 @@ class SimulationAnalyzer:
             levels (int): Number of contour levels. Defaults to 10.
             cmap (str): Colormap name. Defaults to 'viridis'.
         """
-        if cell_type not in ['healthy', 'progenitor', 'differentiated', 'necrotic']:
-            raise ValueError("Cell type must be 'healthy', 'progenitor', 'differentiated', or 'necrotic'")
+        if cell_type not in ['healthy', 'diseased', 'necrotic', 'total']:
+            raise ValueError("Cell type must be 'healthy', 'diseased', 'necrotic', or 'total'")
         
         fields = {
             'healthy': self.history['healthy cell volume fraction'][step_index],
-            'progenitor': self.history['progenitor cell volume fraction'][step_index],
-            'differentiated': self.history['differentiated cell volume fraction'][step_index],
-            'necrotic': self.history['necrotic cell volume fraction'][step_index]
+            'diseased': self.history['diseased cell volume fraction'][step_index],
+            'necrotic': self.history['necrotic cell volume fraction'][step_index],
+            'total': (self.history['healthy cell volume fraction'] + 
+                      self.history['necrotic cell volume fraction'] +
+                      self.history['diseased cell volume fraction'])[step_index]
         }
         
         shape = fields['healthy'].shape
@@ -303,8 +303,7 @@ class SimulationAnalyzer:
         """
         fields = {
             'healthy': self.history['healthy cell volume fraction'],
-            'progenitor': self.history['progenitor cell volume fraction'],
-            'differentiated': self.history['differentiated cell volume fraction'],
+            'diseased': self.history['diseased cell volume fraction'],
             'necrotic': self.history['necrotic cell volume fraction']
         }
         
@@ -386,12 +385,10 @@ def compute_total_volumes(history):
     """Compute total volumes for each cell type over time."""
     steps = history['step']
     healthy_volumes = [np.sum(phi) for phi in history['healthy cell volume fraction']]
-    progenitor_volumes = [np.sum(phi) for phi in history['progenitor cell volume fraction']]
-    differentiated_volumes = [np.sum(phi) for phi in history['differentiated cell volume fraction']]
+    diseased_volumes = [np.sum(phi) for phi in history['diseased cell volume fraction']]  # Changed to match typo
     necrotic_volumes = [np.sum(phi) for phi in history['necrotic cell volume fraction']]
-    total_volumes = [h + p + d + n for h, p, d, n in zip(healthy_volumes, progenitor_volumes, 
-                                                          differentiated_volumes, necrotic_volumes)]
-    return steps, healthy_volumes, progenitor_volumes, differentiated_volumes, necrotic_volumes, total_volumes
+    total_volumes = [h + d + n for h, d, n in zip(healthy_volumes, diseased_volumes, necrotic_volumes)]  # Adjusted to 3 terms
+    return steps, healthy_volumes, diseased_volumes, necrotic_volumes, total_volumes
 
 def create_distance_grid_from_field(field):
     """Create a distance grid from the field center."""
@@ -406,12 +403,11 @@ def compute_total_radius(history, threshold=0.05):
     first_phi = history['healthy cell volume fraction'][0]
     distance_grid = create_distance_grid_from_field(first_phi)
     
-    for phi_H, phi_P, phi_D, phi_N in zip(
+    for phi_H,  phi_D, phi_N in zip(
             history['healthy cell volume fraction'],
-            history['progenitor cell volume fraction'],
-            history['differentiated cell volume fraction'],
+            history['diseased cell volume fraction'],
             history['necrotic cell volume fraction']):
-        total_field = phi_H + phi_P + phi_D + phi_N
+        total_field = phi_H + phi_D + phi_N
         tumor_mask = total_field >= (threshold * np.max(total_field))
         radius = np.max(distance_grid[tumor_mask]) if np.any(tumor_mask) else 0
         radii.append(radius)

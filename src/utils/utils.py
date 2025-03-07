@@ -8,7 +8,7 @@ experimental_params = {
     # death rates
     "mu_S": 0.00000001, # death rate of stem cells
     "mu_P": 0.00000001, # death rate of progenitor cells
-    "mu_D": 0.000001, # death rate of differentiated cells
+    "mu_D": 0.00000001, # death rate of differentiated cells
 
     # differentiation rates
     "gamma_S": 10,
@@ -41,6 +41,33 @@ experimental_params = {
     "D_n": 0.1,
 
     "M": 0.001,
+}
+
+SCIE3121_params = {
+    # growth rates
+    "lambda_H": 3, # growth rate of healthy cells
+    "lambda_D": 4.3, # growth rate of damaged cells
+
+    # death rates
+    "mu_H": 0.0000001, # death rate of healthy cells
+    "mu_D": 0.000001, # death rate of damaged cells
+    "mu_N": 0.000001, # death rate of necrotic cells
+
+    # probability terms
+    "p_H": 0.6,
+    "p_D": 0.6,
+
+    # nutrient saturation for each cell type
+    "n_H": 0.0001,
+    "n_D": 0.0001,
+
+    # physical constants
+    'gamma': 1,
+    'epsilon': 0.05,                             
+    'M': 0.001, # cell mobility
+
+    # diffusion constant of nutrient field
+    "D_n": 0.1,
 }
 
 # src/utils/utils.py

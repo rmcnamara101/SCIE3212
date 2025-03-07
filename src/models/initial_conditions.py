@@ -12,14 +12,12 @@ class InitialCondition(ABC):
     def __init__(self, grid_shape: Tuple):
         self.grid_shape = grid_shape
         self.phi_H = np.zeros(grid_shape)
-        self.phi_P = np.zeros(grid_shape)
         self.phi_D = np.zeros(grid_shape)
         self.phi_N = np.zeros(grid_shape)
         self.nutrient = np.zeros(grid_shape)
         self.n_H = np.zeros(grid_shape)
-        self.n_P = np.zeros(grid_shape)
         self.n_D = np.zeros(grid_shape)
-        self.phi_R = np.zeros(grid_shape)
+        self.phi_h = np.zeros(grid_shape)
         
     @abstractmethod
     def initialize(self, params: dict):
@@ -44,8 +42,7 @@ class SphericalTumor(InitialCondition):
         self.nutrient = self.nutrient_value * np.ones(self.grid_shape)
         
         # Use broadcasting for parameter fields
-        self.n_H = params['p_0'] * np.ones(self.grid_shape)
-        self.n_P = params['p_1'] * np.ones(self.grid_shape)
+        self.n_H = params['p_H'] * np.ones(self.grid_shape)
         self.n_D = np.ones(self.grid_shape)
         
         # Pre-compute distance grid for initialization and radius calculation
@@ -56,8 +53,6 @@ class SphericalTumor(InitialCondition):
         # Use boolean masking for more efficient initialization
         self.phi_H[dist_from_center <= self.radius] = 0.2
         self.phi_D[dist_from_center <= self.radius] = 0.7
-        self.phi_P[dist_from_center <= self.radius] = 0.1
 
         
-        
-# Add other initial conditions here, such as ScatteredCells, etc.
+

@@ -32,7 +32,8 @@ from src.models.tumor_growth import TumorGrowthModel
 from src.visualization.plot_tumor import VolumeFractionPlotter
 from src.visualization.animate_tumor import TumorAnimator
 from src.models.initial_conditions import SphericalTumor
-from src.utils.utils import experimental_params
+from src.utils.utils import experimental_params, SCIE3121_params
+from src.models.SCIE3121_model import SCIE3121_MODEL
 
 def run_and_save_simulation(model: TumorGrowthModel, steps: int, name: str):
     """
@@ -110,18 +111,18 @@ def load_simulation_history(file_name: str) -> dict:
 
 def main():
     # Simulation parameters defined here
-    grid_shape = (200, 200, 200)
+    grid_shape = (50, 50, 50)
     dx = 0.1
     dt = 0.0001
-    params = experimental_params
-    steps = 400
-    save_steps = 10
+    params = SCIE3121_params
+    steps = 5000
+    save_steps = 100
 
     # Create the initial condition
-    initial_conditions = SphericalTumor(grid_shape, radius=5, nutrient_value=0.001)
+    initial_conditions = SphericalTumor(grid_shape, radius=7, nutrient_value=0.00001)
 
     # Initialize the model with the initial condition
-    model = TumorGrowthModel(
+    model = SCIE3121_MODEL(
         grid_shape=grid_shape,
         dx=dx,
         dt=dt,
@@ -131,7 +132,7 @@ def main():
     )
 
     # Run the simulation
-    model.run_and_save_simulation(steps=steps, name="spherical_tumor")
+    model.run_and_save_simulation(steps=steps, name="project_model_test")
 
     # Access the simulation history (optional)
     #history = model.get_history()

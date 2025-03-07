@@ -12,13 +12,21 @@ def compute_nutrient_diffusion(C_S, C_P, C_D, C_N, nutrient, dx, D_n):
     d_nutrient = D_n * laplacian(nutrient, dx) - consumption_rate * C_T * nutrient
     return np.clip(d_nutrient, -100.0, 100.0)  # Prevent extreme nutrient changes
 
+@nb.njit
+def compute_nutrient_diffusion_scie3121_model(phi_H, phi_D, phi_N, nutrient, dx, D_n):
+    consumption_rate = 0.1
+    phi_T = phi_H + phi_D + phi_N
+    d_nutrient = D_n * laplacian(nutrient, dx) - consumption_rate * phi_T * nutrient
+    return np.clip(d_nutrient, -100.0, 100.0)  # Prevent extreme nutrient changes
+
+
 class DiffusionDynamics:
     def __init__(self, model):
         self.model = model
 
-    def compute_nutrient_diffusion(self, C_S, C_P, C_D, C_N, nutrient, params):
+    def compute_nutrient_diffusion(self, phi_H, phi_D, phi_N, nutrient, params):
         """Wrapper to call the static Numba-optimized function."""
-        return compute_nutrient_diffusion(C_S, C_P, C_D, C_N, nutrient, self.model.dx, params['D_n'])
+        return compute_nutrient_diffusion(phi_H, phi_D, phi_N, nutrient, self.model.dx, params['D_n'])
     
 
     def apply_nutrient_diffusion(self):
@@ -36,3 +44,15 @@ class DiffusionDynamics:
                                      consumption_rate * self.model.C_T * nutrient)
         
         self.model.nutrient = nutrient
+
+class SCIE3121DiffusionModel(DiffusionDynamics):
+
+    def __init__(self, model):
+        super().__init__(model)
+
+    def compute_nutrient_diffusion(self, phi_H, phi_D, phi_N, nutrient, params):
+        return compute_nutrient_diffusion_scie3121_model(
+            phi_H, phi_D, phi_N, nutrient, self.model.dx, params['D_n']
+        )
+    
+    
