@@ -25,6 +25,7 @@
 import os
 import sys
 import numpy as np
+from joblib import Parallel, delayed
 
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
@@ -109,19 +110,87 @@ def load_simulation_history(file_name: str) -> dict:
         raise ValueError(f"Error loading simulation history from {file_name}: {str(e)}")
     
 
-def main():
-    # Simulation parameters defined here
-    grid_shape = (50, 50, 50)
-    dx = 0.1
-    dt = 0.0001
-    params = SCIE3121_params
+def run_simulation_with_params(grid_shape, dx, dt, params, steps, save_steps, radius, nutrient_value, name_suffix=""):
+    """Run a single simulation with given parameters and return the model"""
+    initial_conditions = SphericalTumor(grid_shape, radius=radius, nutrient_value=nutrient_value)
+    
+    model = SCIE3121_MODEL(
+        grid_shape=grid_shape,
+        dx=dx,
+        dt=dt,
+        params=params,
+        initial_conditions=initial_conditions,
+        save_steps=save_steps
+    )
+    
+    model.run_and_save_simulation(steps=steps, name=f"model_test_{name_suffix}")
+    return model
+
+
+def parallel_parameter_sweep():
+    """Run multiple simulations in parallel with different parameters"""
+    # Base simulation parameters
+    grid_shape = (40, 40, 40)
+    dx = 1
+    dt = 0.01
+    base_params = SCIE3121_params.copy()
     steps = 5000
-    save_steps = 100
+    save_steps = 50
+    
+    # Parameter variations to test
+    variations = []
+    
+    # Example: Vary tumor radius
+    for radius in [3, 4, 5, 6]:
+        variations.append({
+            'grid_shape': grid_shape,
+            'dx': dx, 
+            'dt': dt,
+            'params': base_params.copy(),
+            'steps': steps,
+            'save_steps': save_steps,
+            'radius': radius,
+            'nutrient_value': 1.0,
+            'name_suffix': f"radius_{radius}"
+        })
+    
+    # Example: Vary diffusion coefficient
+    diffusion_values = [0.5, 1.0, 2.0, 3.0]
+    for i, diff_coef in enumerate(diffusion_values):
+        params_copy = base_params.copy()
+        params_copy['D_n'] = diff_coef  # Assuming 'D_n' is the diffusion coefficient parameter
+        variations.append({
+            'grid_shape': grid_shape,
+            'dx': dx, 
+            'dt': dt,
+            'params': params_copy,
+            'steps': steps,
+            'save_steps': save_steps,
+            'radius': 4,
+            'nutrient_value': 1.0,
+            'name_suffix': f"diffusion_{diff_coef}"
+        })
+    
+    # Run simulations in parallel
+    n_jobs = min(len(variations), os.cpu_count())
+    print(f"Running {len(variations)} simulations with {n_jobs} parallel jobs")
+    
+    Parallel(n_jobs=n_jobs)(
+        delayed(run_simulation_with_params)(**params) for params in variations
+    )
 
-    # Create the initial condition
-    initial_conditions = SphericalTumor(grid_shape, radius=7, nutrient_value=0.00001)
 
-    # Initialize the model with the initial condition
+def main():
+    # Original simulation code
+    grid_shape = (40, 40, 40)
+    dx = 0.2
+    dt = 0.001
+    params = SCIE3121_params
+    steps = 1000
+    save_steps = 10
+
+    initial_conditions = SphericalTumor(grid_shape, radius=6, nutrient_value=1.0)
+
     model = SCIE3121_MODEL(
         grid_shape=grid_shape,
         dx=dx,
@@ -131,14 +200,16 @@ def main():
         save_steps=save_steps
     )
 
-    # Run the simulation
     model.run_and_save_simulation(steps=steps, name="project_model_test")
 
-    # Access the simulation history (optional)
-    #history = model.get_history()
-    #print(f"Simulation history: keys: {history.keys()} steps: {len(history['step'])} ")
-    #print(f"Simulation finished")
-
 if __name__ == "__main__":
-
-    main()
+    import argparse
+    
+    parser = argparse.ArgumentParser(description='Run tumor growth simulations')
+    parser.add_argument('--parallel', action='store_true', help='Run parameter sweep in parallel')
+    args = parser.parse_args()
+    
+    if args.parallel:
+        parallel_parameter_sweep()
+    else:
+        main()

@@ -117,16 +117,15 @@ class SCIE3121_MODEL(TumorGrowthModel):
             self._update_history()
 
     def _compute_derivatives(self, state):
-        """Compute combined derivatives from all modules."""
         phi_H, phi_D, phi_N, nutrient = state
         src_H, src_D, src_N = self.cell_production.compute_cell_sources(
-            phi_H,  phi_D, phi_N, nutrient, self.n_H, self.n_D, self.params
+            phi_H, phi_D, phi_N, nutrient, self.n_H, self.n_D, self.params
         )
         dyn_H, dyn_D, dyn_N = self.cell_dynamics.compute_cell_dynamics(
             phi_H, phi_D, phi_N, nutrient, self.dx, self.params
         )
         d_nutrient = self.diffusion_dynamics.compute_nutrient_diffusion(
-            phi_H,  phi_D, phi_N, nutrient, self.params
+            phi_H, phi_D, phi_N, nutrient, self.params
         )
 
         # Check for instability
@@ -134,9 +133,9 @@ class SCIE3121_MODEL(TumorGrowthModel):
         for i, field in enumerate(['phi_H', 'phi_D', 'phi_N', 'nutrient']):
             if np.any(np.isnan(derivatives[i])) or np.any(np.isinf(derivatives[i])):
                 print(f"Step {self.history['step'][-1] + 1}: {field} derivative has NaN/inf. "
-                      f"src={np.max(np.abs([src_H, src_D, src_N][i])) if i < 4 else 0}, "
-                      f"dyn={np.max(np.abs([dyn_H, dyn_D, dyn_N][i])) if i < 4 else 0}, "
-                      f"d_nutrient={np.max(np.abs(d_nutrient)) if i == 4 else 0}")
+                    f"src={np.max(np.abs([src_H, src_D, src_N][i]) if i < 3 else 0)}, "
+                    f"dyn={np.max(np.abs([dyn_H, dyn_D, dyn_N][i]) if i < 3 else 0)}, "
+                    f"d_nutrient={np.max(np.abs(d_nutrient)) if i == 3 else 0}")
         
         return derivatives
 

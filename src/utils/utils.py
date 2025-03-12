@@ -1,4 +1,3 @@
-
 experimental_params = {
 
     # self renewal rates
@@ -45,29 +44,29 @@ experimental_params = {
 
 SCIE3121_params = {
     # growth rates
-    "lambda_H": 3, # growth rate of healthy cells
-    "lambda_D": 4.3, # growth rate of damaged cells
+    "lambda_H": 0.7, # day^-1
+    "lambda_D": 1.0, # day^-1
 
     # death rates
-    "mu_H": 0.0000001, # death rate of healthy cells
-    "mu_D": 0.000001, # death rate of damaged cells
-    "mu_N": 0.000001, # death rate of necrotic cells
+    "mu_H": 0.2, # day^-1
+    "mu_D": 0.2, # day^-1
+    "mu_N": 1.41, # day^-1
 
     # probability terms
-    "p_H": 0.6,
-    "p_D": 0.6,
+    "p_H": 0.7, # unitless
+    "p_D": 0.8, # unitless
 
     # nutrient saturation for each cell type
-    "n_H": 0.0001,
-    "n_D": 0.0001,
+    "n_H": 0.2, # unitless
+    "n_D": 0.2, # unitless
 
     # physical constants
-    'gamma': 1,
-    'epsilon': 0.05,                             
-    'M': 0.001, # cell mobility
+    'gamma': -0.1, # J mm^-2
+    'epsilon': 0.05, # mm
+    'M': 10.0, # mm^5 day^-1 
 
     # diffusion constant of nutrient field
-    "D_n": 0.1,
+    "D_n": 1.0, # mm^2 day^-1
 }
 
 # src/utils/utils.py

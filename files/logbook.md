@@ -129,3 +129,36 @@ Where $I_i$ is each ingredient field, and $f$ is some function that can represen
 Today is the day before meeting up with my supervisor just to go over the basis of the mathematical model. I am running some larger simulations, there are some strange artifacts, but Im not sure how significant they are. For example there seems to be some "leakage" of the cells from the central tumor, Im not sure if its an issue with the plotting, or just the simulation. I also need some other plotting method, its so hard to see whats really happening. The problem is the simulations take so long if I am doing any meaningful simulations, they take so long. But I think it is time to start getting ready to implement a cell cycle model that is accurate to the ovarian cancer cells that I think we are investigating. This means researching growth rates, death rates, etc, if they are in the literature, or potentially matching physical data to the simualtion. This I assume are the next steps of the project. Until that I think that I need to find suitable simulation parameters to confirm simulational growth matches reality. 
 
 Also want to note that currently the sim has some issues if all the cell types are set to the exact same value at the start. They seem to couple and are all the same value essentially for the whole simulation.
+
+<h3> 11-3-25 </h3>
+
+Since the last logbook entry I have implemented the new simplified version of the model, reducing the cell types down to just healthy, diseased and necrotic. This has allowed me to implement a cell cycle model, which is defined in SCIE3121_model.md.
+
+I now have been looking into defining meaningful growth rates, death rates.
+
+First I will define the units of the simulation. We set dx = 1mm, and dt = 1 day. The nutrient concentration is defined as a unitless fraction of the maximum nutrient concentration.
+Which allow us to define the units of the simulation parameters:
+
+| Parameter | Units |
+|-----------|-------|
+| $\lambda_H$ | day$^{-1}$ |
+| $\lambda_D$ | day$^{-1}$ |
+| $\mu_H$ | day$^{-1}$ |
+| $\mu_D$ | day$^{-1}$ |
+| $\alpha_D$ | day$^{-1}$ |
+| $\gamma_N$ | day$^{-1}$ |
+| $p_0$ | unitless |
+| $p_1$ | unitless |
+| $\hat n$ | unitless |
+| $D_n$ | mm$^2$ day$^{-1}$ |
+| $\gamma$ | J mm$^{-2}$ |
+| $\varepsilon$ | mm |
+| $M_i$ | mm$^5$ day$^{-1}$ |
+
+In our last meeting with Gloria and Mark we discussed the validity of the model, and how it was yielding some strange results. Some expected results were to see spherical growth, and also we were expecting to also see a necrotic core form. However, the simulation was yielding some strange growth, and no necrotic core.
+
+Since then, after implementing the new cell cycle model, I have adjusted the cell mobility of the necrotic cells to be much smaller than the other cell types. This is beleive would be the most simple and physically consistent way to yield a necrotic core. The way the necrotic cells interact with the physical portions of the equations are in the two following ways: through the solid velocity field, and the mass flux. The necrotic cells essentially do not contribute to the solid velocity field, as the necrotic sources are the same as the healthy and diseased sinks.
+
+After writing this out I had a sudden realisation that I was not properly implementing the solid velocity terms. In the solid velocity file, I showed that the divergence of the solid velocity field is equal to the source terms, which I just assumed was the sum of all the source terms individually. However, thinking I realise that I should not be considering any necrotic source terms, as they are just mass exchange terms. The death rates cancel if you simply add all the sources together, yet the necrotic mass exchange terms do not cancel. This is problematic, as a mass exchange term should not contribute to any increase in the internal pressure of the system, as they were already there.
+
+Anyways, continuing on, thus the way the necrotic cells interact with the physical portions of the equations are through the mass flux. Which is essentially a function of the adhesion energy functional. The necrotic cells, although certainly not containing much internal energy, would still move along the adhesion energy gradients, just at a much slower rate than the other cell types. This is encapsulated by reducing the mobility of the necrotic cells, which after a few tests, seem to be yielding more of a necrotic core.

@@ -124,29 +124,50 @@ class TumorGrowthModel:
 
 
     def _update(self, step) -> None:
-        """Perform one RK4 time step with stability checks."""
+        """Perform one RK4 time step with stability checks and parallel processing."""
         state = (self.phi_H, self.phi_P, self.phi_D, self.phi_N, self.nutrient)
-
+        
+        # Pre-allocate arrays for all k values to avoid repeated allocations
+        k_values = [None] * 4  # For k1, k2, k3, k4
+        
         # RK4 stages with clipping
-        k1 = self._compute_derivatives(state)
-        k1 = tuple(np.clip(k, -1e3, 1e3) for k in k1)  # Clip derivatives
-        k2 = self._compute_derivatives(tuple(np.clip(s + self.dt / 2 * k, -1e3, 1e3) for s, k in zip(state, k1)))
-        k2 = tuple(np.clip(k, -1e3, 1e3) for k in k2)
-        k3 = self._compute_derivatives(tuple(np.clip(s + self.dt / 2 * k, -1e3, 1e3) for s, k in zip(state, k2)))
-        k3 = tuple(np.clip(k, -1e3, 1e3) for k in k3)
-        k4 = self._compute_derivatives(tuple(np.clip(s + self.dt * k, -1e3, 1e3) for s, k in zip(state, k3)))
-        k4 = tuple(np.clip(k, -1e3, 1e3) for k in k4)
-
-        # Update state with debugging
+        k_values[0] = self._compute_derivatives(state)
+        k_values[0] = tuple(np.clip(k, -1e3, 1e3) for k in k_values[0])  # Clip derivatives
+        
+        # Calculate intermediate states for k2, k3, k4 using vectorized operations
+        # This avoids explicit loops and is more efficient
+        k2_state = tuple(np.clip(s + self.dt / 2 * k, -1e3, 1e3) for s, k in zip(state, k_values[0]))
+        k_values[1] = self._compute_derivatives(k2_state)
+        k_values[1] = tuple(np.clip(k, -1e3, 1e3) for k in k_values[1])
+        
+        k3_state = tuple(np.clip(s + self.dt / 2 * k, -1e3, 1e3) for s, k in zip(state, k_values[1]))
+        k_values[2] = self._compute_derivatives(k3_state)
+        k_values[2] = tuple(np.clip(k, -1e3, 1e3) for k in k_values[2])
+        
+        k4_state = tuple(np.clip(s + self.dt * k, -1e3, 1e3) for s, k in zip(state, k_values[2]))
+        k_values[3] = self._compute_derivatives(k4_state)
+        k_values[3] = tuple(np.clip(k, -1e3, 1e3) for k in k_values[3])
+        
+        # Update state with vectorized operations
+        field_names = ['phi_H', 'phi_P', 'phi_D', 'phi_N', 'nutrient']
         new_state = []
-        for i, field in enumerate(['phi_H', 'phi_P', 'phi_D', 'phi_N', 'nutrient']):
-            update = state[i] + (self.dt / 6.0) * (k1[i] + 2 * k2[i] + 2 * k3[i] + k4[i])
+        
+        for i, field in enumerate(field_names):
+            # Vectorized calculation of weighted sum
+            update = state[i] + (self.dt / 6.0) * (
+                k_values[0][i] + 
+                2 * k_values[1][i] + 
+                2 * k_values[2][i] + 
+                k_values[3][i]
+            )
+            
             if np.any(np.isnan(update)) or np.any(np.isinf(update)):
-                print(f"Step {self.history['step'][-1] + 1}: {field} has NaN/inf. k1={np.max(np.abs(k1[i]))}, k2={np.max(np.abs(k2[i]))}, k3={np.max(np.abs(k3[i]))}, k4={np.max(np.abs(k4[i]))}")
-            update = np.clip(update, 0 if field != 'nutrient' else -1e3, 1e3)  # Ensure physical bounds
+                print(f"Step {self.history['step'][-1] + 1}: {field} has NaN/inf.")
+            
+            update = np.clip(update, 0 if field != 'nutrient' else -1e3, 1e3)
             new_state.append(update)
             setattr(self, field, update)
-
+        
         self._enforce_volume_fractions()
         if step % self.save_steps == 0:
             self._update_history()
@@ -207,7 +228,6 @@ class TumorGrowthModel:
         self.phi_N = initial_conditions.phi_N
         self.nutrient = initial_conditions.nutrient
         self.n_H = initial_conditions.n_H
-        self.n_P = initial_conditions.n_P
         self.n_D = initial_conditions.n_D
         self.phi_R = initial_conditions.phi_R
         

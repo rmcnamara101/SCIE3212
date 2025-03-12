@@ -149,6 +149,7 @@ You can write a custom script to import and run the model directly:
 ```
 import numpy as np
 from src.models.tumor_growth import TumorGrowthModel
+from src.models.SCIE3121_model import SCIE3121_MODEL
 from src.models.initial_conditions import SphericalTumor
 from src.utils.utils import experimental_params
 
@@ -158,6 +159,16 @@ initial_conditions = SphericalTumor(grid_shape, radius=5, nutrient_value=0.001)
 
 # Instantiate the model
 model = TumorGrowthModel(
+    grid_shape=grid_shape,
+    dx=0.1,
+    dt=0.001,
+    params=experimental_params,
+    initial_conditions=initial_conditions,
+    save_steps=10
+)
+
+# or a different model
+model = SCIE3121_MODEL(
     grid_shape=grid_shape,
     dx=0.1,
     dt=0.001,
@@ -179,7 +190,7 @@ A simpler approach is to just run:
 ```
 python main.py
 ```
-This internally creates a TumorGrowthModel, runs it for a default number of steps, and saves or visualizes the results.
+This internally creates a SCIE3121_MODEL, runs it for a default number of steps, and saves or visualizes the results.
 
 ---
 
