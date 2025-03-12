@@ -82,16 +82,29 @@ def gradient(field, dx, axis):
             for j in range(ny):
                 for k in range(nz):
                     result[i, j, k] = (field[i+1, j, k] - field[i-1, j, k]) / (2 * dx)
+        # Boundary conditions (one-sided differences)
+        for j in range(ny):
+            for k in range(nz):
+                result[0, j, k] = (field[1, j, k] - field[0, j, k]) / dx  # Forward difference
+                result[nx-1, j, k] = (field[nx-1, j, k] - field[nx-2, j, k]) / dx  # Backward difference
     elif axis == 1:
         for i in nb.prange(nx):
             for j in range(1, ny - 1):
                 for k in range(nz):
                     result[i, j, k] = (field[i, j+1, k] - field[i, j-1, k]) / (2 * dx)
+        for i in nb.prange(nx):
+            for k in range(nz):
+                result[i, 0, k] = (field[i, 1, k] - field[i, 0, k]) / dx
+                result[i, ny-1, k] = (field[i, ny-1, k] - field[i, ny-2, k]) / dx
     elif axis == 2:
         for i in nb.prange(nx):
             for j in range(ny):
                 for k in range(1, nz - 1):
                     result[i, j, k] = (field[i, j, k+1] - field[i, j, k-1]) / (2 * dx)
+        for i in nb.prange(nx):
+            for j in range(ny):
+                result[i, j, 0] = (field[i, j, 1] - field[i, j, 0]) / dx
+                result[i, j, nz-1] = (field[i, j, nz-1] - field[i, j, nz-2]) / dx
     return result
 
 @nb.njit

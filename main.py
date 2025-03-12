@@ -182,12 +182,12 @@ def parallel_parameter_sweep():
 
 def main():
     # Original simulation code
-    grid_shape = (40, 40, 40)
+    grid_shape = (60, 60, 60)
     dx = 0.2
     dt = 0.001
     params = SCIE3121_params
     steps = 1000
-    save_steps = 10
+    save_steps = 1
 
     initial_conditions = SphericalTumor(grid_shape, radius=6, nutrient_value=1.0)
 

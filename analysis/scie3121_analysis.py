@@ -15,8 +15,8 @@ sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from src.models.SCIE3121_model import SCIE3121_MODEL
 from src.models.initial_conditions import SphericalTumor
-from src.utils.utils import SCIE3121_params
-from src.models.cell_dynamics import compute_internal_pressure_scie3121_model, compute_solid_velocity_scie3121_model
+from src.utils.utils import SCIE3121_params, gradient, laplacian, divergence
+from src.models.cell_dynamics import compute_internal_pressure_scie3121_model, compute_solid_velocity_scie3121_model, compute_adhesion_energy_derivative
 
 class scie3121SimulationAnalyzer:
     """Analyzer for tumor growth simulation data from NPZ files."""
@@ -489,37 +489,30 @@ class scie3121SimulationAnalyzer:
         Visualize the velocity field to identify leaking causes.
         
         Args:
-            model: The simulation model object
+            model: The simulation model object (not used directly for history data here)
             step (int): The time step to visualize
         """
-        # Get a slice of the tumor
-        slice_idx = model.grid_shape[1] // 2
-        
-        # Calculate velocity field for this state
+        # Get a slice of the tumor (XZ plane, middle of Y-axis)
         try:
-            # Try to get data from model history first
-            phi_H = model.history['healthy cell volume fraction'][step]
-            phi_D = model.history['diseased cell volume fraction'][step]
-            phi_N = model.history['necrotic cell volume fraction'][step]
-            nutrient = model.history['nutrient concentration'][step]
-        except (KeyError, AttributeError, IndexError):
-            # Fallback to current model state if history access fails
-            phi_H = model.phi_H
-            phi_D = model.phi_D
-            phi_N = model.phi_N
-            nutrient = model.nutrient
+            phi_H = self.history['healthy cell volume fraction'][step]
+            phi_D = self.history['diseased cell volume fraction'][step]
+            phi_N = self.history['necrotic cell volume fraction'][step]
+            nutrient = self.history['nutrient concentration'][step]
+        except (KeyError, IndexError) as e:
+            print(f"Error accessing history data at step {step}: {e}")
+            return
+
+        # Get the grid shape from the history data, not the model
+        grid_shape = phi_H.shape
+        slice_idx = grid_shape[1] // 2
         
-        # Get parameters
+        # Get parameters from the model
         params = model.params
         dx = model.dx
-        
+        phi_T = phi_H + phi_D + phi_N
         # Calculate pressure
         p = compute_internal_pressure_scie3121_model(
-            phi_H, phi_D, phi_N, nutrient, dx, 
-            params['gamma'], params['epsilon'], 
-            params['lambda_H'], params['lambda_D'], 
-            params['mu_H'], params['mu_D'], params['mu_N'], 
-            params['p_H'], params['p_D'], params['n_H'], params['n_D']
+            phi_H, phi_D, phi_T, dx, params
         )
         
         # Calculate velocity components
@@ -556,55 +549,74 @@ class scie3121SimulationAnalyzer:
         
         # Plot velocity vectors
         plt.subplot(224)
-        
-        # Create a downsampled grid for the quiver plot to avoid overcrowding
-        # Determine appropriate downsampling factor based on grid size
-        grid_size = min(model.grid_shape[0], model.grid_shape[2])
-        downsample = max(1, grid_size // 20)  # Aim for ~20 arrows in each dimension
-        
-        # Create the grid for quiver plot
-        x_indices = np.arange(0, model.grid_shape[0], downsample)
-        z_indices = np.arange(0, model.grid_shape[2], downsample)
+
+        # Downsample for quiver plot to avoid overcrowding
+        grid_size = min(grid_shape[0], grid_shape[2])
+        downsample = max(1, grid_size // 10)  # Increased downsampling (e.g., 30 // 10 = 3)
+        x_indices = np.arange(0, grid_shape[0], downsample)
+        z_indices = np.arange(0, grid_shape[2], downsample)
+
         X, Z = np.meshgrid(x_indices, z_indices)
-        
-        # Extract the velocity components at the downsampled grid points
-        U = ux[::downsample, slice_idx, ::downsample]
-        V = uz[::downsample, slice_idx, ::downsample]
-        
-        # Adjust the grid to match the downsampled velocity components
-        X, Z = np.meshgrid(
-            np.linspace(0, model.grid_shape[0] - 1, U.shape[0]),
-            np.linspace(0, model.grid_shape[2] - 1, U.shape[1])
-        )
-        
-        # Debugging: Print shapes to identify mismatch
+
+        # Extract velocity components with bounds checking
+        U = ux[x_indices, slice_idx, :][:, z_indices]
+        V = uz[x_indices, slice_idx, :][:, z_indices]
+
+        # Compute the magnitude for coloring
+        magnitude = np.sqrt(U**2 + V**2)
+
+        # Debug: Print shapes to verify
+        print(f"Grid shape: {grid_shape}")
+        print(f"x_indices: {x_indices}")
+        print(f"z_indices: {z_indices}")
         print(f"X shape: {X.shape}, Z shape: {Z.shape}")
         print(f"U shape: {U.shape}, V shape: {V.shape}")
-        
-        # Ensure the shapes match
-        if U.shape != X.shape or V.shape != Z.shape:
-            raise ValueError("Mismatch in shapes of velocity components and grid for quiver plot.")
-        
-        # Normalize the velocity vectors for better visualization
-        # Only if there are non-zero velocities
-        magnitude = np.sqrt(U**2 + V**2)
-        max_mag = np.max(magnitude)
-        
-        if max_mag > 0:
-            # Plot the quiver with normalized vectors
-            plt.quiver(X, Z, U/max_mag, V/max_mag, magnitude, 
-                      cmap='viridis', scale=25, pivot='mid')
+
+        # Plot the quiver with adjusted scale and width
+        if U.size > 0 and V.size > 0:
+            plt.quiver(X, Z, U, V, magnitude, cmap='viridis', scale=1.0, width=0.005, pivot='mid')  # Adjusted scale and width
             plt.colorbar(label='Velocity Magnitude')
         else:
-            plt.text(0.5, 0.5, "No velocity vectors to display", 
-                    ha='center', va='center', transform=plt.gca().transAxes)
-        
-        # Show the background tumor field as well
-        plt.imshow(total_tumor, origin='lower', cmap='gray', alpha=0.3)
+            plt.text(0.5, 0.5, "No velocity vectors to display", ha='center', va='center', transform=plt.gca().transAxes)
+
+        # Overlay the total tumor field for context
+        plt.imshow(total_tumor, origin='lower', cmap='gray', alpha=0.3, extent=(0, grid_shape[0], 0, grid_shape[2]))
         plt.title("Velocity Field")
-        
+
         plt.tight_layout()
+
         plt.show()
+
+        # Calculate gradients
+        grad_p_x = np.gradient(p, axis=0) / dx
+        grad_p_y = np.gradient(p, axis=1) / dx
+        energy_deriv = compute_adhesion_energy_derivative(phi_H, dx, params['gamma'], params['epsilon'])
+        grad_C_x = np.gradient(energy_deriv, axis=0) / dx
+        grad_C_y = np.gradient(energy_deriv, axis=1) / dx
+        plt.figure(figsize=(12, 10))
+
+        # Create coordinate grids for quiver
+        x = np.arange(grad_p_x.shape[1])
+        y = np.arange(grad_p_x.shape[0]) 
+        X, Y = np.meshgrid(x, y)
+
+        # Extract 2D slices for quiver plot
+        grad_p_x_2d = grad_p_x[:, :, grad_p_x.shape[2]//2]  
+        grad_p_y_2d = grad_p_y[:, :, grad_p_y.shape[2]//2]
+        grad_C_x_2d = grad_C_x[:, :, grad_C_x.shape[2]//2]
+        grad_C_y_2d = grad_C_y[:, :, grad_C_y.shape[2]//2]
+        energy_deriv_2d = energy_deriv[:, :, energy_deriv.shape[2]//2]
+
+        plt.subplot(221)
+        plt.quiver(X, Y, grad_p_x_2d, grad_p_y_2d, scale=5.0, width=0.007, pivot='mid')
+        plt.title("Pressure Gradient")
+
+        plt.subplot(222)
+        plt.quiver(X, Y, energy_deriv_2d * grad_C_x_2d, energy_deriv_2d * grad_C_y_2d, scale=1.0, width=0.005, pivot='mid')
+        plt.title("Adhesion Term")
+        plt.show()
+
+
 
     def test_sharp_interface(self, steps=10):
         """Test if a spherical tumor maintains a sharp interface."""
@@ -778,6 +790,7 @@ class scie3121SimulationAnalyzer:
         plt.legend()
         plt.grid(True, linestyle='--', alpha=0.7)
         plt.show()
+
 
     def animate_nutrient_field(self, plane='XY', index=None, interval=200, save_as=None):
         """
@@ -1043,7 +1056,7 @@ def main():
         initial_conditions=SphericalTumor(grid_shape=(30, 30, 30), radius=7, nutrient_value=1.0),
     )
     analyzer = scie3121SimulationAnalyzer(filepath='data/project_model_test_sim_data.npz') 
-    analyzer.visualize_velocity_field(model, step=70)
+    analyzer.visualize_velocity_field(model, step=0)
     #analyzer.animate_cross_section(plane='XY', interval=200)
     #analyzer.plot_combined_cross_section(step_index=0, plane='XY', index=None, smooth_sigma=2.0, levels=50, cmaps=None) 
     #analyzer.plot_nutrient_field(step_index=14, plane='XY', index=None, smooth_sigma=2.0, vmin=None, vmax=None, levels=50, cmap='viridis')

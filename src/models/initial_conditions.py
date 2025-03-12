@@ -47,12 +47,18 @@ class SphericalTumor(InitialCondition):
         self.n_H = 0.2 * np.ones(self.grid_shape)
         self.n_D = 0.2 * np.ones(self.grid_shape)
         
-        center = np.array([Nz//2, Ny//2, Nx//2])
+        # Create slightly off-center coordinates
+        center = np.array([
+            Nz//2 + 2,  # Shift 2 cells in z direction
+            Ny//2 - 1,  # Shift 1 cell in negative y direction
+            Nx//2 + 1   # Shift 1 cell in x direction
+        ])
+        
         for k in range(Nz):
             for j in range(Ny):
                 for i in range(Nx):
                     r = np.sqrt((k - center[0])**2 + (j - center[1])**2 + (i - center[2])**2)
-                    if r < 5:  # Radius of 5
+                    if r < self.radius:  # Using the class radius parameter
                         self.phi_H[k, j, i] = 0.5 * np.exp(-r**2 / 10)  # Gaussian tumor
                         self.phi_D[k, j, i] = 0.3 * np.exp(-r**2 / 10)
 
