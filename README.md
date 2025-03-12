@@ -236,22 +236,5 @@ Some typical parameters (accessible via model.params) include:
 
 You can edit or provide your own parameter dictionary to fine-tune the simulation.
 
----
 
-## Contributing
-
-Contributions in the form of bug reports, feature requests, or pull requests are welcome. Please:
-
-1. Fork the repository
-2. Create a new branch for your changes
-3. Open a pull request with a clear description
-
----
-
-## License
-
-This project does not have an explicit license in the source code. 
-
----
-
-Enjoy exploring tumor growth dynamics! Feel free to adapt this framework for your own research or educational projects. If you find any issues or would like to suggest improvements, open an issue or pull request.
+Enjoy exploring tumor growth dynamics!
