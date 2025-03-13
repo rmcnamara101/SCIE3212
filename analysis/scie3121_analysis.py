@@ -27,7 +27,6 @@ class scie3121SimulationAnalyzer:
         """
         self.filepath = filepath
         self.history = load_simulation_history(filepath)
-        print(self.history.keys())
         self.volume_data = compute_total_volumes(self.history)
         self.radius_data = compute_total_radius(self.history, threshold=0.05)
         self.metadata = self.history['Simulation Metadata']
@@ -167,48 +166,6 @@ class scie3121SimulationAnalyzer:
         ax.set_title(f'3D Tumor Visualization at Step {step_index} ({mode})')
         ax.legend()
         plt.show()
-
-    def plot_3d_multiple_steps(self, step_indices, levels=None, colors=None):
-        """
-        Plot 3D isosurfaces for multiple time steps in one figure.
-        
-        Args:
-            step_indices (list): List of time step indices to visualize.
-            levels (dict, optional): Isosurface levels for each cell type.
-            colors (dict, optional): Colors for each cell type.
-        """
-        if levels is None:
-            levels = {'healthy': 0.1, 'diseased': 0.1, 'necrotic': 0.1}
-        if colors is None:
-            colors = {'healthy': 'green',  'differentiated': 'red', 'necrotic': 'black'}
-        
-        fig = plt.figure(figsize=(12, 10))
-        
-        for i, step_index in enumerate(step_indices, 1):
-            ax = fig.add_subplot(1, len(step_indices), i, projection='3d')
-            fields = {
-                'healthy': self.history['healthy cell volume fraction'][step_index],
-                'diseased': self.history['diseased cell volume fraction'][step_index],
-                'necrotic': self.history['necrotic cell volume fraction'][step_index]
-            }
-            
-            for cell_type, field in fields.items():
-                level = levels[cell_type]
-                if np.max(field) > level:
-                    verts, faces, _, _ = marching_cubes(field, level=level)
-                    ax.plot_trisurf(verts[:, 0], verts[:, 1], faces, verts[:, 2], 
-                                   color=colors[cell_type], alpha=0.3, label=cell_type)
-            
-            ax.set_xlabel('X')
-            ax.set_ylabel('Y')
-            ax.set_zlabel('Z')
-            ax.set_title(f'Step {step_index}')
-        
-        plt.suptitle('3D Tumor Evolution Across Multiple Steps')
-        plt.tight_layout()
-        plt.legend()
-        plt.show()
-
 
     def plot_cross_section(self, step_index, cell_type='healthy', plane='XY', index=None, smooth_sigma=2.0, 
                         vmin=None, vmax=None, levels=50, cmap='viridis'):
@@ -427,63 +384,6 @@ class scie3121SimulationAnalyzer:
         plt.grid(True, linestyle='--', alpha=0.7)
         plt.show()
 
-    def test_tumor_stability(self, steps=10):
-        """Test if a spherical tumor maintains its shape without external forces."""
-        # Create a small grid for faster testing
-        grid_shape = (30, 30, 30)
-        dx = 0.2
-        dt = 0.001  # Very small time step for stability
-        
-        # Create initial conditions with a clear spherical tumor
-        initial_conditions = SphericalTumor(grid_shape, radius=7, nutrient_value=0.1)
-        
-        # Create a modified parameter set with minimal diffusion
-        test_params = deepcopy(SCIE3121_params)
-        # Set diffusion coefficients to very small values
-        # test_params['D_H'] = 0.001  # Adjust parameter names as needed
-        
-        # Initialize model
-        model = SCIE3121_MODEL(
-            grid_shape=grid_shape,
-            dx=dx,
-            dt=dt,
-            params=test_params,
-            initial_conditions=initial_conditions,
-            save_steps=1
-        )
-        
-        # Run for a few steps and visualize
-        for step in range(steps):
-            model._update(step)
-            
-            # Every few steps, visualize a slice
-            if step % 2 == 0:
-                plt.figure(figsize=(15, 5))
-                
-                # Plot healthy cells
-                plt.subplot(131)
-                plt.imshow(model.phi_H[:, grid_shape[1]//2, :])
-                plt.title(f"Healthy Cells - Step {step}")
-                plt.colorbar()
-                
-                # Plot diseased cells
-                plt.subplot(132)
-                plt.imshow(model.phi_D[:, grid_shape[1]//2, :])
-                plt.title(f"Diseased Cells - Step {step}")
-                plt.colorbar()
-                
-                # Plot total tumor
-                plt.subplot(133)
-                plt.imshow(model.phi_H[:, grid_shape[1]//2, :] + 
-                          model.phi_D[:, grid_shape[1]//2, :] + 
-                          model.phi_N[:, grid_shape[1]//2, :])
-                plt.title(f"Total Tumor - Step {step}")
-                plt.colorbar()
-                
-                plt.tight_layout()
-                plt.show()
-
-    
     def visualize_velocity_field(self, model, step=0):
         """
         Visualize the velocity field to identify leaking causes.
@@ -512,7 +412,11 @@ class scie3121SimulationAnalyzer:
         phi_T = phi_H + phi_D + phi_N
         # Calculate pressure
         p = compute_internal_pressure_scie3121_model(
-            phi_H, phi_D, phi_T, dx, params
+            phi_H, phi_D, phi_N, nutrient, dx, 
+            params['gamma'], params['epsilon'],
+            params['lambda_H'], params['lambda_D'], 
+            params['mu_H'], params['mu_D'], params['mu_N'],
+            params['p_H'], params['p_D'], params['n_H'], params['n_D']
         )
         
         # Calculate velocity components
@@ -529,20 +433,20 @@ class scie3121SimulationAnalyzer:
         
         # Plot total tumor
         plt.subplot(221)
-        total_tumor = phi_H[:, slice_idx, :] + phi_D[:, slice_idx, :] + phi_N[:, slice_idx, :]
+        total_tumor = phi_T[:, :, slice_idx]
         plt.imshow(total_tumor, origin='lower', cmap='viridis')
         plt.title("Total Tumor")
         plt.colorbar()
         
         # Plot pressure
         plt.subplot(222)
-        plt.imshow(p[:, slice_idx, :], origin='lower', cmap='coolwarm')
+        plt.imshow(p[:, :, slice_idx], origin='lower', cmap='coolwarm')
         plt.title("Pressure Field")
         plt.colorbar()
         
         # Plot velocity magnitude
         plt.subplot(223)
-        velocity_mag = np.sqrt(ux[:, slice_idx, :]**2 + uz[:, slice_idx, :]**2)
+        velocity_mag = np.sqrt(ux[:, :, slice_idx]**2 + uz[:, :, slice_idx]**2)
         plt.imshow(velocity_mag, origin='lower', cmap='plasma')
         plt.title("Velocity Magnitude")
         plt.colorbar()
@@ -590,7 +494,7 @@ class scie3121SimulationAnalyzer:
         # Calculate gradients
         grad_p_x = np.gradient(p, axis=0) / dx
         grad_p_y = np.gradient(p, axis=1) / dx
-        energy_deriv = compute_adhesion_energy_derivative(phi_H, dx, params['gamma'], params['epsilon'])
+        energy_deriv = compute_adhesion_energy_derivative(phi_T, dx, params['gamma'], params['epsilon'])
         grad_C_x = np.gradient(energy_deriv, axis=0) / dx
         grad_C_y = np.gradient(energy_deriv, axis=1) / dx
         plt.figure(figsize=(12, 10))
@@ -615,296 +519,6 @@ class scie3121SimulationAnalyzer:
         plt.quiver(X, Y, energy_deriv_2d * grad_C_x_2d, energy_deriv_2d * grad_C_y_2d, scale=1.0, width=0.005, pivot='mid')
         plt.title("Adhesion Term")
         plt.show()
-
-
-
-    def test_sharp_interface(self, steps=10):
-        """Test if a spherical tumor maintains a sharp interface."""
-        # Create a small grid for faster testing
-        grid_shape = (30, 30, 30)
-        dx = 0.2
-        dt = 0.0001  # Very small time step for stability
-        
-        # Create initial conditions with a clear spherical tumor
-        initial_conditions = SphericalTumor(grid_shape, radius=7, nutrient_value=0.1)
-        
-        # Create a modified parameter set with minimal diffusion and strong adhesion
-        test_params = deepcopy(SCIE3121_params)
-        # Increase surface tension
-        test_params['gamma'] = test_params.get('gamma', 1.0) * 5.0
-        # Decrease interface thickness
-        test_params['epsilon'] = test_params.get('epsilon', 1.0) * 0.5
-        # Decrease mobility
-        if 'M_H' in test_params:
-            test_params['M_H'] *= 0.1
-        if 'M_D' in test_params:
-            test_params['M_D'] *= 0.1
-        
-        # Initialize model
-        model = SCIE3121_MODEL(
-            grid_shape=grid_shape,
-            dx=dx,
-            dt=dt,
-            params=test_params,
-            initial_conditions=initial_conditions,
-            save_steps=1
-        )
-        
-        # Run for a few steps and visualize
-        for step in range(steps):
-            model._update(step)
-            
-            # Every few steps, visualize a slice
-            if step % 2 == 0:
-                plt.figure(figsize=(15, 5))
-                
-                # Plot healthy cells
-                plt.subplot(131)
-                plt.imshow(model.phi_H[:, grid_shape[1]//2, :])
-                plt.title(f"Healthy Cells - Step {step}")
-                plt.colorbar()
-                
-                # Plot diseased cells
-                plt.subplot(132)
-                plt.imshow(model.phi_D[:, grid_shape[1]//2, :])
-                plt.title(f"Diseased Cells - Step {step}")
-                plt.colorbar()
-                
-                # Plot total tumor
-                plt.subplot(133)
-                plt.imshow(model.phi_H[:, grid_shape[1]//2, :] + 
-                          model.phi_D[:, grid_shape[1]//2, :] + 
-                          model.phi_N[:, grid_shape[1]//2, :])
-                plt.title(f"Total Tumor - Step {step}")
-                plt.colorbar()
-                
-                plt.tight_layout()
-                plt.show()
-
-    def plot_nutrient_field(self, step_index, plane='XY', index=None, smooth_sigma=2.0, 
-                        vmin=None, vmax=None, levels=50, cmap='viridis'):
-        """
-        Plot 2D cross-section of the nutrient field with smoothed contours and customizable scaling.
-        
-        Args:
-            step_index (int): Index of the time step to visualize.
-            plane (str): Plane to slice ('XY', 'XZ', 'YZ'). Defaults to 'XY'.
-            index (int, optional): Index along the perpendicular axis. Defaults to midpoint.
-            smooth_sigma (float): Standard deviation for Gaussian smoothing. 0 for no smoothing.
-            vmin (float, optional): Minimum value for colormap scaling. Defaults to data minimum.
-            vmax (float, optional): Maximum value for colormap scaling. Defaults to data maximum.
-            levels (int): Number of contour levels. Defaults to 50.
-            cmap (str): Colormap name. Defaults to 'viridis'.
-        """
-        if 'nutrient concentration' not in self.history:
-            raise ValueError("Nutrient concentration data not found in the simulation history.")
-        
-        nutrient_field = self.history['nutrient concentration'][step_index]
-        
-        shape = nutrient_field.shape
-        if index is None:
-            if plane == 'XY':
-                index = shape[2] // 2
-            elif plane == 'XZ':
-                index = shape[1] // 2
-            elif plane == 'YZ':
-                index = shape[0] // 2
-            else:
-                raise ValueError("Plane must be 'XY', 'XZ', or 'YZ'")
-        
-        # Select the slice based on the plane
-        if plane == 'XY':
-            slice_ = nutrient_field[:, :, index]
-            x, y = np.arange(shape[0]), np.arange(shape[1])
-            xlabel, ylabel = 'X', 'Y'
-        elif plane == 'XZ':
-            slice_ = nutrient_field[:, index, :]
-            x, y = np.arange(shape[0]), np.arange(shape[2])
-            xlabel, ylabel = 'X', 'Z'
-        elif plane == 'YZ':
-            slice_ = nutrient_field[index, :, :]
-            x, y = np.arange(shape[1]), np.arange(shape[2])
-            xlabel, ylabel = 'Y', 'Z'
-        
-        # Smooth the slice with Gaussian filter if sigma > 0
-        if smooth_sigma > 0:
-            slice_ = gaussian_filter(slice_, sigma=smooth_sigma)
-        
-        # Create finer grid for interpolation
-        x_fine, y_fine = np.linspace(x.min(), x.max(), 100), np.linspace(y.min(), y.max(), 100)
-        X, Y = np.meshgrid(x, y)
-        X_fine, Y_fine = np.meshgrid(x_fine, y_fine)
-        
-        # Interpolate data onto finer grid
-        slice_fine = griddata((X.flatten(), Y.flatten()), slice_.flatten(), 
-                            (X_fine, Y_fine), method='cubic')
-        
-        # Determine colormap bounds dynamically if not provided
-        if vmin is None:
-            vmin = np.nanmin(slice_fine)  # Use min of interpolated data
-        if vmax is None:
-            vmax = np.nanmax(slice_fine)  # Use max of interpolated data
-        
-        # Ensure vmin and vmax are reasonable (avoid identical values)
-        if vmin == vmax:
-            vmin = max(0, vmin - 0.01)  # Small offset to avoid flat colormap
-            vmax = vmin + 0.01
-        
-        # Create the plot
-        fig, ax = plt.subplots(figsize=(6, 5))
-        contour = ax.contourf(X_fine, Y_fine, slice_fine, levels=levels, cmap=cmap, vmin=vmin, vmax=vmax)
-        fig.colorbar(contour, ax=ax, label='Nutrient Concentration')
-        
-        # Set labels and titles
-        ax.set_xlabel(xlabel)
-        ax.set_ylabel(ylabel)
-        ax.set_title(f'Nutrient Cross-Section ({plane} at index {index})')
-        fig.suptitle(f'Step {step_index}', y=1.05)
-        
-        plt.show()
-
-    def plot_nutrient_evolution(self, smooth_window=5):
-        """
-        Plot the evolution of total nutrient concentration over time.
-        
-        Args:
-            smooth_window (int): Window size for Savitzky-Golay smoothing (odd number).
-        """
-        if 'nutrient concentration' not in self.history:
-            raise ValueError("Nutrient concentration data not found in the simulation history.")
-        
-        steps = self.history['step']
-        nutrient_total = [np.sum(n) for n in self.history['nutrient concentration']]
-        
-        # Apply smoothing if window > 1
-        if smooth_window > 1:
-            if smooth_window % 2 == 0:
-                smooth_window += 1  # Ensure odd window size
-            nutrient_total = savgol_filter(nutrient_total, smooth_window, 3)
-        
-        plt.figure(figsize=(10, 6))
-        plt.plot(steps, nutrient_total, label='Total Nutrient', color='blue')
-        plt.xlabel('Time Step')
-        plt.ylabel('Total Nutrient Concentration')
-        plt.title('Nutrient Evolution Over Time')
-        plt.legend()
-        plt.grid(True, linestyle='--', alpha=0.7)
-        plt.show()
-
-
-    def animate_nutrient_field(self, plane='XY', index=None, interval=200, save_as=None):
-        """
-        Animate 2D cross-sections of the nutrient field over time.
-        
-        Args:
-            plane (str): Plane to slice ('XY', 'XZ', 'YZ'). Defaults to 'XY'.
-            index (int, optional): Index along the perpendicular axis. Defaults to midpoint.
-            interval (int): Delay between frames in milliseconds. Defaults to 200.
-            save_as (str, optional): File path to save animation (e.g., 'nutrient_animation.mp4').
-        """
-        if 'nutrient concentration' not in self.history:
-            raise ValueError("Nutrient concentration data not found in the simulation history.")
-        
-        # Get the shape from the first step to determine default index
-        shape = self.history['nutrient concentration'][0].shape
-        if index is None:
-            if plane == 'XY':
-                index = shape[2] // 2
-            elif plane == 'XZ':
-                index = shape[1] // 2
-            elif plane == 'YZ':
-                index = shape[0] // 2
-            else:
-                raise ValueError("Plane must be 'XY', 'XZ', or 'YZ'")
-        
-        # Set up the figure and axis
-        fig, ax = plt.subplots(figsize=(10, 8))
-        
-        # Set up the grid coordinates based on the plane
-        if plane == 'XY':
-            x, y = np.arange(shape[0]), np.arange(shape[1])
-            xlabel, ylabel = 'X', 'Y'
-        elif plane == 'XZ':
-            x, y = np.arange(shape[0]), np.arange(shape[2])
-            xlabel, ylabel = 'X', 'Z'
-        elif plane == 'YZ':
-            x, y = np.arange(shape[1]), np.arange(shape[2])
-            xlabel, ylabel = 'Y', 'Z'
-        
-        X, Y = np.meshgrid(x, y)
-        
-        # Create a finer grid for smoother visualization
-        x_fine, y_fine = np.linspace(x.min(), x.max(), 100), np.linspace(y.min(), y.max(), 100)
-        X_fine, Y_fine = np.meshgrid(x_fine, y_fine)
-        
-        # Get initial slice for setting up the plot
-        if plane == 'XY':
-            initial_slice = self.history['nutrient concentration'][0][:, :, index]
-        elif plane == 'XZ':
-            initial_slice = self.history['nutrient concentration'][0][:, index, :]
-        elif plane == 'YZ':
-            initial_slice = self.history['nutrient concentration'][0][index, :, :]
-        
-        # Apply Gaussian smoothing
-        initial_slice = gaussian_filter(initial_slice, sigma=1.0)
-        
-        # Interpolate to finer grid
-        initial_slice_fine = griddata((X.flatten(), Y.flatten()), initial_slice.flatten(), 
-                                    (X_fine, Y_fine), method='cubic')
-        
-        # Find global min/max for consistent colormap
-        all_nutrient = self.history['nutrient concentration']
-        vmin = 0
-        vmax = max(1.0, np.max([np.max(n) for n in all_nutrient]))
-        
-        # Create initial contour plot
-        contour = ax.contourf(X_fine, Y_fine, initial_slice_fine, levels=50, 
-                            cmap='viridis', vmin=vmin, vmax=vmax)
-        fig.colorbar(contour, ax=ax, label='Nutrient Concentration')
-        
-        # Set labels and title
-        ax.set_xlabel(xlabel)
-        ax.set_ylabel(ylabel)
-        ax.set_title(f'Nutrient Field ({plane} Plane, Step {self.history["step"][0]})')
-        
-        def update(frame):
-            """Update function for animation"""
-            # Get current slice data from history
-            if plane == 'XY':
-                slice_ = self.history['nutrient concentration'][frame][:, :, index]
-            elif plane == 'XZ':
-                slice_ = self.history['nutrient concentration'][frame][:, index, :]
-            elif plane == 'YZ':
-                slice_ = self.history['nutrient concentration'][frame][index, :, :]
-            
-            # Apply Gaussian smoothing
-            slice_ = gaussian_filter(slice_, sigma=1.0)
-            
-            # Interpolate to finer grid
-            slice_fine = griddata((X.flatten(), Y.flatten()), slice_.flatten(), 
-                                (X_fine, Y_fine), method='cubic')
-            
-            # Clear the axis and create a new contour plot
-            ax.clear()
-            contour = ax.contourf(X_fine, Y_fine, slice_fine, levels=50, 
-                                cmap='viridis', vmin=vmin, vmax=vmax)
-            
-            # Reset labels and title
-            ax.set_xlabel(xlabel)
-            ax.set_ylabel(ylabel)
-            ax.set_title(f'Nutrient Field ({plane} Plane, Step {self.history["step"][frame]})')
-            
-            return [contour]
-        
-        anim = FuncAnimation(fig, update, frames=len(self.history['step']), interval=interval, blit=False)
-        
-        if save_as:
-            anim.save(save_as, writer='ffmpeg')  # Requires ffmpeg installed
-        
-        plt.tight_layout()
-        plt.show()
-        
-        return anim  # Return the animation object to prevent garbage collection
 
     def plot_combined_cross_section(self, step_index, plane='XY', index=None, smooth_sigma=2.0, 
                                   levels=50, cmaps=None):
@@ -1007,6 +621,169 @@ class scie3121SimulationAnalyzer:
         plt.tight_layout()
         plt.show()
 
+    def animate_velocity_field(self, model, plane='XY', index=None, interval=200, save_as=None, downsample_factor=10):
+        """
+        Animate the velocity field visualization over time.
+        
+        Args:
+            model: The simulation model object (needed for parameters)
+            plane (str): Plane to slice ('XY', 'XZ', 'YZ'). Defaults to 'XY'.
+            index (int, optional): Index along the perpendicular axis. Defaults to midpoint.
+            interval (int): Delay between frames in milliseconds. Defaults to 200.
+            save_as (str, optional): File path to save animation (e.g., 'velocity_field.mp4').
+            downsample_factor (int): Factor to downsample velocity vectors for clearer visualization.
+        """
+        # Get the shape from the first step to determine default index
+        shape = self.history['healthy cell volume fraction'][0].shape
+        if index is None:
+            if plane == 'XY':
+                index = shape[2] // 2
+            elif plane == 'XZ':
+                index = shape[1] // 2
+            elif plane == 'YZ':
+                index = shape[0] // 2
+            else:
+                raise ValueError("Plane must be 'XY', 'XZ', or 'YZ'")
+        
+        # Get parameters from the model
+        params = model.params
+        dx = model.dx
+        
+        # Set up the figure with 2x2 subplots
+        fig, axes = plt.subplots(2, 2, figsize=(14, 12))
+        axes = axes.flatten()
+        
+        # Determine axis indices and labels based on the plane
+        if plane == 'XY':
+            axis1, axis2, axis3 = 0, 1, 2  # X, Y, Z
+            label1, label2 = 'X', 'Y'
+        elif plane == 'XZ':
+            axis1, axis2, axis3 = 0, 2, 1  # X, Z, Y
+            label1, label2 = 'X', 'Z'
+        elif plane == 'YZ':
+            axis1, axis2, axis3 = 1, 2, 0  # Y, Z, X
+            label1, label2 = 'Y', 'Z'
+        
+        # Initialize empty plots
+        tumor_plot = axes[0].imshow(np.zeros((shape[axis1], shape[axis2])), origin='lower', cmap='viridis')
+        pressure_plot = axes[1].imshow(np.zeros((shape[axis1], shape[axis2])), origin='lower', cmap='coolwarm')
+        velocity_mag_plot = axes[2].imshow(np.zeros((shape[axis1], shape[axis2])), origin='lower', cmap='plasma')
+        
+        # Set up for quiver plot
+        downsample = max(1, min(shape[axis1], shape[axis2]) // downsample_factor)
+        x_indices = np.arange(0, shape[axis1], downsample)
+        y_indices = np.arange(0, shape[axis2], downsample)
+        X, Y = np.meshgrid(x_indices, y_indices)
+        
+        # Initialize quiver plot with zeros
+        quiver = axes[3].quiver(X, Y, np.zeros_like(X), np.zeros_like(Y), np.zeros_like(X), 
+                               cmap='viridis', scale=1.0, width=0.005, pivot='mid')
+        
+        # Add colorbars
+        fig.colorbar(tumor_plot, ax=axes[0], label='Total Tumor')
+        fig.colorbar(pressure_plot, ax=axes[1], label='Pressure')
+        fig.colorbar(velocity_mag_plot, ax=axes[2], label='Velocity Magnitude')
+        cbar = fig.colorbar(quiver, ax=axes[3], label='Velocity Magnitude')
+        
+        # Set titles
+        axes[0].set_title("Total Tumor")
+        axes[1].set_title("Pressure Field")
+        axes[2].set_title("Velocity Magnitude")
+        axes[3].set_title("Velocity Field")
+        
+        # Set labels
+        for ax in axes:
+            ax.set_xlabel(label1)
+            ax.set_ylabel(label2)
+        
+        # Main title placeholder
+        title = fig.suptitle(f'Velocity Field Analysis - Step 0', fontsize=16)
+        
+        def update(frame):
+            """Update function for animation"""
+            # Get data for the current frame
+            try:
+                phi_H = self.history['healthy cell volume fraction'][frame]
+                phi_D = self.history['diseased cell volume fraction'][frame]
+                phi_N = self.history['necrotic cell volume fraction'][frame]
+                nutrient = self.history['nutrient concentration'][frame]
+            except (KeyError, IndexError) as e:
+                print(f"Error accessing history data at step {frame}: {e}")
+                return [tumor_plot, pressure_plot, velocity_mag_plot, quiver, title]
+            
+            # Calculate total tumor volume fraction
+            phi_T = phi_H + phi_D + phi_N
+            
+            # Calculate pressure
+            p = compute_internal_pressure_scie3121_model(
+                phi_H, phi_D, phi_N, nutrient, dx, 
+                params['gamma'], params['epsilon'],
+                params['lambda_H'], params['lambda_D'], 
+                params['mu_H'], params['mu_D'], params['mu_N'],
+                params['p_H'], params['p_D'], params['n_H'], params['n_D']
+            )
+            
+            # Calculate velocity components
+            ux, uy, uz = compute_solid_velocity_scie3121_model(
+                phi_H, phi_D, phi_N, nutrient, dx, 
+                params['gamma'], params['epsilon'], 
+                params['lambda_H'], params['lambda_D'], 
+                params['mu_H'], params['mu_D'], params['mu_N'], 
+                params['p_H'], params['p_D'], params['n_H'], params['n_D']
+            )
+            
+            # Extract slices based on the plane
+            if plane == 'XY':
+                total_slice = phi_T[:, :, index]
+                pressure_slice = p[:, :, index]
+                u1, u2 = ux[:, :, index], uy[:, :, index]
+            elif plane == 'XZ':
+                total_slice = phi_T[:, index, :]
+                pressure_slice = p[:, index, :]
+                u1, u2 = ux[:, index, :], uz[:, index, :]
+            elif plane == 'YZ':
+                total_slice = phi_T[index, :, :]
+                pressure_slice = p[index, :, :]
+                u1, u2 = uy[index, :, :], uz[index, :, :]
+            
+            # Calculate velocity magnitude
+            velocity_mag = np.sqrt(u1**2 + u2**2)
+            
+            # Update plots
+            tumor_plot.set_data(total_slice)
+            tumor_plot.set_clim(vmin=0, vmax=max(1.0, np.max(total_slice)))
+            
+            pressure_plot.set_data(pressure_slice)
+            pressure_plot.set_clim(vmin=min(0, np.min(pressure_slice)), vmax=max(0.1, np.max(pressure_slice)))
+            
+            velocity_mag_plot.set_data(velocity_mag)
+            velocity_mag_plot.set_clim(vmin=0, vmax=max(0.01, np.max(velocity_mag)))
+            
+            # Extract downsampled velocity components for quiver
+            U = u1[x_indices][:, y_indices] if u1.shape[0] > len(x_indices) else u1
+            V = u2[x_indices][:, y_indices] if u2.shape[0] > len(x_indices) else u2
+            
+            # Compute magnitude for coloring
+            magnitude = np.sqrt(U**2 + V**2)
+            
+            # Update quiver plot
+            quiver.set_UVC(U, V, magnitude)
+            
+            # Update title
+            title.set_text(f'Velocity Field Analysis - Step {self.history["step"][frame]}')
+            
+            return [tumor_plot, pressure_plot, velocity_mag_plot, quiver, title]
+        
+        anim = FuncAnimation(fig, update, frames=len(self.history['step']), interval=interval, blit=False)
+        
+        if save_as:
+            anim.save(save_as, writer='ffmpeg')  # Requires ffmpeg installed
+        
+        plt.tight_layout()
+        plt.show()
+        
+        return anim  # Return the animation object to prevent garbage collection
+
 # Helper functions 
 def load_simulation_history(npz_filename):
     """Load simulation history from an NPZ file."""
@@ -1050,17 +827,19 @@ def main():
 
     model = SCIE3121_MODEL(
         grid_shape=(50, 50, 50),
-        dx=0.2,
-        dt=0.001,
+        dx=1,
+        dt=0.1,
         params=SCIE3121_params,
         initial_conditions=SphericalTumor(grid_shape=(30, 30, 30), radius=7, nutrient_value=1.0),
     )
     analyzer = scie3121SimulationAnalyzer(filepath='data/project_model_test_sim_data.npz') 
-    analyzer.visualize_velocity_field(model, step=0)
-    #analyzer.animate_cross_section(plane='XY', interval=200)
-    #analyzer.plot_combined_cross_section(step_index=0, plane='XY', index=None, smooth_sigma=2.0, levels=50, cmaps=None) 
+    #analyzer.visualize_velocity_field(model, step=0)
+    #analyzer.animate_velocity_field(model)
+    analyzer.animate_cross_section(plane='XY', interval=200)
+    #alyzer.plot_combined_cross_section(step_index=0, plane='XY', index=None, smooth_sigma=2.0, levels=50, cmaps=None) 
     #analyzer.plot_nutrient_field(step_index=14, plane='XY', index=None, smooth_sigma=2.0, vmin=None, vmax=None, levels=50, cmap='viridis')
     #analyzer.animate_nutrient_field(plane='XY', index=None, interval=200, save_as=None)
-
+   
+    
 if __name__ == "__main__":
     main()

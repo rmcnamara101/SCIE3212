@@ -100,10 +100,23 @@ def compute_cell_sources_scie3121_model(phi_H, phi_D, phi_N, nutrient, n_H, n_D,
     
     # More conservative clipping
     return (
-        np.clip(src_H, -5.0, 5.0),
-        np.clip(src_D, -5.0, 5.0),
-        np.clip(src_N, -5.0, 5.0)
+        src_H,
+        src_D,
+        src_N
     )
+
+def compute_pressure_cell_sources(phi_H, phi_D, phi_N, nutrient, n_H, n_D, lambda_H, lambda_D, mu_H, mu_D, p_H, p_D, mu_N):
+    
+    H_H = np.where(n_H - nutrient > 0, 1.0, 0.0)
+    H_D = np.where(n_D - nutrient > 0, 1.0, 0.0)
+
+    src_H = lambda_H * nutrient * phi_H * (2 * p_H - 1)
+    src_D = 2 * lambda_H * nutrient * (1 - p_H) * phi_H + lambda_D * nutrient * phi_D * (2 * p_D - 1)
+    src_N = mu_N * phi_N
+    
+    return (src_H, src_D, src_N)
+    
+    
 
 class ProductionModel:
 

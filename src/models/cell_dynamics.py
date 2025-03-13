@@ -61,10 +61,10 @@
 import numpy as np
 import numba as nb
 
-from src.models.cell_production import compute_cell_sources, compute_cell_sources_scie3121_model
+from src.models.cell_production import compute_cell_sources, compute_cell_sources_scie3121_model, compute_pressure_cell_sources
 from scipy.sparse import diags
 from scipy.sparse.linalg import spsolve
-from scipy.sparse.linalg import cg
+from scipy.sparse.linalg import cg, LinearOperator
 from src.utils.utils import SCIE3121_params
 
 
@@ -130,7 +130,12 @@ def compute_cell_dynamics_scie3121_model(phi_H, phi_D, phi_N, nutrient, dx, gamm
 @nb.njit
 def compute_solid_velocity(phi_H, phi_P, phi_D, phi_N, nutrient, dx, gamma, epsilon, lambda_S, lambda_P, mu_S, mu_P, mu_D, alpha_D, p_0, p_1, gamma_N, n_S, n_P, n_D):
     C_T = phi_H + phi_D + phi_N
-    pressure = compute_internal_pressure(phi_H, phi_P, phi_D, phi_N, nutrient, dx, gamma, epsilon, lambda_S, lambda_P, mu_S, mu_P, mu_D, alpha_D, p_0, p_1, gamma_N, n_S, n_P, n_D)
+    pressure = compute_internal_pressure(
+        phi_H, phi_P, phi_D, phi_N, nutrient, dx,
+        gamma, epsilon, 
+        lambda_S, lambda_P, 
+        mu_S, mu_P, mu_D, 
+        alpha_D, p_0, p_1, gamma_N, n_S, n_P, n_D)
     energy_deriv = compute_adhesion_energy_derivative(C_T, dx, gamma, epsilon)
     
     grad_C_x = np.gradient(C_T, dx, 0)
@@ -158,7 +163,11 @@ def compute_solid_velocity_scie3121_model(phi_H, phi_D, phi_N, nutrient, dx, gam
     """
     phi_T = phi_H + phi_D + phi_N
     pressure = compute_internal_pressure_scie3121_model(
-        phi_H, phi_D, phi_T, dx, SCIE3121_params
+        phi_H, phi_D, phi_N, nutrient, dx, 
+        gamma, epsilon,
+        lambda_H, lambda_D, 
+        mu_H, mu_D, mu_N, 
+        p_H, p_D, n_H, n_D
     )
     energy_deriv = compute_adhesion_energy_derivative(phi_T, dx, gamma, epsilon)
     
@@ -169,14 +178,13 @@ def compute_solid_velocity_scie3121_model(phi_H, phi_D, phi_N, nutrient, dx, gam
     grad_p_y = np.gradient(pressure, axis=1) / dx
     grad_p_z = np.gradient(pressure, axis=2) / dx
 
-    ux = -(grad_p_x - energy_deriv * grad_C_x)
-    uy = -(grad_p_y - energy_deriv * grad_C_y)
-    uz = -(grad_p_z - energy_deriv * grad_C_z)
+    ux = -(grad_p_x + energy_deriv * grad_C_x)
+    uy = -(grad_p_y + energy_deriv * grad_C_y)
+    uz = -(grad_p_z + energy_deriv * grad_C_z)
 
-    # Debug: Check for NaN/Inf in velocities
     if np.any(np.isnan(ux)) or np.any(np.isinf(ux)):
         raise ValueError(f"ux contains NaN/Inf: max={np.max(ux)}, min={np.min(ux)}")
-
+    
     return ux, uy, uz
 
 @nb.njit
@@ -209,64 +217,50 @@ def compute_pressure_with_debug(phi_H, phi_D, phi_N, nutrient, dx, gamma, epsilo
     print(f"Final Max pressure: {np.max(p)}, Min pressure: {np.min(p)}")
     return p   
 
-def compute_internal_pressure_scie3121_model(
-    phi_H, phi_D, phi_T, dx, params
-):
+def compute_internal_pressure_scie3121_model(phi_H, phi_D, phi_N, nutrient, dx, gamma, epsilon, lambda_H, lambda_D, mu_H, mu_D, mu_N, p_H, p_D, n_H, n_D):
     """
-    Compute the internal pressure for the SCIE3121 model.
-    
+    Compute the internal pressure field for the SCIE3121 model using conjugate gradient.
     Args:
-        phi_H: Healthy cell volume fraction
-        phi_D: Dead cell volume fraction
-        phi_T: Total cell volume fraction (phi_H + phi_D)
-        dx: Grid spacing
-        params: Dictionary of model parameters
-    
+        phi_H, phi_D, phi_N: Volume fractions for healthy, dead, and nutrient cells.
+        nutrient: Nutrient concentration field.
+        dx: Grid spacing.
+        gamma, epsilon, lambda_H, lambda_D, mu_H, mu_D, mu_N, p_H, p_D, n_H, n_D: Model parameters.
     Returns:
-        pressure: Internal pressure field
+        pressure: 3D pressure field array.
     """
-    # Calculate gradients of total cell volume fraction
+    phi_T = phi_H + phi_D + phi_N
+    # Compute source terms (assuming compute_cell_sources_scie3121_model exists)
+    src_H, src_D, src_N = compute_pressure_cell_sources(
+        phi_H, phi_D, phi_N, nutrient, n_H, n_D, lambda_H, lambda_D, mu_H, mu_D, mu_N, p_H, p_D
+    )
+    S_T = src_H + src_D + src_N
+
+    # Compute the right-hand side: S_T - ∇·(δE/δφ_T ∇φ_T)
+    energy_deriv = compute_adhesion_energy_derivative(phi_T, dx, gamma, epsilon)
     grad_C_x = np.gradient(phi_T, axis=0) / dx
     grad_C_y = np.gradient(phi_T, axis=1) / dx
     grad_C_z = np.gradient(phi_T, axis=2) / dx
+    grad_energy_x = np.gradient(energy_deriv, axis=0) / dx
+    grad_energy_y = np.gradient(energy_deriv, axis=1) / dx
+    grad_energy_z = np.gradient(energy_deriv, axis=2) / dx
+    laplace_C = laplacian(phi_T, dx)
+    divergence = grad_energy_x * grad_C_x + grad_energy_y * grad_C_y + grad_energy_z * grad_C_z + energy_deriv * laplace_C
+    rhs = S_T - divergence
+
+    # Solve ∇²p = rhs using conjugate gradient
+    shape = phi_T.shape
+    A = get_laplacian_operator(shape, dx)
+    rhs_flat = rhs.flatten()
+    p_flat, info = cg(A, rhs_flat, rtol=1e-6, maxiter=100)
+    if info < 0:
+        raise ValueError("Illegal input or breakdown in CG solver")
+    pressure = p_flat.reshape(shape)
+
+    # Debug output
+    if np.any(np.isnan(pressure)) or np.any(np.isinf(pressure)):
+        raise ValueError(f"Pressure contains NaN/Inf: max={np.max(pressure)}, min={np.min(pressure)}")
     
-    # Calculate magnitude of gradient
-    grad_C_mag = np.sqrt(grad_C_x**2 + grad_C_y**2 + grad_C_z**2)
-    
-    # Get parameters
-    K_C = 1 # Bulk modulus
-    gamma = params['gamma']  # Surface tension coefficient
-    
-    # Compute pressure components
-    # Bulk pressure from compression/expansion
-    P_bulk = K_C * (phi_T - 1) * (phi_T > 1)
-    
-    # Surface tension pressure
-    # Calculate the curvature (divergence of the normalized gradient)
-    curvature = np.zeros_like(phi_T)
-    mask = grad_C_mag > 1e-10  # Avoid division by zero
-    
-    if np.any(mask):
-        norm_grad_x = np.zeros_like(phi_T)
-        norm_grad_y = np.zeros_like(phi_T)
-        norm_grad_z = np.zeros_like(phi_T)
-        
-        norm_grad_x[mask] = grad_C_x[mask] / grad_C_mag[mask]
-        norm_grad_y[mask] = grad_C_y[mask] / grad_C_mag[mask]
-        norm_grad_z[mask] = grad_C_z[mask] / grad_C_mag[mask]
-        
-        div_x = np.gradient(norm_grad_x, axis=0) / dx
-        div_y = np.gradient(norm_grad_y, axis=1) / dx
-        div_z = np.gradient(norm_grad_z, axis=2) / dx
-        
-        curvature = div_x + div_y + div_z
-    
-    P_surface = gamma * curvature * grad_C_mag
-    
-    # Total pressure
-    pressure = P_bulk + P_surface
-    
-    return pressure
+    return -pressure
 
 def compute_adhesion_energy_derivative(phi, dx, gamma, epsilon):
     f_prime = 0.5 * phi * (1 - phi) * (2 * phi - 1)
@@ -298,6 +292,48 @@ def compute_mass_current(v_cell, phi_T, dx, gamma, epsilon, M):
     return Jx, Jy, Jz
 
 
+def laplacian_neumann(p_flat, shape, dx):
+    """
+    Compute the 3D Laplacian with Neumann boundary conditions.
+    Args:
+        p_flat: Flattened pressure array.
+        shape: Tuple (nx, ny, nz) of the grid shape.
+        dx: Grid spacing.
+    Returns:
+        Flattened Laplacian array (float64).
+    """
+    p = p_flat.reshape(shape)
+    # Explicitly use float64 for lap_p to avoid dtype mismatch
+    lap_p = np.zeros(shape, dtype=np.float64)
+    # x-direction
+    lap_p[1:-1, :, :] = (p[2:, :, :] - 2*p[1:-1, :, :] + p[:-2, :, :]) / dx**2
+    lap_p[0, :, :] = 2*(p[1, :, :] - p[0, :, :]) / dx**2
+    lap_p[-1, :, :] = 2*(p[-2, :, :] - p[-1, :, :]) / dx**2
+    # y-direction
+    lap_p[:, 1:-1, :] += (p[:, 2:, :] - 2*p[:, 1:-1, :] + p[:, :-2, :]) / dx**2
+    lap_p[:, 0, :] += 2*(p[:, 1, :] - p[:, 0, :]) / dx**2
+    lap_p[:, -1, :] += 2*(p[:, -2, :] - p[:, -1, :]) / dx**2
+    # z-direction
+    lap_p[:, :, 1:-1] += (p[:, :, 2:] - 2*p[:, :, 1:-1] + p[:, :, :-2]) / dx**2
+    lap_p[:, :, 0] += 2*(p[:, :, 1] - p[:, :, 0]) / dx**2
+    lap_p[:, :, -1] += 2*(p[:, :, -2] - p[:, :, -1]) / dx**2
+    return lap_p.flatten()
+
+def get_laplacian_operator(shape, dx):
+    """
+    Create a LinearOperator for the Laplacian with Neumann conditions.
+    Args:
+        shape: Tuple (nx, ny, nz) of the grid shape.
+        dx: Grid spacing.
+    Returns:
+        LinearOperator representing the Laplacian (float64 output).
+    """
+    N = np.prod(shape)
+    def matvec(p_flat):
+        return laplacian_neumann(p_flat, shape, dx)
+    # Specify dtype as float64 to ensure compatibility
+    return LinearOperator((N, N), matvec=matvec, dtype=np.float64)
+
 class DynamicsModel:
     def __init__(self, model):
         self.model = model
@@ -322,9 +358,25 @@ class SCIE3121_DynamicsModel(DynamicsModel):
         Compute cell dynamics for SCIE3121 model.
         Returns: dphi_H, dphi_D, dphi_N as NumPy arrays.
         """
-        return compute_cell_dynamics_scie3121_model(
+        phi_T = phi_H + phi_D + phi_N
+        ux, uy, uz = compute_solid_velocity_scie3121_model(
             phi_H, phi_D, phi_N, nutrient, dx, 
-            params['gamma'], params['epsilon'], params['M'],
+            params['gamma'], params['epsilon'],
             params['lambda_H'], params['lambda_D'], params['mu_H'], params['mu_D'], params['mu_N'],
             params['p_H'], params['p_D'], self.model.n_H, self.model.n_D
         )
+        # Assuming compute_mass_current remains the same
+        Jx_H, Jy_H, Jz_H = compute_mass_current(phi_H, phi_T, dx, params['gamma'], params['epsilon'], params['M'])
+        Jx_D, Jy_D, Jz_D = compute_mass_current(phi_D, phi_T, dx, params['gamma'], params['epsilon'], params['M'])
+        Jx_N, Jy_N, Jz_N = compute_mass_current(phi_N, phi_T, dx, params['gamma'], params['epsilon'], 1e-6)
+
+        # Compute divergence (reusing your divergence function)
+        dphi_H = -divergence(ux * phi_H, uy * phi_H, uz * phi_H, dx) - divergence(Jx_H, Jy_H, Jz_H, dx)
+        dphi_D = -divergence(ux * phi_D, uy * phi_D, uz * phi_D, dx) - divergence(Jx_D, Jy_D, Jz_D, dx)
+        dphi_N = -divergence(ux * phi_N, uy * phi_N, uz * phi_N, dx) - divergence(Jx_N, Jy_N, Jz_N, dx)
+
+        # Debug checks
+        if np.any(np.isnan(dphi_H)) or np.any(np.isinf(dphi_H)):
+            raise ValueError(f"dphi_H contains NaN/Inf: max={np.max(dphi_H)}, min={np.min(dphi_H)}")
+        
+        return dphi_H, dphi_D, dphi_N
