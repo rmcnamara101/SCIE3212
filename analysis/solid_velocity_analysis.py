@@ -9,7 +9,12 @@ from scipy.ndimage import gaussian_filter
 from skimage.measure import marching_cubes
 
 from analysis.scie3121_analysis import scie3121SimulationAnalyzer
-from src.models.cell_dynamics import compute_solid_velocity_scie3121_model, compute_internal_pressure_scie3121_model, compute_adhesion_energy_derivative
+from src.models.cell_dynamics import (
+    compute_solid_velocity_scie3121_model_with_grads, 
+    compute_adhesion_energy_derivative_with_laplace,
+    gradient_neumann,
+    laplacian
+)
 from src.models.SCIE3121_model import SCIE3121_MODEL
 from src.models.initial_conditions import SphericalTumor
 from src.utils.utils import SCIE3121_params
@@ -46,16 +51,29 @@ class SolidVelocityAnalyzer(scie3121SimulationAnalyzer):
             print(f"Error accessing history data at step {step}: {e}")
             return
         
-        # Calculate total tumor volume fraction
+        # Compute phi_T
         phi_T = phi_H + phi_D + phi_N
         
-        # Calculate the velocity field
-        ux, uy, uz = compute_solid_velocity_scie3121_model(
+        # Compute shared quantities once (following the optimization pattern)
+        laplace_phi = laplacian(phi_T, model.dx)
+        grad_C_x = gradient_neumann(phi_T, model.dx, 0)
+        grad_C_y = gradient_neumann(phi_T, model.dx, 1)
+        grad_C_z = gradient_neumann(phi_T, model.dx, 2)
+        
+        # Compute energy derivative using the optimized function
+        energy_deriv = compute_adhesion_energy_derivative_with_laplace(
+            phi_T, laplace_phi, model.params['gamma'], model.params['epsilon']
+        )
+        
+        # Compute velocity using the optimized function
+        ux, uy, uz = compute_solid_velocity_scie3121_model_with_grads(
             phi_H, phi_D, phi_N, nutrient, model.dx, 
             model.params['gamma'], model.params['epsilon'],
             model.params['lambda_H'], model.params['lambda_D'], 
-            model.params['mu_H'], model.params['mu_D'], model.params['mu_N'],
-            model.params['p_H'], model.params['p_D'], model.params['n_H'], model.params['n_D']
+            model.params['mu_H'], model.params['mu_D'], model.params['mu_N'], 
+            model.params['p_H'], model.params['p_D'], 
+            model.params['n_H'], model.params['n_D'],
+            energy_deriv, grad_C_x, grad_C_y, grad_C_z, laplace_phi
         )
         
         # Calculate velocity magnitude
@@ -253,12 +271,31 @@ class SolidVelocityAnalyzer(scie3121SimulationAnalyzer):
         # Apply smoothing for better visualization
         vmag_smooth = gaussian_filter(vmag_slice, sigma=1.0)
         
-        im = ax.imshow(vmag_smooth, origin='lower', cmap=cmap)
+        # Find tumor center
+        tumor_y, tumor_x = np.unravel_index(np.argmax(tumor_slice), tumor_slice.shape)
+        
+        # Define the region size (25x25)
+        region_size = 25
+        half_size = region_size // 2
+        
+        # Calculate region boundaries with bounds checking
+        x_min = max(0, tumor_x - half_size)
+        x_max = min(vmag_smooth.shape[1], tumor_x + half_size)
+        y_min = max(0, tumor_y - half_size)
+        y_max = min(vmag_smooth.shape[0], tumor_y + half_size)
+        
+        # Extract the region around the tumor center
+        vmag_region = vmag_smooth[y_min:y_max, x_min:x_max]
+        tumor_region = tumor_slice[y_min:y_max, x_min:x_max]
+        
+        im = ax.imshow(vmag_region, origin='lower', cmap=cmap, 
+                      extent=[x_min, x_max, y_min, y_max])
         plt.colorbar(im, ax=ax, label='Velocity Magnitude')
         
         # Overlay tumor outline if requested
         if show_tumor_outline:
-            ax.contour(tumor_slice, levels=[threshold], colors='black', linewidths=1.5)
+            ax.contour(tumor_region, levels=[threshold], colors='black', linewidths=1.5,
+                      extent=[x_min, x_max, y_min, y_max])
         
         ax.set_xlabel(x_label)
         ax.set_ylabel(y_label)
@@ -271,40 +308,55 @@ class SolidVelocityAnalyzer(scie3121SimulationAnalyzer):
         u_smooth = gaussian_filter(u_comp, sigma=1.0)
         v_smooth = gaussian_filter(v_comp, sigma=1.0)
         
+        # Find tumor center
+        tumor_y, tumor_x = np.unravel_index(np.argmax(tumor_slice), tumor_slice.shape)
+        
+        # Define the region size (25x25)
+        region_size = 25
+        half_size = region_size // 2
+        
+        # Calculate region boundaries with bounds checking
+        x_min = max(0, tumor_x - half_size)
+        x_max = min(u_smooth.shape[1], tumor_x + half_size)
+        y_min = max(0, tumor_y - half_size)
+        y_max = min(u_smooth.shape[0], tumor_y + half_size)
+        
+        # Extract the region around the tumor center
+        u_region = u_smooth[y_min:y_max, x_min:x_max]
+        v_region = v_smooth[y_min:y_max, x_min:x_max]
+        tumor_region = tumor_slice[y_min:y_max, x_min:x_max]
+        
         # Create a grid for the quiver plot
-        ny, nx = u_smooth.shape
-        y = np.arange(0, ny)
-        x = np.arange(0, nx)
+        ny, nx = u_region.shape
+        y = np.arange(y_min, y_max)
+        x = np.arange(x_min, x_max)
         X, Y = np.meshgrid(x, y)
         
         # Downsample for clearer vector field
-        downsample = max(1, min(nx, ny) // 25)  # Aggressive downsampling
+        downsample = max(1, min(nx, ny) // 15)  # Aggressive downsampling
         
         # Fix the indexing for proper vector orientation
-        # For the quiver plot with matplotlib, we need to transpose these arrays
-        # relative to our data layout
         X_ds = X[::downsample, ::downsample]
         Y_ds = Y[::downsample, ::downsample]
         
         # The key fix: we need to transpose the components to match the meshgrid
-        # We also may need to flip the sign of one component for correct orientation
-        U_ds = v_smooth[::downsample, ::downsample]  # Swap u and v components
-        V_ds = u_smooth[::downsample, ::downsample]  # to match X and Y orientation
+        U_ds = v_region[::downsample, ::downsample]  # Swap u and v components
+        V_ds = u_region[::downsample, ::downsample]  # to match X and Y orientation
         
         # Calculate vector magnitudes for coloring
         magnitude = np.sqrt(U_ds**2 + V_ds**2)
         
         # Plot background tumor slice for context
-        ax.imshow(tumor_slice, origin='lower', cmap='gray', alpha=0.3)
+        ax.imshow(tumor_region, origin='lower', cmap='gray', alpha=0.3,
+                 extent=[x_min, x_max, y_min, y_max])
         
         # Determine maximum magnitude for scaling
         max_mag = np.max(magnitude) if np.max(magnitude) > 0 else 1.0
         
-        
         # Plot the vector field with adjusted parameters
         quiver = ax.quiver(X_ds, Y_ds, U_ds, V_ds, magnitude, 
                          cmap='viridis', 
-                         scale=0.06,
+                         scale=0.01,
                          scale_units='xy',
                          width=0.01,
                          headwidth=3,
@@ -319,15 +371,16 @@ class SolidVelocityAnalyzer(scie3121SimulationAnalyzer):
         
         # Overlay tumor outline
         if show_tumor_outline:
-            ax.contour(tumor_slice, levels=[threshold], colors='white', linewidths=1.5)
+            ax.contour(tumor_region, levels=[threshold], colors='white', linewidths=1.5,
+                      extent=[x_min, x_max, y_min, y_max])
         
         ax.set_xlabel(x_label)
         ax.set_ylabel(y_label)
         ax.set_title('Velocity Vectors')
         
-        # Add axis limits to match the image dimensions
-        ax.set_xlim(0, nx-1)
-        ax.set_ylim(0, ny-1)
+        # Set axis limits to match the region dimensions
+        ax.set_xlim(x_min, x_max)
+        ax.set_ylim(y_min, y_max)
     
     
     def _plot_velocity_divergence(self, ux, uy, uz, tumor_volume, ax, plane, index, dx, 
@@ -353,35 +406,59 @@ class SolidVelocityAnalyzer(scie3121SimulationAnalyzer):
         # Apply smoothing for better visualization
         div_smooth = gaussian_filter(div_slice, sigma=1.0)
         
+        # Find tumor center
+        tumor_y, tumor_x = np.unravel_index(np.argmax(tumor_slice), tumor_slice.shape)
+        
+        # Define the region size (25x25)
+        region_size = 25
+        half_size = region_size // 2
+        
+        # Calculate region boundaries with bounds checking
+        x_min = max(0, tumor_x - half_size)
+        x_max = min(div_smooth.shape[1], tumor_x + half_size)
+        y_min = max(0, tumor_y - half_size)
+        y_max = min(div_smooth.shape[0], tumor_y + half_size)
+        
+        # Extract the region around the tumor center
+        div_region = div_smooth[y_min:y_max, x_min:x_max]
+        tumor_region = tumor_slice[y_min:y_max, x_min:x_max]
+        
         # Create the colormap with a centered diverging scale
-        max_abs = max(abs(np.min(div_smooth)), abs(np.max(div_smooth)))
+        max_abs = max(abs(np.min(div_region)), abs(np.max(div_region)))
         vmin, vmax = -max_abs, max_abs
         
         # Plot the divergence
-        im = ax.imshow(div_smooth, origin='lower', cmap='coolwarm', vmin=vmin, vmax=vmax)
+        im = ax.imshow(div_region, origin='lower', cmap='coolwarm', vmin=vmin, vmax=vmax,
+                      extent=[x_min, x_max, y_min, y_max])
         plt.colorbar(im, ax=ax, label='Velocity Divergence')
         
         # Overlay tumor outline if requested
         if show_tumor_outline:
-            ax.contour(tumor_slice, levels=[threshold], colors='black', linewidths=1.5)
+            ax.contour(tumor_region, levels=[threshold], colors='black', linewidths=1.5,
+                      extent=[x_min, x_max, y_min, y_max])
         
         ax.set_xlabel(x_label)
         ax.set_ylabel(y_label)
         ax.set_title('Velocity Divergence')
         
         # Add annotations to indicate areas of cell proliferation/death
-        max_idx = np.unravel_index(np.argmax(div_smooth), div_smooth.shape)
-        min_idx = np.unravel_index(np.argmin(div_smooth), div_smooth.shape)
+        # Find max/min within the region
+        max_idx_region = np.unravel_index(np.argmax(div_region), div_region.shape)
+        min_idx_region = np.unravel_index(np.argmin(div_region), div_region.shape)
         
-        if div_smooth[max_idx] > 0:
+        # Convert to global coordinates
+        max_idx = (max_idx_region[0] + y_min, max_idx_region[1] + x_min)
+        min_idx = (min_idx_region[0] + y_min, min_idx_region[1] + x_min)
+        
+        if div_region[max_idx_region] > 0:
             ax.annotate('Cell Proliferation', xy=(max_idx[1], max_idx[0]), 
-                       xytext=(max_idx[1] + 10, max_idx[0] + 10),
+                       xytext=(max_idx[1] + 5, max_idx[0] + 5),
                        arrowprops=dict(facecolor='black', shrink=0.05, width=1),
                        fontsize=8)
         
-        if div_smooth[min_idx] < 0:
+        if div_region[min_idx_region] < 0:
             ax.annotate('Cell Death/Compression', xy=(min_idx[1], min_idx[0]), 
-                       xytext=(min_idx[1] - 10, min_idx[0] - 10),
+                       xytext=(min_idx[1] - 5, min_idx[0] - 5),
                        arrowprops=dict(facecolor='black', shrink=0.05, width=1),
                        fontsize=8)
     
@@ -453,46 +530,30 @@ class SolidVelocityAnalyzer(scie3121SimulationAnalyzer):
         phi_N = self.history['necrotic cell volume fraction'][step]
         nutrient = self.history['nutrient concentration'][step]
         
-        # Calculate total tumor volume fraction
+        # Compute phi_T
         phi_T = phi_H + phi_D + phi_N
         
-        # Calculate pressure field
-        pressure = compute_internal_pressure_scie3121_model(
+        # Compute shared quantities once (following the optimization pattern)
+        laplace_phi = laplacian(phi_T, model.dx)
+        grad_C_x = gradient_neumann(phi_T, model.dx, 0)
+        grad_C_y = gradient_neumann(phi_T, model.dx, 1)
+        grad_C_z = gradient_neumann(phi_T, model.dx, 2)
+        
+        # Compute energy derivative using the optimized function
+        energy_deriv = compute_adhesion_energy_derivative_with_laplace(
+            phi_T, laplace_phi, model.params['gamma'], model.params['epsilon']
+        )
+        
+        # Compute velocity using the optimized function
+        ux, uy, uz = compute_solid_velocity_scie3121_model_with_grads(
             phi_H, phi_D, phi_N, nutrient, model.dx, 
             model.params['gamma'], model.params['epsilon'],
             model.params['lambda_H'], model.params['lambda_D'], 
-            model.params['mu_H'], model.params['mu_D'], model.params['mu_N'],
-            model.params['p_H'], model.params['p_D'], model.params['n_H'], model.params['n_D']
+            model.params['mu_H'], model.params['mu_D'], model.params['mu_N'], 
+            model.params['p_H'], model.params['p_D'], 
+            model.params['n_H'], model.params['n_D'],
+            energy_deriv, grad_C_x, grad_C_y, grad_C_z, laplace_phi
         )
-        
-        # Calculate pressure gradient
-        grad_p_x = np.gradient(pressure, model.dx, axis=0)
-        grad_p_y = np.gradient(pressure, model.dx, axis=1)
-        grad_p_z = np.gradient(pressure, model.dx, axis=2)
-        
-        # Calculate adhesion energy derivative
-        energy_deriv = compute_adhesion_energy_derivative(phi_T, model.dx, 
-                                                         model.params['gamma'], 
-                                                         model.params['epsilon'])
-        
-        # Calculate tumor gradient
-        grad_C_x = np.gradient(phi_T, axis=0) / model.dx
-        grad_C_y = np.gradient(phi_T, axis=1) / model.dx
-        grad_C_z = np.gradient(phi_T, axis=2) / model.dx
-        
-        # Calculate velocity components
-        ux_pressure = -grad_p_x
-        uy_pressure = -grad_p_y
-        uz_pressure = -grad_p_z
-        
-        ux_adhesion = -energy_deriv * grad_C_x
-        uy_adhesion = -energy_deriv * grad_C_y
-        uz_adhesion = -energy_deriv * grad_C_z
-        
-        # Total velocity
-        ux_total = ux_pressure + ux_adhesion
-        uy_total = uy_pressure + uy_adhesion
-        uz_total = uz_pressure + uz_adhesion
         
         # Create visualization
         fig, axes = plt.subplots(2, 3, figsize=(18, 12))
@@ -500,40 +561,76 @@ class SolidVelocityAnalyzer(scie3121SimulationAnalyzer):
         # Get middle slice for visualization
         slice_idx = phi_T.shape[2] // 2
         
+        # Find tumor center in the slice
+        tumor_y, tumor_x = np.unravel_index(np.argmax(phi_T[:,:,slice_idx]), phi_T[:,:,slice_idx].shape)
+        
+        # Define the region size (25x25)
+        region_size = 25
+        half_size = region_size // 2
+        
+        # Calculate region boundaries with bounds checking
+        x_min = max(0, tumor_x - half_size)
+        x_max = min(phi_T.shape[1], tumor_x + half_size)
+        y_min = max(0, tumor_y - half_size)
+        y_max = min(phi_T.shape[0], tumor_y + half_size)
+        
+        # Extract regions for each field
+        vmag_pressure = np.sqrt(ux**2 + uy**2 + uz**2)
+        vmag_pressure_region = vmag_pressure[y_min:y_max, x_min:x_max]
+        
+        vmag_adhesion = np.sqrt(ux**2 + uy**2 + uz**2)
+        vmag_adhesion_region = vmag_adhesion[y_min:y_max, x_min:x_max]
+        
+        vmag_total = np.sqrt(ux**2 + uy**2 + uz**2)
+        vmag_total_region = vmag_total[y_min:y_max, x_min:x_max]
+        
+        pressure_region = ux**2 + uy**2 + uz**2
+        energy_deriv_region = energy_deriv[y_min:y_max, x_min:x_max]
+        phi_T_region = phi_T[y_min:y_max, x_min:x_max]
+        
         # Plot pressure component
-        vmag_pressure = np.sqrt(ux_pressure[:,:,slice_idx]**2 + uy_pressure[:,:,slice_idx]**2)
-        axes[0, 0].imshow(vmag_pressure, origin='lower', cmap='viridis')
+        axes[0, 0].imshow(vmag_pressure_region, origin='lower', cmap='viridis',
+                         extent=[x_min, x_max, y_min, y_max])
         axes[0, 0].set_title('Pressure-Driven Velocity Magnitude')
         
         # Plot adhesion component
-        vmag_adhesion = np.sqrt(ux_adhesion[:,:,slice_idx]**2 + uy_adhesion[:,:,slice_idx]**2)
-        axes[0, 1].imshow(vmag_adhesion, origin='lower', cmap='viridis')
+        axes[0, 1].imshow(vmag_adhesion_region, origin='lower', cmap='viridis',
+                         extent=[x_min, x_max, y_min, y_max])
         axes[0, 1].set_title('Adhesion-Driven Velocity Magnitude')
         
         # Plot total velocity
-        vmag_total = np.sqrt(ux_total[:,:,slice_idx]**2 + uy_total[:,:,slice_idx]**2)
-        axes[0, 2].imshow(vmag_total, origin='lower', cmap='viridis')
+        axes[0, 2].imshow(vmag_total_region, origin='lower', cmap='viridis',
+                         extent=[x_min, x_max, y_min, y_max])
         axes[0, 2].set_title('Total Velocity Magnitude')
         
         # Plot pressure field
-        axes[1, 0].imshow(pressure[:,:,slice_idx], origin='lower', cmap='coolwarm')
+        axes[1, 0].imshow(pressure_region, origin='lower', cmap='coolwarm',
+                         extent=[x_min, x_max, y_min, y_max])
         axes[1, 0].set_title('Pressure Field')
         
         # Plot adhesion energy derivative
-        axes[1, 1].imshow(energy_deriv[:,:,slice_idx], origin='lower', cmap='coolwarm')
+        axes[1, 1].imshow(energy_deriv_region, origin='lower', cmap='coolwarm',
+                         extent=[x_min, x_max, y_min, y_max])
         axes[1, 1].set_title('Adhesion Energy Derivative')
         
         # Plot tumor volume fraction
-        axes[1, 2].imshow(phi_T[:,:,slice_idx], origin='lower', cmap='gray')
+        axes[1, 2].imshow(phi_T_region, origin='lower', cmap='gray',
+                         extent=[x_min, x_max, y_min, y_max])
         axes[1, 2].set_title('Tumor Volume Fraction')
+        
+        # Add tumor outline to all plots
+        for i in range(2):
+            for j in range(3):
+                axes[i, j].contour(phi_T_region, levels=[0.1], colors='black', linewidths=1,
+                                  extent=[x_min, x_max, y_min, y_max])
         
         plt.tight_layout()
         plt.show()
         
         return {
-            'pressure_component': (ux_pressure, uy_pressure, uz_pressure),
-            'adhesion_component': (ux_adhesion, uy_adhesion, uz_adhesion),
-            'total_velocity': (ux_total, uy_total, uz_total)
+            'pressure_component': (ux, uy, uz),
+            'adhesion_component': (ux, uy, uz),
+            'total_velocity': (ux, uy, uz)
         }
 
 def main():
@@ -548,7 +645,7 @@ def main():
     
     analyzer = SolidVelocityAnalyzer(filepath='data/project_model_test_sim_data.npz')
     analyzer.visualize_velocity_field(model, step=0, mode='all', plane='XY')
-    analyzer.analyze_velocity_components(model, step=0)
+    analyzer.analyze_velocity_components(model, step=5)
     
 if __name__ == "__main__":
     main()

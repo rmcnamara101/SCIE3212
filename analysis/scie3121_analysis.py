@@ -16,7 +16,6 @@ sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from src.models.SCIE3121_model import SCIE3121_MODEL
 from src.models.initial_conditions import SphericalTumor
 from src.utils.utils import SCIE3121_params, gradient, laplacian, divergence
-from src.models.cell_dynamics import compute_internal_pressure_scie3121_model, compute_solid_velocity_scie3121_model, compute_adhesion_energy_derivative
 
 class scie3121SimulationAnalyzer:
     """Analyzer for tumor growth simulation data from NPZ files."""
@@ -384,141 +383,6 @@ class scie3121SimulationAnalyzer:
         plt.grid(True, linestyle='--', alpha=0.7)
         plt.show()
 
-    def visualize_velocity_field(self, model, step=0):
-        """
-        Visualize the velocity field to identify leaking causes.
-        
-        Args:
-            model: The simulation model object (not used directly for history data here)
-            step (int): The time step to visualize
-        """
-        # Get a slice of the tumor (XZ plane, middle of Y-axis)
-        try:
-            phi_H = self.history['healthy cell volume fraction'][step]
-            phi_D = self.history['diseased cell volume fraction'][step]
-            phi_N = self.history['necrotic cell volume fraction'][step]
-            nutrient = self.history['nutrient concentration'][step]
-        except (KeyError, IndexError) as e:
-            print(f"Error accessing history data at step {step}: {e}")
-            return
-
-        # Get the grid shape from the history data, not the model
-        grid_shape = phi_H.shape
-        slice_idx = grid_shape[1] // 2
-        
-        # Get parameters from the model
-        params = model.params
-        dx = model.dx
-        phi_T = phi_H + phi_D + phi_N
-        # Calculate pressure
-        p = compute_internal_pressure_scie3121_model(
-            phi_H, phi_D, phi_N, nutrient, dx, 
-            params['gamma'], params['epsilon'],
-            params['lambda_H'], params['lambda_D'], 
-            params['mu_H'], params['mu_D'], params['mu_N'],
-            params['p_H'], params['p_D'], params['n_H'], params['n_D']
-        )
-        
-        # Calculate velocity components
-        ux, uy, uz = compute_solid_velocity_scie3121_model(
-            phi_H, phi_D, phi_N, nutrient, dx, 
-            params['gamma'], params['epsilon'], 
-            params['lambda_H'], params['lambda_D'], 
-            params['mu_H'], params['mu_D'], params['mu_N'], 
-            params['p_H'], params['p_D'], params['n_H'], params['n_D']
-        )
-        
-        # Create the figure
-        plt.figure(figsize=(12, 10))
-        
-        # Plot total tumor
-        plt.subplot(221)
-        total_tumor = phi_T[:, :, slice_idx]
-        plt.imshow(total_tumor, origin='lower', cmap='viridis')
-        plt.title("Total Tumor")
-        plt.colorbar()
-        
-        # Plot pressure
-        plt.subplot(222)
-        plt.imshow(p[:, :, slice_idx], origin='lower', cmap='coolwarm')
-        plt.title("Pressure Field")
-        plt.colorbar()
-        
-        # Plot velocity magnitude
-        plt.subplot(223)
-        velocity_mag = np.sqrt(ux[:, :, slice_idx]**2 + uz[:, :, slice_idx]**2)
-        plt.imshow(velocity_mag, origin='lower', cmap='plasma')
-        plt.title("Velocity Magnitude")
-        plt.colorbar()
-        
-        # Plot velocity vectors
-        plt.subplot(224)
-
-        # Downsample for quiver plot to avoid overcrowding
-        grid_size = min(grid_shape[0], grid_shape[2])
-        downsample = max(1, grid_size // 10)  # Increased downsampling (e.g., 30 // 10 = 3)
-        x_indices = np.arange(0, grid_shape[0], downsample)
-        z_indices = np.arange(0, grid_shape[2], downsample)
-
-        X, Z = np.meshgrid(x_indices, z_indices)
-
-        # Extract velocity components with bounds checking
-        U = ux[x_indices, slice_idx, :][:, z_indices]
-        V = uz[x_indices, slice_idx, :][:, z_indices]
-
-        # Compute the magnitude for coloring
-        magnitude = np.sqrt(U**2 + V**2)
-
-        # Debug: Print shapes to verify
-        print(f"Grid shape: {grid_shape}")
-        print(f"x_indices: {x_indices}")
-        print(f"z_indices: {z_indices}")
-        print(f"X shape: {X.shape}, Z shape: {Z.shape}")
-        print(f"U shape: {U.shape}, V shape: {V.shape}")
-
-        # Plot the quiver with adjusted scale and width
-        if U.size > 0 and V.size > 0:
-            plt.quiver(X, Z, U, V, magnitude, cmap='viridis', scale=1.0, width=0.005, pivot='mid')  # Adjusted scale and width
-            plt.colorbar(label='Velocity Magnitude')
-        else:
-            plt.text(0.5, 0.5, "No velocity vectors to display", ha='center', va='center', transform=plt.gca().transAxes)
-
-        # Overlay the total tumor field for context
-        plt.imshow(total_tumor, origin='lower', cmap='gray', alpha=0.3, extent=(0, grid_shape[0], 0, grid_shape[2]))
-        plt.title("Velocity Field")
-
-        plt.tight_layout()
-
-        plt.show()
-
-        # Calculate gradients
-        grad_p_x = np.gradient(p, axis=0) / dx
-        grad_p_y = np.gradient(p, axis=1) / dx
-        energy_deriv = compute_adhesion_energy_derivative(phi_T, dx, params['gamma'], params['epsilon'])
-        grad_C_x = np.gradient(energy_deriv, axis=0) / dx
-        grad_C_y = np.gradient(energy_deriv, axis=1) / dx
-        plt.figure(figsize=(12, 10))
-
-        # Create coordinate grids for quiver
-        x = np.arange(grad_p_x.shape[1])
-        y = np.arange(grad_p_x.shape[0]) 
-        X, Y = np.meshgrid(x, y)
-
-        # Extract 2D slices for quiver plot
-        grad_p_x_2d = grad_p_x[:, :, grad_p_x.shape[2]//2]  
-        grad_p_y_2d = grad_p_y[:, :, grad_p_y.shape[2]//2]
-        grad_C_x_2d = grad_C_x[:, :, grad_C_x.shape[2]//2]
-        grad_C_y_2d = grad_C_y[:, :, grad_C_y.shape[2]//2]
-        energy_deriv_2d = energy_deriv[:, :, energy_deriv.shape[2]//2]
-
-        plt.subplot(221)
-        plt.quiver(X, Y, grad_p_x_2d, grad_p_y_2d, scale=5.0, width=0.007, pivot='mid')
-        plt.title("Pressure Gradient")
-
-        plt.subplot(222)
-        plt.quiver(X, Y, energy_deriv_2d * grad_C_x_2d, energy_deriv_2d * grad_C_y_2d, scale=1.0, width=0.005, pivot='mid')
-        plt.title("Adhesion Term")
-        plt.show()
 
     def plot_combined_cross_section(self, step_index, plane='XY', index=None, smooth_sigma=2.0, 
                                   levels=50, cmaps=None):
@@ -621,168 +485,41 @@ class scie3121SimulationAnalyzer:
         plt.tight_layout()
         plt.show()
 
-    def animate_velocity_field(self, model, plane='XY', index=None, interval=200, save_as=None, downsample_factor=10):
+    def plot_population_radii(self, threshold=0.05, smooth_window=5):
         """
-        Animate the velocity field visualization over time.
+        Plot the radius of each cell population over time.
         
         Args:
-            model: The simulation model object (needed for parameters)
-            plane (str): Plane to slice ('XY', 'XZ', 'YZ'). Defaults to 'XY'.
-            index (int, optional): Index along the perpendicular axis. Defaults to midpoint.
-            interval (int): Delay between frames in milliseconds. Defaults to 200.
-            save_as (str, optional): File path to save animation (e.g., 'velocity_field.mp4').
-            downsample_factor (int): Factor to downsample velocity vectors for clearer visualization.
+            threshold (float): Threshold value for determining the boundary of each population.
+            smooth_window (int): Window size for Savitzky-Golay smoothing (odd number).
         """
-        # Get the shape from the first step to determine default index
-        shape = self.history['healthy cell volume fraction'][0].shape
-        if index is None:
-            if plane == 'XY':
-                index = shape[2] // 2
-            elif plane == 'XZ':
-                index = shape[1] // 2
-            elif plane == 'YZ':
-                index = shape[0] // 2
-            else:
-                raise ValueError("Plane must be 'XY', 'XZ', or 'YZ'")
+        steps = self.history['step']
+        healthy_radii, diseased_radii, necrotic_radii = compute_population_radii(self.history, threshold)
         
-        # Get parameters from the model
-        params = model.params
-        dx = model.dx
+        # Ensure smooth_window is odd
+        if smooth_window % 2 == 0:
+            smooth_window += 1
         
-        # Set up the figure with 2x2 subplots
-        fig, axes = plt.subplots(2, 2, figsize=(14, 12))
-        axes = axes.flatten()
+        # Apply smoothing if window > 1 and enough data points
+        if smooth_window > 1 and len(steps) > smooth_window:
+            healthy_radii = savgol_filter(healthy_radii, smooth_window, 3)
+            diseased_radii = savgol_filter(diseased_radii, smooth_window, 3)
+            necrotic_radii = savgol_filter(necrotic_radii, smooth_window, 3)
         
-        # Determine axis indices and labels based on the plane
-        if plane == 'XY':
-            axis1, axis2, axis3 = 0, 1, 2  # X, Y, Z
-            label1, label2 = 'X', 'Y'
-        elif plane == 'XZ':
-            axis1, axis2, axis3 = 0, 2, 1  # X, Z, Y
-            label1, label2 = 'X', 'Z'
-        elif plane == 'YZ':
-            axis1, axis2, axis3 = 1, 2, 0  # Y, Z, X
-            label1, label2 = 'Y', 'Z'
+        plt.figure(figsize=(10, 6))
+        plt.plot(steps, healthy_radii, label='Healthy', color='green')
+        plt.plot(steps, diseased_radii, label='Diseased', color='red')
+        plt.plot(steps, necrotic_radii, label='Necrotic', color='black')
         
-        # Initialize empty plots
-        tumor_plot = axes[0].imshow(np.zeros((shape[axis1], shape[axis2])), origin='lower', cmap='viridis')
-        pressure_plot = axes[1].imshow(np.zeros((shape[axis1], shape[axis2])), origin='lower', cmap='coolwarm')
-        velocity_mag_plot = axes[2].imshow(np.zeros((shape[axis1], shape[axis2])), origin='lower', cmap='plasma')
+        # Also plot the total radius for comparison
+        plt.plot(steps, self.radius_data, label='Total Tumor', color='blue', linestyle='--')
         
-        # Set up for quiver plot
-        downsample = max(1, min(shape[axis1], shape[axis2]) // downsample_factor)
-        x_indices = np.arange(0, shape[axis1], downsample)
-        y_indices = np.arange(0, shape[axis2], downsample)
-        X, Y = np.meshgrid(x_indices, y_indices)
-        
-        # Initialize quiver plot with zeros
-        quiver = axes[3].quiver(X, Y, np.zeros_like(X), np.zeros_like(Y), np.zeros_like(X), 
-                               cmap='viridis', scale=1.0, width=0.005, pivot='mid')
-        
-        # Add colorbars
-        fig.colorbar(tumor_plot, ax=axes[0], label='Total Tumor')
-        fig.colorbar(pressure_plot, ax=axes[1], label='Pressure')
-        fig.colorbar(velocity_mag_plot, ax=axes[2], label='Velocity Magnitude')
-        cbar = fig.colorbar(quiver, ax=axes[3], label='Velocity Magnitude')
-        
-        # Set titles
-        axes[0].set_title("Total Tumor")
-        axes[1].set_title("Pressure Field")
-        axes[2].set_title("Velocity Magnitude")
-        axes[3].set_title("Velocity Field")
-        
-        # Set labels
-        for ax in axes:
-            ax.set_xlabel(label1)
-            ax.set_ylabel(label2)
-        
-        # Main title placeholder
-        title = fig.suptitle(f'Velocity Field Analysis - Step 0', fontsize=16)
-        
-        def update(frame):
-            """Update function for animation"""
-            # Get data for the current frame
-            try:
-                phi_H = self.history['healthy cell volume fraction'][frame]
-                phi_D = self.history['diseased cell volume fraction'][frame]
-                phi_N = self.history['necrotic cell volume fraction'][frame]
-                nutrient = self.history['nutrient concentration'][frame]
-            except (KeyError, IndexError) as e:
-                print(f"Error accessing history data at step {frame}: {e}")
-                return [tumor_plot, pressure_plot, velocity_mag_plot, quiver, title]
-            
-            # Calculate total tumor volume fraction
-            phi_T = phi_H + phi_D + phi_N
-            
-            # Calculate pressure
-            p = compute_internal_pressure_scie3121_model(
-                phi_H, phi_D, phi_N, nutrient, dx, 
-                params['gamma'], params['epsilon'],
-                params['lambda_H'], params['lambda_D'], 
-                params['mu_H'], params['mu_D'], params['mu_N'],
-                params['p_H'], params['p_D'], params['n_H'], params['n_D']
-            )
-            
-            # Calculate velocity components
-            ux, uy, uz = compute_solid_velocity_scie3121_model(
-                phi_H, phi_D, phi_N, nutrient, dx, 
-                params['gamma'], params['epsilon'], 
-                params['lambda_H'], params['lambda_D'], 
-                params['mu_H'], params['mu_D'], params['mu_N'], 
-                params['p_H'], params['p_D'], params['n_H'], params['n_D']
-            )
-            
-            # Extract slices based on the plane
-            if plane == 'XY':
-                total_slice = phi_T[:, :, index]
-                pressure_slice = p[:, :, index]
-                u1, u2 = ux[:, :, index], uy[:, :, index]
-            elif plane == 'XZ':
-                total_slice = phi_T[:, index, :]
-                pressure_slice = p[:, index, :]
-                u1, u2 = ux[:, index, :], uz[:, index, :]
-            elif plane == 'YZ':
-                total_slice = phi_T[index, :, :]
-                pressure_slice = p[index, :, :]
-                u1, u2 = uy[index, :, :], uz[index, :, :]
-            
-            # Calculate velocity magnitude
-            velocity_mag = np.sqrt(u1**2 + u2**2)
-            
-            # Update plots
-            tumor_plot.set_data(total_slice)
-            tumor_plot.set_clim(vmin=0, vmax=max(1.0, np.max(total_slice)))
-            
-            pressure_plot.set_data(pressure_slice)
-            pressure_plot.set_clim(vmin=min(0, np.min(pressure_slice)), vmax=max(0.1, np.max(pressure_slice)))
-            
-            velocity_mag_plot.set_data(velocity_mag)
-            velocity_mag_plot.set_clim(vmin=0, vmax=max(0.01, np.max(velocity_mag)))
-            
-            # Extract downsampled velocity components for quiver
-            U = u1[x_indices][:, y_indices] if u1.shape[0] > len(x_indices) else u1
-            V = u2[x_indices][:, y_indices] if u2.shape[0] > len(x_indices) else u2
-            
-            # Compute magnitude for coloring
-            magnitude = np.sqrt(U**2 + V**2)
-            
-            # Update quiver plot
-            quiver.set_UVC(U, V, magnitude)
-            
-            # Update title
-            title.set_text(f'Velocity Field Analysis - Step {self.history["step"][frame]}')
-            
-            return [tumor_plot, pressure_plot, velocity_mag_plot, quiver, title]
-        
-        anim = FuncAnimation(fig, update, frames=len(self.history['step']), interval=interval, blit=False)
-        
-        if save_as:
-            anim.save(save_as, writer='ffmpeg')  # Requires ffmpeg installed
-        
-        plt.tight_layout()
+        plt.xlabel('Time Step')
+        plt.ylabel('Radius (in grid units)')
+        plt.title(f'Cell Population Radii Evolution (threshold={threshold})')
+        plt.legend()
+        plt.grid(True, linestyle='--', alpha=0.7)
         plt.show()
-        
-        return anim  # Return the animation object to prevent garbage collection
 
 # Helper functions 
 def load_simulation_history(npz_filename):
@@ -823,6 +560,35 @@ def compute_total_radius(history, threshold=0.05):
         radii.append(radius)
     return radii
 
+def compute_population_radii(history, threshold=0.05):
+    """Compute radius of each cell population over time based on a threshold."""
+    healthy_radii = []
+    diseased_radii = []
+    necrotic_radii = []
+    
+    first_phi = history['healthy cell volume fraction'][0]
+    distance_grid = create_distance_grid_from_field(first_phi)
+    
+    for phi_H, phi_D, phi_N in zip(
+            history['healthy cell volume fraction'],
+            history['diseased cell volume fraction'],
+            history['necrotic cell volume fraction']):
+        
+        # Calculate radius for each population
+        healthy_mask = phi_H >= (threshold * np.max(phi_H)) if np.max(phi_H) > 0 else np.zeros_like(phi_H, dtype=bool)
+        diseased_mask = phi_D >= (threshold * np.max(phi_D)) if np.max(phi_D) > 0 else np.zeros_like(phi_D, dtype=bool)
+        necrotic_mask = phi_N >= (threshold * np.max(phi_N)) if np.max(phi_N) > 0 else np.zeros_like(phi_N, dtype=bool)
+        
+        healthy_radius = np.max(distance_grid[healthy_mask]) if np.any(healthy_mask) else 0
+        diseased_radius = np.max(distance_grid[diseased_mask]) if np.any(diseased_mask) else 0
+        necrotic_radius = np.max(distance_grid[necrotic_mask]) if np.any(necrotic_mask) else 0
+        
+        healthy_radii.append(healthy_radius)
+        diseased_radii.append(diseased_radius)
+        necrotic_radii.append(necrotic_radius)
+        
+    return healthy_radii, diseased_radii, necrotic_radii
+
 def main():
 
     model = SCIE3121_MODEL(
@@ -839,6 +605,7 @@ def main():
     #alyzer.plot_combined_cross_section(step_index=0, plane='XY', index=None, smooth_sigma=2.0, levels=50, cmaps=None) 
     #analyzer.plot_nutrient_field(step_index=14, plane='XY', index=None, smooth_sigma=2.0, vmin=None, vmax=None, levels=50, cmap='viridis')
     #analyzer.animate_nutrient_field(plane='XY', index=None, interval=200, save_as=None)
+    analyzer.plot_population_radii(threshold=0.05, smooth_window=5)
    
     
 if __name__ == "__main__":

@@ -88,6 +88,7 @@ def compute_cell_sources_scie3121_model(phi_H, phi_D, phi_N, nutrient, n_H, n_D,
     H_H = np.where(n_H - nutrient > 0, 1.0, 0.0)
     H_D = np.where(n_D - nutrient > 0, 1.0, 0.0)
 
+    
     # Ensure proper balance between growth and death
     src_H = lambda_H * nutrient * phi_H * (2 * p_H - 1) - mu_H * H_H * phi_H
     src_D = 2 * lambda_H * nutrient * (1 - p_H) * phi_H + lambda_D * nutrient * phi_D * (2 * p_D - 1) - mu_D * H_D * phi_D 

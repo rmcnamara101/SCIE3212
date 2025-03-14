@@ -33,37 +33,37 @@ experimental_params = {
     "n_max": 0.01,
     
     # constant terms in the adhesion energy equation
-    "gamma": 5,
-    "epsilon": 0.1,
+    "gamma": -15,
+    "epsilon": 0.10,
     
     # diffusion constant of nutrient field
     "D_n": 0.1,
 
-    "M": 0.001,
+    "M": 0.1,
 }
 
 SCIE3121_params = {
     # growth rates
-    "lambda_H": 0.7, # day^-1
-    "lambda_D": 1.0, # day^-1
+    "lambda_H": 0.6, # day^-1
+    "lambda_D": 0.8, # day^-1
 
     # death rates
     "mu_H": 0.2, # day^-1
     "mu_D": 0.2, # day^-1
-    "mu_N": 1.41, # day^-1
+    "mu_N": 0.01, # day^-1
 
     # probability terms
-    "p_H": 0.7, # unitless
-    "p_D": 0.8, # unitless
+    "p_H": 0.8, # unitless
+    "p_D": 0.67, # unitless
 
     # nutrient saturation for each cell type
     "n_H": 0.2, # unitless
     "n_D": 0.2, # unitless
 
     # physical constants
-    'gamma': -0.1, # J mm^-2
-    'epsilon': 0.05, # mm
-    'M': 10.0, # mm^5 day^-1 
+    'gamma': -10.0, # J mm^-2
+    'epsilon': 0.001, # mm
+    'M': 0.1, # mm^5 day^-1 
 
     # diffusion constant of nutrient field
     "D_n": 1.0, # mm^2 day^-1

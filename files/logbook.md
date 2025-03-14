@@ -162,3 +162,12 @@ Since then, after implementing the new cell cycle model, I have adjusted the cel
 After writing this out I had a sudden realisation that I was not properly implementing the solid velocity terms. In the solid velocity file, I showed that the divergence of the solid velocity field is equal to the source terms, which I just assumed was the sum of all the source terms individually. However, thinking I realise that I should not be considering any necrotic source terms, as they are just mass exchange terms. The death rates cancel if you simply add all the sources together, yet the necrotic mass exchange terms do not cancel. This is problematic, as a mass exchange term should not contribute to any increase in the internal pressure of the system, as they were already there.
 
 Anyways, continuing on, thus the way the necrotic cells interact with the physical portions of the equations are through the mass flux. Which is essentially a function of the adhesion energy functional. The necrotic cells, although certainly not containing much internal energy, would still move along the adhesion energy gradients, just at a much slower rate than the other cell types. This is encapsulated by reducing the mobility of the necrotic cells, which after a few tests, seem to be yielding more of a necrotic core.
+
+<h3> 14-3-25 </h3>
+
+After a huge deep dive on the model, I realised this was all not working properly, and everything was just messed up. I went one by one through the global physical fields, starting with the nutrient diffusion. All the analysis of the fields can be found in the analysis/dynamics_analysis.ipynb file. This plots all the fields of a loaded simulation.
+
+The pressure field was not working properly so I had to change the solver using some scipy solver, which fix everything. A nice pressure surface can be seen which is exactly what I expected to see now. The pressure gradient points inwards, as expected so the -grad p points outwards driving growth. 
+The cell adhesion is also clearly driving forces at the boundary of the tumor, as expected. And now I am beginning to see the necrotic core form. 
+
+I am considering options about changing cell types, and pathways, nutrient levels, to see if there can be more defining characteristics mimicked by the model. Next steps would be to get some experimental data to match the growth rates, and death rates, and validate that the model is physcially accurate. I am optimistic right now, as the model is behaving as expected, generating very nice spheroids.

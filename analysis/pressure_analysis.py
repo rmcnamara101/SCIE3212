@@ -1,4 +1,3 @@
-
 import os
 import sys
 
@@ -11,11 +10,17 @@ from scipy.ndimage import gaussian_filter
 from skimage.measure import marching_cubes
 
 from analysis.scie3121_analysis import scie3121SimulationAnalyzer
-from src.models.cell_dynamics import compute_internal_pressure_scie3121_model
+from src.models.cell_dynamics import (
+    compute_internal_pressure_scie3121_model,
+    compute_adhesion_energy_derivative_with_laplace,
+    laplacian,
+    gradient_neumann
+)
 from src.models.SCIE3121_model import SCIE3121_MODEL
 from src.models.initial_conditions import SphericalTumor
 from src.utils.utils import SCIE3121_params
 from matplotlib.animation import FuncAnimation
+
 class PressureAnalyzer(scie3121SimulationAnalyzer):
     def __init__(self, filepath):
         super().__init__(filepath)
@@ -49,8 +54,18 @@ class PressureAnalyzer(scie3121SimulationAnalyzer):
             print(f"Error accessing history data at step {step}: {e}")
             return
         
-        # Calculate total tumor volume fraction
+        # Compute phi_T
         phi_T = phi_H + phi_D + phi_N
+        
+        # Compute shared quantities once (following the optimization pattern)
+        laplace_phi = laplacian(phi_T, model.dx)
+        
+        # Compute energy derivative using the optimized function if needed
+        if show_derivatives:
+            energy_deriv = compute_adhesion_energy_derivative_with_laplace(
+                phi_T, laplace_phi, model.params['gamma'], model.params['epsilon']
+            )
+        
         # Calculate pressure field
         p = compute_internal_pressure_scie3121_model(
             phi_H, phi_D, phi_N, nutrient, model.dx, 
@@ -470,8 +485,8 @@ def main():
         initial_conditions=SphericalTumor(grid_shape=(30, 30, 30), radius=7, nutrient_value=1.0),)
     
     analyzer = PressureAnalyzer(filepath='data/project_model_test_sim_data.npz')
-    #analyzer.visualize_pressure_field(model, step=0, mode='all', plane='XY', index=None, levels=50, cmap='coolwarm', show_tumor_outline=True, show_derivatives=False, threshold=0.1)
-    analyzer.animate_pressure_field(model, plane='XY', index=None, interval=200, save_as=None, show_tumor_outline=True, threshold=0.1, cmap='coolwarm')
-    
+    analyzer.visualize_pressure_field(model, step=-1, mode='all', plane='XY', index=None, levels=50, cmap='coolwarm', show_tumor_outline=True, show_derivatives=False, threshold=0.1)
+    #analyzer.animate_pressure_field(model, plane='XY', index=None, interval=200, save_as=None, show_tumor_outline=True, threshold=0.1, cmap='coolwarm')
+
 if __name__ == "__main__":
     main()

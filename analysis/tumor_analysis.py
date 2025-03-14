@@ -9,7 +9,11 @@ from scipy.ndimage import gaussian_filter
 from skimage.measure import marching_cubes
 
 from analysis.scie3121_analysis import scie3121SimulationAnalyzer
-from src.models.cell_dynamics import compute_adhesion_energy_derivative
+from src.models.cell_dynamics import (
+    compute_adhesion_energy_derivative_with_laplace, 
+    gradient_neumann, 
+    laplacian
+)
 from src.utils.utils import SCIE3121_params
 
 class TumorAnalyzer(scie3121SimulationAnalyzer):
@@ -26,9 +30,9 @@ class TumorAnalyzer(scie3121SimulationAnalyzer):
         f_phi = 0.25 * phi**2 * (1-phi)**2
         
         # Compute gradient magnitude squared |∇φ|²
-        grad_x = np.gradient(phi, dx, axis=0)
-        grad_y = np.gradient(phi, dx, axis=1)
-        grad_z = np.gradient(phi, dx, axis=2)
+        grad_x = gradient_neumann(phi, dx, 0)
+        grad_y = gradient_neumann(phi, dx, 1)
+        grad_z = gradient_neumann(phi, dx, 2)
         grad_mag_squared = grad_x**2 + grad_y**2 + grad_z**2
         
         # Compute adhesion energy density
@@ -41,9 +45,9 @@ class TumorAnalyzer(scie3121SimulationAnalyzer):
         """
         Compute the gradient of the adhesion energy field.
         """
-        grad_x = -np.gradient(energy, dx, axis=0)
-        grad_y = -np.gradient(energy, dx, axis=1)
-        grad_z = -np.gradient(energy, dx, axis=2)
+        grad_x = -gradient_neumann(energy, dx, 0)
+        grad_y = -gradient_neumann(energy, dx, 1)
+        grad_z = -gradient_neumann(energy, dx, 2)
         
         grad_magnitude = np.sqrt(grad_x**2 + grad_y**2 + grad_z**2)
         
@@ -53,9 +57,9 @@ class TumorAnalyzer(scie3121SimulationAnalyzer):
         """
         Compute the gradient of the total tumor volume fraction.
         """
-        grad_x = np.gradient(phi_T, dx, axis=0)
-        grad_y = np.gradient(phi_T, dx, axis=1)
-        grad_z = np.gradient(phi_T, dx, axis=2)
+        grad_x = gradient_neumann(phi_T, dx, 0)
+        grad_y = gradient_neumann(phi_T, dx, 1)
+        grad_z = gradient_neumann(phi_T, dx, 2)
         
         grad_magnitude = np.sqrt(grad_x**2 + grad_y**2 + grad_z**2)
         
@@ -67,29 +71,18 @@ class TumorAnalyzer(scie3121SimulationAnalyzer):
         δE/δφ = (γ/ε)[f'(φ) - ε²∇²φ]
         where f'(φ) = (1/2)φ(1-φ)(2φ-1) is the derivative of the double-well potential.
         """
-        # Derivative of double-well potential f'(φ) = (1/2)φ(1-φ)(2φ-1)
-        f_prime = 0.5 * phi * (1-phi) * (2*phi - 1)
-        
         # Compute Laplacian ∇²φ
         laplace_phi = self.laplacian(phi, dx)
         
-        # Compute energy derivative δE/δφ = (γ/ε)[f'(φ) - ε²∇²φ]
-        energy_deriv = (gamma/epsilon) * (f_prime - epsilon**2 * laplace_phi)
-        
-        return energy_deriv
+        # Use the optimized function that accepts precomputed Laplacian
+        return compute_adhesion_energy_derivative_with_laplace(phi, laplace_phi, gamma, epsilon)
 
     def laplacian(self, field, dx):
         """
         Compute the Laplacian of a field.
         ∇²φ = ∂²φ/∂x² + ∂²φ/∂y² + ∂²φ/∂z²
         """
-        grad_x = np.gradient(field, dx, axis=0)
-        grad_y = np.gradient(field, dx, axis=1)
-        grad_z = np.gradient(field, dx, axis=2)
-        
-        return (np.gradient(grad_x, dx, axis=0) + 
-                np.gradient(grad_y, dx, axis=1) + 
-                np.gradient(grad_z, dx, axis=2))
+        return laplacian(field, dx)
     
     def compute_energy_derivative_gradient(self, phi, dx, gamma, epsilon):
         """
@@ -100,9 +93,9 @@ class TumorAnalyzer(scie3121SimulationAnalyzer):
         energy_deriv = self.compute_adhesion_energy_derivative(phi, dx, gamma, epsilon)
         
         # Then compute its gradient
-        grad_x = np.gradient(energy_deriv, dx, axis=0)
-        grad_y = np.gradient(energy_deriv, dx, axis=1)
-        grad_z = np.gradient(energy_deriv, dx, axis=2)
+        grad_x = gradient_neumann(energy_deriv, dx, 0)
+        grad_y = gradient_neumann(energy_deriv, dx, 1)
+        grad_z = gradient_neumann(energy_deriv, dx, 2)
         
         grad_magnitude = np.sqrt(grad_x**2 + grad_y**2 + grad_z**2)
         
@@ -383,15 +376,21 @@ class TumorAnalyzer(scie3121SimulationAnalyzer):
     def _plot_scalar_field(self, field, ax, x_label, y_label, title, cmap='viridis', 
                           show_contour=True, threshold=0.1):
         """Helper method to plot scalar fields with optional contour."""
+        # Get center coordinates and extract 25x25 region
+        center_x, center_y = field.shape[0]//2, field.shape[1]//2
+        radius = 12  # For 25x25 region (12 on each side of center)
+        field_crop = field[center_x-radius:center_x+radius+1, 
+                         center_y-radius:center_y+radius+1]
+        
         # Apply mild smoothing for visualization
-        field_smooth = gaussian_filter(field, sigma=1.0)
+        field_smooth = gaussian_filter(field_crop, sigma=1.0)
         
         im = ax.imshow(field_smooth, origin='lower', cmap=cmap)
         plt.colorbar(im, ax=ax, label=title)
         
         # Add contour if requested
         if show_contour:
-            ax.contour(field, levels=[threshold], colors='white', linewidths=1.5)
+            ax.contour(field_crop, levels=[threshold], colors='white', linewidths=1.5)
         
         ax.set_xlabel(x_label)
         ax.set_ylabel(y_label)
@@ -400,17 +399,28 @@ class TumorAnalyzer(scie3121SimulationAnalyzer):
     def _plot_vector_field(self, vector_x, vector_y, background, ax, x_label, y_label, 
                           title, show_contour=True, threshold=0.1):
         """Helper method to plot vector fields with optional contour."""
+        # Get center coordinates and extract 25x25 region
+        center_x, center_y = vector_x.shape[0]//2, vector_x.shape[1]//2
+        radius = 12  # For 25x25 region
+        
+        vector_x_crop = vector_x[center_x-radius:center_x+radius+1,
+                               center_y-radius:center_y+radius+1]
+        vector_y_crop = vector_y[center_x-radius:center_x+radius+1,
+                               center_y-radius:center_y+radius+1]
+        background_crop = background[center_x-radius:center_x+radius+1,
+                                  center_y-radius:center_y+radius+1]
+        
         # Downsample for clearer vector field
-        shape = vector_x.shape
-        downsample = max(1, min(shape) // 40)
+        shape = vector_x_crop.shape
+        downsample = max(1, min(shape) // 60)  # Adjusted for smaller region
         
         x_indices = np.arange(0, shape[0], downsample)
         y_indices = np.arange(0, shape[1], downsample)
         X, Y = np.meshgrid(y_indices, x_indices)  # Note: x and y are reversed for proper plotting
         
         # Extract downsampled vectors
-        U = vector_x[::downsample, ::downsample].T  # Transpose for proper orientation
-        V = vector_y[::downsample, ::downsample].T
+        U = vector_x_crop[::downsample, ::downsample].T  # Transpose for proper orientation
+        V = vector_y_crop[::downsample, ::downsample].T
         
         # Normalize vectors for better visualization
         magnitude = np.sqrt(U**2 + V**2)
@@ -419,7 +429,7 @@ class TumorAnalyzer(scie3121SimulationAnalyzer):
         V = V / max_mag
         
         # Plot background for context
-        ax.imshow(background, origin='lower', cmap='gray', alpha=0.3)
+        ax.imshow(background_crop, origin='lower', cmap='gray', alpha=0.3)
         
         # Plot vector field
         quiver = ax.quiver(X, Y, U, V, magnitude, cmap='viridis', 
@@ -428,7 +438,7 @@ class TumorAnalyzer(scie3121SimulationAnalyzer):
         
         # Add contour if requested
         if show_contour:
-            ax.contour(background, levels=[threshold], colors='white', linewidths=1.5)
+            ax.contour(background_crop, levels=[threshold], colors='white', linewidths=1.5)
         
         ax.set_xlabel(x_label)
         ax.set_ylabel(y_label)
@@ -443,8 +453,8 @@ def main():
     # Create model instance
     model = SCIE3121_MODEL(
         grid_shape=(50, 50, 50),
-        dx=0.2,
-        dt=0.001,
+        dx=1,
+        dt=0.005,
         params=SCIE3121_params,
         initial_conditions=SphericalTumor(grid_shape=(50, 50, 50), radius=7, nutrient_value=1.0),
     )
@@ -455,7 +465,7 @@ def main():
     # Run visualization
     analyzer.visualize_tumor_analysis(
         model, 
-        step=0,  # Analyze first time step
+        step=11,  # Analyze first time step
         mode='all',
         plane='XY',
         threshold=0.1

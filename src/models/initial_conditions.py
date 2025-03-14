@@ -60,7 +60,8 @@ class SphericalTumor(InitialCondition):
                     r = np.sqrt((k - center[0])**2 + (j - center[1])**2 + (i - center[2])**2)
                     if r < self.radius:  # Using the class radius parameter
                         self.phi_H[k, j, i] = 0.3 #* np.exp(-r**2 / 10)  # Gaussian tumor
-                        self.phi_D[k, j, i] = 0.7 #* np.exp(-r**2 / 10)
+                        self.phi_D[k, j, i] = 0.6 #* np.exp(-r**2 / 10)
+                        self.phi_N[k, j, i] = 0.1
 
         
 

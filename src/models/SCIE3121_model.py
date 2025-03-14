@@ -1,4 +1,3 @@
-
 #######################################################################################################
 #######################################################################################################
 #
@@ -58,6 +57,7 @@
 
 import numpy as np
 from typing import Tuple
+from scipy.integrate import solve_ivp
 
 from src.utils.utils import SCIE3121_params
 
@@ -87,29 +87,33 @@ class SCIE3121_MODEL(TumorGrowthModel):
 
     def _update(self, step):
         """
-        Update the fields for a single step of the simulation.
+        Update the fields for a single step of the simulation using RK4 method.
         """
         state = (self.phi_H, self.phi_D, self.phi_N, self.nutrient)
-        # RK4 with clipping
+        
+        # RK4 implementation
         k1 = self._compute_derivatives(state)
-        k1 = tuple(np.clip(k, -1, 1) for k in k1)
-        k2 = self._compute_derivatives(tuple(np.clip(s + self.dt / 2 * k, -1e3, 1e3) for s, k in zip(state, k1)))
-        k2 = tuple(np.clip(k, -1, 1) for k in k2)
-        k3 = self._compute_derivatives(tuple(np.clip(s + self.dt / 2 * k, -1e3, 1e3) for s, k in zip(state, k2)))
-        k3 = tuple(np.clip(k, -1, 1) for k in k3)
-        k4 = self._compute_derivatives(tuple(np.clip(s + self.dt * k, -1e3, 1e3) for s, k in zip(state, k3)))
-        k4 = tuple(np.clip(k, -1, 1) for k in k4)
-
-        new_state = []
-        for i, field in enumerate(['phi_H', 'phi_D', 'phi_N', 'nutrient']):
+        
+        # Calculate intermediate states
+        state2 = tuple(s + self.dt / 2 * k for s, k in zip(state, k1))
+        k2 = self._compute_derivatives(state2)
+        
+        state3 = tuple(s + self.dt / 2 * k for s, k in zip(state, k2))
+        k3 = self._compute_derivatives(state3)
+        
+        state4 = tuple(s + self.dt * k for s, k in zip(state, k3))
+        k4 = self._compute_derivatives(state4)
+        
+        # Update state with weighted average of derivatives
+        field_names = ['phi_H', 'phi_D', 'phi_N', 'nutrient']
+        for i, field in enumerate(field_names):
             update = state[i] + (self.dt / 6.0) * (k1[i] + 2 * k2[i] + 2 * k3[i] + k4[i])
-
-            # Fixed condition: properly check for NaN or inf
+            
+            # Check for numerical instability
             if np.any(np.isnan(update)) or np.any(np.isinf(update)):
                 raise ValueError(f"NaNs or Infs encountered in field {field}.")
             
-            update = np.clip(update, 0 if field != 'nutrient' else -1e3, 1e3)  # Also fixed update.any() to just update
-            new_state.append(update)
+            
             setattr(self, field, update)
 
         self._enforce_volume_fractions()
@@ -128,8 +132,10 @@ class SCIE3121_MODEL(TumorGrowthModel):
             phi_H, phi_D, phi_N, nutrient, self.params
         )
 
-        # Check for instability
+        # Combine source terms and dynamics
         derivatives = (src_H + dyn_H, src_D + dyn_D, src_N + dyn_N, d_nutrient)
+        
+        # Check for instability
         for i, field in enumerate(['phi_H', 'phi_D', 'phi_N', 'nutrient']):
             if np.any(np.isnan(derivatives[i])) or np.any(np.isinf(derivatives[i])):
                 print(f"Step {self.history['step'][-1] + 1}: {field} derivative has NaN/inf. "
