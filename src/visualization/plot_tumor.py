@@ -639,7 +639,7 @@ class VolumeFractionPlotter:
 
 def main():
     # Uncomment the following lines and replace with your simulation file path
-    saved_sim_path = '/Users/rileymcnamara/CODE/2025/SCIE3212/data/display1.npz'
+    saved_sim_path = '/Users/rileymcnamara/CODE/2025/SCIE3212/data/project_model_test_sim_data.npz'
     plotter = VolumeFractionPlotter(simulation_data=saved_sim_path)
     
     # Example 1: Different density factors and thresholds for each cell type

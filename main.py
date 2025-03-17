@@ -180,16 +180,90 @@ def parallel_parameter_sweep():
     )
 
 
+def run_parameter_optimization(real_data_path, param_ranges, n_iterations=50, n_simulations=10):
+    """
+    Run parameter optimization to find the best parameters that match real data.
+    
+    Args:
+        real_data_path (str): Path to the real tumor image data (time series).
+        param_ranges (dict): Dictionary of parameter ranges to explore {param_name: (min, max)}.
+        n_iterations (int): Number of optimization iterations.
+        n_simulations (int): Number of simulations to run per iteration.
+        
+    Returns:
+        dict: Best parameters found and their corresponding error metrics.
+    """
+    from src.optimization.parameter_fitting import ParameterOptimizer
+    
+    # Initialize the parameter optimizer
+    optimizer = ParameterOptimizer(
+        real_data_path=real_data_path,
+        param_ranges=param_ranges,
+        base_params=SCIE3121_params.copy(),
+        grid_shape=(100, 100, 100),
+        dx=200,
+        dt=0.1,
+        steps=600,
+        save_steps=50
+    )
+    
+    # Run the optimization
+    best_params, best_error, all_results = optimizer.optimize(
+        n_iterations=n_iterations,
+        n_simulations=n_simulations
+    )
+    
+    print(f"Best parameters found: {best_params}")
+    print(f"Best error: {best_error}")
+    
+    # Save optimization results
+    np.savez(
+        "data/optimization_results.npz",
+        best_params=best_params,
+        best_error=best_error,
+        all_results=all_results
+    )
+    
+    return best_params, best_error, all_results
+
+
+def compare_with_real_data(simulation_file, real_data_path):
+    """
+    Compare simulation results with real data and visualize the comparison.
+    
+    Args:
+        simulation_file (str): Path to the simulation results (.npz file).
+        real_data_path (str): Path to the real tumor image data.
+    """
+    from src.optimization.data_comparison import DataComparison
+    
+    # Load simulation data
+    sim_history = load_simulation_history(simulation_file)
+    
+    # Initialize comparison object
+    comparison = DataComparison(
+        simulation_data=sim_history,
+        real_data_path=real_data_path
+    )
+    
+    # Calculate metrics
+    metrics = comparison.calculate_metrics()
+    print(f"Comparison metrics: {metrics}")
+    
+    # Visualize comparison
+    comparison.visualize_comparison()
+
+
 def main():
     # Original simulation code
     grid_shape = (80, 80, 80)
     dx = 200
-    dt = 0.1
+    dt = 0.5
     params = SCIE3121_params
-    steps = 430
+    steps = 100
     save_steps = 10
 
-    initial_conditions = SphericalTumor(grid_shape, radius=5, nutrient_value=0.3)
+    initial_conditions = SphericalTumor(grid_shape, radius=5, nutrient_value=1.0)
 
     model = SCIE3121_MODEL(
         grid_shape=grid_shape,
@@ -202,14 +276,60 @@ def main():
 
     model.run_and_save_simulation(steps=steps, name="project_model_test")
 
+    # Uncomment to run parameter optimization
+    # Example parameter ranges to explore
+    # param_ranges = {
+    #     'lambda_H': (0.3, 1.0),
+    #     'lambda_D': (0.4, 1.2),
+    #     'mu_H': (0.1, 0.4),
+    #     'mu_D': (0.1, 0.4),
+    #     'D_n': (0.5, 2.0)
+    # }
+    # run_parameter_optimization(
+    #     real_data_path="data/real_tumor_images/",
+    #     param_ranges=param_ranges,
+    #     n_iterations=10,
+    #     n_simulations=5
+    # )
+    
+    # Uncomment to compare with real data
+    # compare_with_real_data(
+    #     simulation_file="data/project_model_test_sim_data.npz",
+    #     real_data_path="data/real_tumor_images/"
+    # )
+
+
 if __name__ == "__main__":
     import argparse
     
     parser = argparse.ArgumentParser(description='Run tumor growth simulations')
     parser.add_argument('--parallel', action='store_true', help='Run parameter sweep in parallel')
+    parser.add_argument('--optimize', action='store_true', help='Run parameter optimization')
+    parser.add_argument('--compare', action='store_true', help='Compare simulation with real data')
+    parser.add_argument('--real-data', type=str, help='Path to real tumor image data')
+    parser.add_argument('--sim-file', type=str, help='Path to simulation results file')
+    
     args = parser.parse_args()
     
     if args.parallel:
         parallel_parameter_sweep()
+    elif args.optimize and args.real_data:
+        # Example parameter ranges
+        param_ranges = {
+            'lambda_H': (0.3, 1.0),
+            'lambda_D': (0.4, 1.2),
+            'mu_H': (0.1, 0.4),
+            'mu_D': (0.1, 0.4),
+            'D_n': (0.5, 2.0)
+        }
+        run_parameter_optimization(
+            real_data_path=args.real_data,
+            param_ranges=param_ranges
+        )
+    elif args.compare and args.real_data and args.sim_file:
+        compare_with_real_data(
+            simulation_file=args.sim_file,
+            real_data_path=args.real_data
+        )
     else:
         main()

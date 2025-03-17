@@ -521,6 +521,39 @@ class scie3121SimulationAnalyzer:
         plt.grid(True, linestyle='--', alpha=0.7)
         plt.show()
 
+    def plot_sphericity(self, threshold=0.05, smooth_window=5):
+        """
+        Plot the sphericity of the tumor over time.
+        
+        Args:
+            threshold (float): Threshold value for determining tumor boundary
+            smooth_window (int): Window size for Savitzky-Golay smoothing (odd number)
+        """
+        steps = self.history['step']
+        sphericity_values = compute_sphericity(self.history, threshold)
+        
+        # Ensure smooth_window is odd
+        if smooth_window % 2 == 0:
+            smooth_window += 1
+        
+        # Apply smoothing if window > 1 and enough data points
+        if smooth_window > 1 and len(steps) > smooth_window:
+            sphericity_values = savgol_filter(sphericity_values, smooth_window, 3)
+        
+        plt.figure(figsize=(10, 6))
+        plt.plot(steps, sphericity_values, label='Sphericity', color='purple')
+        plt.axhline(y=1.0, color='gray', linestyle='--', alpha=0.7, label='Perfect Sphere')
+        
+        plt.xlabel('Time Step')
+        plt.ylabel('Sphericity')
+        plt.title('Tumor Sphericity Evolution')
+        plt.legend()
+        plt.grid(True, linestyle='--', alpha=0.7)
+        plt.ylim(0, 1.1)  # Sphericity is between 0 and 1
+        plt.show()
+        
+        return #sphericity_values
+
 # Helper functions 
 def load_simulation_history(npz_filename):
     """Load simulation history from an NPZ file."""
@@ -589,6 +622,54 @@ def compute_population_radii(history, threshold=0.05):
         
     return healthy_radii, diseased_radii, necrotic_radii
 
+def compute_sphericity(history, threshold=0.05):
+    """
+    Compute sphericity of the tumor over time.
+    Sphericity = (36π * Volume^2)^(1/3) / Surface Area
+    
+    Args:
+        history (dict): Simulation history data
+        threshold (float): Threshold value for determining tumor boundary
+        
+    Returns:
+        list: Sphericity values for each time step
+    """
+    from skimage import measure
+    
+    sphericity_values = []
+    
+    for phi_H, phi_D, phi_N in zip(
+            history['healthy cell volume fraction'],
+            history['diseased cell volume fraction'],
+            history['necrotic cell volume fraction']):
+        
+        # Calculate total tumor field
+        total_field = phi_H + phi_D + phi_N
+        
+        # Create binary mask of tumor
+        tumor_mask = total_field >= (threshold * np.max(total_field))
+        
+        if np.sum(tumor_mask) > 0:
+            # Use marching cubes to get surface area and volume
+            verts, faces, _, _ = measure.marching_cubes(tumor_mask, level=0.5)
+            
+            # Calculate surface area and volume
+            surface_area = measure.mesh_surface_area(verts, faces)
+            volume = np.sum(tumor_mask)
+            
+            # Calculate sphericity
+            # Sphericity = (36π * Volume^2)^(1/3) / Surface Area
+            if surface_area > 0:
+                sphericity = ((36 * np.pi * volume**2)**(1/3)) / surface_area
+            else:
+                sphericity = 0
+        else:
+            sphericity = 0
+            
+        sphericity_values.append(sphericity)
+    
+    return sphericity_values
+
 def main():
 
     model = SCIE3121_MODEL(
@@ -606,6 +687,7 @@ def main():
     #analyzer.plot_nutrient_field(step_index=14, plane='XY', index=None, smooth_sigma=2.0, vmin=None, vmax=None, levels=50, cmap='viridis')
     #analyzer.animate_nutrient_field(plane='XY', index=None, interval=200, save_as=None)
     analyzer.plot_population_radii(threshold=0.05, smooth_window=5)
+    analyzer.plot_sphericity(threshold=0.05, smooth_window=5)
    
     
 if __name__ == "__main__":

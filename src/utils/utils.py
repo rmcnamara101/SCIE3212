@@ -57,8 +57,8 @@ SCIE3121_params = {
     "p_D": 0.67, # unitless
 
     # nutrient saturation for each cell type
-    "n_H": 0.2, # unitless
-    "n_D": 0.2, # unitless
+    "n_H": 0.08, # unitless
+    "n_D": 0.3, # unitless
 
     # physical constants
     'gamma': -10.0, # J mm^-2
@@ -66,7 +66,7 @@ SCIE3121_params = {
     'M': 0.1, # mm^5 day^-1 
 
     # diffusion constant of nutrient field
-    "D_n": 1.0, # mm^2 day^-1
+    "D_n": 500.0, # mm^2 day^-1
 }
 
 # src/utils/utils.py

@@ -187,7 +187,7 @@ def compute_solid_velocity_scie3121_model_with_grads(
     try:
         p_flat, info = cg(A, rhs_flat, rtol=1e-5, maxiter=100)
         if info != 0:
-            print(f"Warning: CG solver did not converge, info={info}")
+
             # Use a more robust fallback method if CG fails
             p_flat = np.zeros_like(rhs_flat)
     except Exception as e:
