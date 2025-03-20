@@ -69,6 +69,13 @@ from src.models.initial_conditions import InitialCondition
 # define base model
 from src.models.tumor_growth import TumorGrowthModel
 
+try:
+    from src.models.cpp.cpp_simulation import SimulationCore
+    USE_CPP = True
+except ImportError:
+    USE_CPP = False
+    print("Warning: C++ implementation not available, using Python version")
+
 class SCIE3121_MODEL(TumorGrowthModel):
 
     def __init__(self, grid_shape: Tuple = (50, 50, 50), dx: float = 0.1, dt: float = 0.001, initial_conditions: InitialCondition = None, params: dict = None, save_steps: int = 1):
@@ -84,41 +91,61 @@ class SCIE3121_MODEL(TumorGrowthModel):
         self.cell_dynamics = cell_dynamics(self)
         self.diffusion_dynamics = diffusion_dynamics(self)
 
+        if USE_CPP:
+            self.cpp_sim = SimulationCore(
+                self.phi_H,
+                self.phi_D,
+                self.phi_N,
+                self.nutrient,
+                self.dx,
+                self.dt,
+                self.params
+            )
 
     def _update(self, step):
-        """
-        Update the fields for a single step of the simulation using RK4 method.
-        """
-        state = (self.phi_H, self.phi_D, self.phi_N, self.nutrient)
-        
-        # RK4 implementation
-        k1 = self._compute_derivatives(state)
-        
-        # Calculate intermediate states
-        state2 = tuple(s + self.dt / 2 * k for s, k in zip(state, k1))
-        k2 = self._compute_derivatives(state2)
-        
-        state3 = tuple(s + self.dt / 2 * k for s, k in zip(state, k2))
-        k3 = self._compute_derivatives(state3)
-        
-        state4 = tuple(s + self.dt * k for s, k in zip(state, k3))
-        k4 = self._compute_derivatives(state4)
-        
-        # Update state with weighted average of derivatives
-        field_names = ['phi_H', 'phi_D', 'phi_N', 'nutrient']
-        for i, field in enumerate(field_names):
-            update = state[i] + (self.dt / 6.0) * (k1[i] + 2 * k2[i] + 2 * k3[i] + k4[i])
+        if USE_CPP:
+            # Just step the simulation
+            self.cpp_sim.step_rk4()
             
-            # Check for numerical instability
-            if np.any(np.isnan(update)) or np.any(np.isinf(update)):
-                raise ValueError(f"NaNs or Infs encountered in field {field}.")
+            # Only convert to numpy arrays when we need to save the history
+            if step % self.save_steps == 0:
+                self.phi_H, self.phi_D, self.phi_N, self.nutrient = self.cpp_sim.get_state()
+                self._enforce_volume_fractions()
+                self._update_history()
+        else:
+            """
+            Update the fields for a single step of the simulation using RK4 method.
+            """
+            state = (self.phi_H, self.phi_D, self.phi_N, self.nutrient)
             
+            # RK4 implementation
+            k1 = self._compute_derivatives(state)
             
-            setattr(self, field, update)
+            # Calculate intermediate states
+            state2 = tuple(s + self.dt / 2 * k for s, k in zip(state, k1))
+            k2 = self._compute_derivatives(state2)
+            
+            state3 = tuple(s + self.dt / 2 * k for s, k in zip(state, k2))
+            k3 = self._compute_derivatives(state3)
+            
+            state4 = tuple(s + self.dt * k for s, k in zip(state, k3))
+            k4 = self._compute_derivatives(state4)
+            
+            # Update state with weighted average of derivatives
+            field_names = ['phi_H', 'phi_D', 'phi_N', 'nutrient']
+            for i, field in enumerate(field_names):
+                update = state[i] + (self.dt / 6.0) * (k1[i] + 2 * k2[i] + 2 * k3[i] + k4[i])
+                
+                # Check for numerical instability
+                if np.any(np.isnan(update)) or np.any(np.isinf(update)):
+                    raise ValueError(f"NaNs or Infs encountered in field {field}.")
+                
+                
+                setattr(self, field, update)
 
-        self._enforce_volume_fractions()
-        if step % self.save_steps == 0:
-            self._update_history()
+            self._enforce_volume_fractions()
+            if step % self.save_steps == 0:
+                self._update_history()
 
     def _compute_derivatives(self, state):
         phi_H, phi_D, phi_N, nutrient = state

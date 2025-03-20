@@ -26,7 +26,8 @@ import os
 import sys
 import numpy as np
 from joblib import Parallel, delayed
-
+import time
+import argparse
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from src.models.tumor_growth import TumorGrowthModel
@@ -254,21 +255,23 @@ def compare_with_real_data(simulation_file, real_data_path):
     comparison.visualize_comparison()
 
 
-def main():
-    # Original simulation code
-    grid_shape = (90, 90, 90)
+def compare_implementations(grid_shape=(100, 100, 100), steps=20, save_steps=1):
+    """
+    Compare C++ and Python implementations for performance and accuracy.
+    
+    Args:
+        grid_shape (tuple): Shape of the simulation grid
+        steps (int): Number of simulation steps
+        save_steps (int): How often to save results
+    """
     dx = 75
     dt = 0.1
     params = SCIE3121_params
-    steps = 150
-    save_steps = 5
+    initial_conditions = SphericalTumor(grid_shape, radius=5, nutrient_value=1.0)
 
-    #initial_conditions = SphericalTumor(grid_shape, radius=5, nutrient_value=0.5)
-    #initial_conditions = InvasiveTumor(grid_shape, base_radius=5, nutrient_value=1.0)
-    #initial_conditions = MultipleTumors(grid_shape, centers=[(0.3, 0.3, 0.3), (0.7, 0.7, 0.7)], radii=[5, 4], nutrient_value=1.0)
-    initial_conditions = RandomBlobTumor(grid_shape, base_radius=6, nutrient_value=0.1)
-
-    model = SCIE3121_MODEL(
+    # Run Python version
+    print("Running Python implementation...")
+    model_py = SCIE3121_MODEL(
         grid_shape=grid_shape,
         dx=dx,
         dt=dt,
@@ -276,63 +279,161 @@ def main():
         initial_conditions=initial_conditions,
         save_steps=save_steps
     )
-
-    model.run_and_save_simulation(steps=steps, name="base")
-
-    # Uncomment to run parameter optimization
-    # Example parameter ranges to explore
-    # param_ranges = {
-    #     'lambda_H': (0.3, 1.0),
-    #     'lambda_D': (0.4, 1.2),
-    #     'mu_H': (0.1, 0.4),
-    #     'mu_D': (0.1, 0.4),
-    #     'D_n': (0.5, 2.0)
-    # }
-    # run_parameter_optimization(
-    #     real_data_path="data/real_tumor_images/",
-    #     param_ranges=param_ranges,
-    #     n_iterations=10,
-    #     n_simulations=5
-    # )
     
-    # Uncomment to compare with real data
-    # compare_with_real_data(
-    #     simulation_file="data/project_model_test_sim_data.npz",
-    #     real_data_path="data/real_tumor_images/"
-    # )
-
-
-if __name__ == "__main__":
-    import argparse
+    t_start = time.time()
+    model_py.run_simulation(steps=steps)
+    py_time = time.time() - t_start
     
+    # Force Python implementation for comparison
+    print("\nRunning C++ implementation...")
+    os.environ['USE_CPP'] = '1'  # Enable C++ implementation
+    
+    model_cpp = SCIE3121_MODEL(
+        grid_shape=grid_shape,
+        dx=dx,
+        dt=dt,
+        params=params,
+        initial_conditions=initial_conditions,
+        save_steps=save_steps
+    )
+    
+    t_start = time.time()
+    model_cpp.run_simulation(steps=steps)
+    cpp_time = time.time() - t_start
+    
+    # Compare results
+    py_history = model_py.get_history()
+    cpp_history = model_cpp.get_history()
+    
+    # Calculate differences
+    fields = ['healthy cell volume fraction', 'diseased cell volume fraction', 
+              'necrotic cell volume fraction', 'nutrient']
+    
+    print("\nPerformance Comparison:")
+    print(f"Python time: {py_time:.2f} seconds")
+    print(f"C++ time: {cpp_time:.2f} seconds")
+    print(f"Speedup: {py_time/cpp_time:.2f}x")
+    
+    print("\nAccuracy Comparison:")
+    for field in fields:
+        py_data = py_history[field][-1]  # Compare final state
+        cpp_data = cpp_history[field][-1]
+        
+        abs_diff = np.abs(py_data - cpp_data)
+        rel_diff = abs_diff / (np.abs(py_data) + 1e-10)
+        
+        print(f"\n{field}:")
+        print(f"Max absolute difference: {np.max(abs_diff):.2e}")
+        print(f"Mean absolute difference: {np.mean(abs_diff):.2e}")
+        print(f"Max relative difference: {np.max(rel_diff):.2e}")
+        print(f"Mean relative difference: {np.mean(rel_diff):.2e}")
+
+def benchmark_scaling():
+    """
+    Benchmark how the implementations scale with grid size.
+    """
+    steps = 50
+    grid_sizes = [(20,20,20), (40,40,40), (60,60,60), (80,80,80)]
+    
+    py_times = []
+    cpp_times = []
+    
+    for grid_shape in grid_sizes:
+        print(f"\nTesting grid size: {grid_shape}")
+        
+        # Python version
+        os.environ['USE_CPP'] = '0'
+        model = SCIE3121_MODEL(grid_shape=grid_shape, dx=0.1, dt=0.001, 
+                             params=SCIE3121_params,
+                             initial_conditions=SphericalTumor(grid_shape))
+        
+        t_start = time.time()
+        model.run_simulation(steps=steps)
+        py_times.append(time.time() - t_start)
+        
+        # C++ version
+        os.environ['USE_CPP'] = '1'
+        model = SCIE3121_MODEL(grid_shape=grid_shape, dx=0.1, dt=0.001,
+                             params=SCIE3121_params,
+                             initial_conditions=SphericalTumor(grid_shape))
+        
+        t_start = time.time()
+        model.run_simulation(steps=steps)
+        cpp_times.append(time.time() - t_start)
+    
+    # Print results
+    print("\nScaling Results:")
+    print("Grid Size | Python Time | C++ Time | Speedup")
+    print("-" * 50)
+    for i, grid_shape in enumerate(grid_sizes):
+        n_points = grid_shape[0] * grid_shape[1] * grid_shape[2]
+        print(f"{grid_shape} | {py_times[i]:.2f}s | {cpp_times[i]:.2f}s | {py_times[i]/cpp_times[i]:.2f}x")
+
+def main():
     parser = argparse.ArgumentParser(description='Run tumor growth simulations')
-    parser.add_argument('--parallel', action='store_true', help='Run parameter sweep in parallel')
-    parser.add_argument('--optimize', action='store_true', help='Run parameter optimization')
-    parser.add_argument('--compare', action='store_true', help='Compare simulation with real data')
-    parser.add_argument('--real-data', type=str, help='Path to real tumor image data')
-    parser.add_argument('--sim-file', type=str, help='Path to simulation results file')
+    parser.add_argument('--compare', action='store_true', help='Compare Python and C++ implementations')
+    parser.add_argument('--benchmark', action='store_true', help='Run scaling benchmark')
+    parser.add_argument('--grid-size', type=int, nargs=3, default=[100,100,100], 
+                       help='Grid size for comparison (nx ny nz)')
+    parser.add_argument('--steps', type=int, default=20, 
+                       help='Number of simulation steps')
     
     args = parser.parse_args()
     
-    if args.parallel:
-        parallel_parameter_sweep()
-    elif args.optimize and args.real_data:
-        # Example parameter ranges
-        param_ranges = {
-            'lambda_H': (0.3, 1.0),
-            'lambda_D': (0.4, 1.2),
-            'mu_H': (0.1, 0.4),
-            'mu_D': (0.1, 0.4),
-            'D_n': (0.5, 2.0)
-        }
-        run_parameter_optimization(
-            real_data_path=args.real_data,
-            param_ranges=param_ranges
+    if args.compare:
+        compare_implementations(
+            grid_shape=tuple(args.grid_size),
+            steps=args.steps
         )
-    elif args.compare and args.real_data and args.sim_file:
-        compare_with_real_data(
-            simulation_file=args.sim_file,
-            real_data_path=args.real_data
-        )
+    elif args.benchmark:
+        benchmark_scaling()
     else:
-        main()
+        # Original simulation code
+        grid_shape = (90, 90, 90)
+        dx = 75
+        dt = 0.1
+        params = SCIE3121_params
+        steps = 150
+        save_steps = 5
+
+        #initial_conditions = SphericalTumor(grid_shape, radius=5, nutrient_value=0.5)
+        #initial_conditions = InvasiveTumor(grid_shape, base_radius=5, nutrient_value=1.0)
+        #initial_conditions = MultipleTumors(grid_shape, centers=[(0.3, 0.3, 0.3), (0.7, 0.7, 0.7)], radii=[5, 4], nutrient_value=1.0)
+        initial_conditions = RandomBlobTumor(grid_shape, base_radius=6, nutrient_value=0.1)
+
+        model = SCIE3121_MODEL(
+            grid_shape=grid_shape,
+            dx=dx,
+            dt=dt,
+            params=params,
+            initial_conditions=initial_conditions,
+            save_steps=save_steps
+        )
+
+        model.run_and_save_simulation(steps=steps, name="base")
+
+        # Uncomment to run parameter optimization
+        # Example parameter ranges to explore
+        # param_ranges = {
+        #     'lambda_H': (0.3, 1.0),
+        #     'lambda_D': (0.4, 1.2),
+        #     'mu_H': (0.1, 0.4),
+        #     'mu_D': (0.1, 0.4),
+        #     'D_n': (0.5, 2.0)
+        # }
+        # run_parameter_optimization(
+        #     real_data_path="data/real_tumor_images/",
+        #     param_ranges=param_ranges,
+        #     n_iterations=10,
+        #     n_simulations=5
+        # )
+        
+        # Uncomment to compare with real data
+        # compare_with_real_data(
+        #     simulation_file="data/project_model_test_sim_data.npz",
+        #     real_data_path="data/real_tumor_images/"
+        # )
+
+
+if __name__ == "__main__":
+    main()
