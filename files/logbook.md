@@ -171,3 +171,15 @@ The pressure field was not working properly so I had to change the solver using 
 The cell adhesion is also clearly driving forces at the boundary of the tumor, as expected. And now I am beginning to see the necrotic core form. 
 
 I am considering options about changing cell types, and pathways, nutrient levels, to see if there can be more defining characteristics mimicked by the model. Next steps would be to get some experimental data to match the growth rates, and death rates, and validate that the model is physcially accurate. I am optimistic right now, as the model is behaving as expected, generating very nice spheroids.
+
+<h3> 18-3-25 </h3>
+
+Ok I have the data and it is not great by my first look, mainly because its drugged spheroids and not just base growth. But otherwise I think the data would be useful, its nice though I finally have a real timescale. 0-160 hours. So by my calculations, my simulation is quite stable with dt = 0.1-0.5, so if dt represents 1 hour then I should need about 1600 or less time steps which isnt too bad. Also the data is on the order of magnitude of micrometers. 
+
+<h3> 20-3-25 </h3>
+
+Today I was able to plot the cell sources, revealing the quiescent layer of cells, exactly as expected. A deep solid necrotic core, with a surrounding quiescent
+layer, and then another proliferating layer around that, exactly as expected. Now is the perfect stage to move onto matching data, however I think the random blob 
+tumor is still broken, I will look to fix that for more natural growth.
+
+The random blob tumors are now working nicely, still developing into spheroids. These will most likely be my starting point now, as it would be much more realistic than perfectly spherical tumors. I am now primed to start calibrating the simulation with raw growth data. Unfortunately I only got drugged organoid evolution in the first dataset I was given. I want to now maybe make some nice plots, showing the evolution for my proposal.

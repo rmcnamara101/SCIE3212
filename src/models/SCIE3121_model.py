@@ -152,7 +152,7 @@ class SCIE3121_MODEL(TumorGrowthModel):
             'healthy cell volume fraction': [self.phi_H], 
             'diseased cell volume fraction': [self.phi_D],  # Changed from 'disesased'
             'necrotic cell volume fraction': [self.phi_N], 
-            'nutrient concentration': [self.nutrient]
+            'nutrient': [self.nutrient]
         }
 
     def _update_history(self):
@@ -160,7 +160,7 @@ class SCIE3121_MODEL(TumorGrowthModel):
         self.history['healthy cell volume fraction'].append(self.phi_H)
         self.history['diseased cell volume fraction'].append(self.phi_D)  # Changed from 'disesased'
         self.history['necrotic cell volume fraction'].append(self.phi_N)
-        self.history['nutrient concentration'].append(self.nutrient)
+        self.history['nutrient'].append(self.nutrient)
 
     def _initialize_fields(self, initial_conditions):
         shape = self.grid_shape

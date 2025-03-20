@@ -16,6 +16,7 @@ sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from src.models.SCIE3121_model import SCIE3121_MODEL
 from src.models.initial_conditions import SphericalTumor
 from src.utils.utils import SCIE3121_params, gradient, laplacian, divergence
+from src.models.cell_production import compute_cell_sources_scie3121_model
 
 class scie3121SimulationAnalyzer:
     """Analyzer for tumor growth simulation data from NPZ files."""
@@ -554,6 +555,88 @@ class scie3121SimulationAnalyzer:
         
         return #sphericity_values
 
+    def plot_source_fields(self, step_index, plane='XY', index=None, smooth_sigma=2.0, 
+                          cmaps=['RdBu', 'RdBu', 'RdBu', 'RdBu']):
+        """
+        Visualize the source fields (production/death rates) for each cell type and net sources at a specific time step.
+        
+        Args:
+            step_index (int): Time step to visualize
+            plane (str): Plane to visualize ('XY', 'XZ', or 'YZ')
+            index (int, optional): Index for the slice. If None, uses middle of the domain
+            smooth_sigma (float): Sigma value for Gaussian smoothing
+            cmaps (list): List of colormaps for [healthy, diseased, necrotic, net] fields
+        """
+        # Get the cell populations and nutrient at the specified step
+        phi_H = self.history['healthy cell volume fraction'][step_index]
+        phi_D = self.history['diseased cell volume fraction'][step_index]
+        phi_N = self.history['necrotic cell volume fraction'][step_index]
+        nutrient = self.history['nutrient concentration'][step_index]
+        
+        # Get parameters from the history if available, otherwise use defaults
+        params = self.history.get('parameters', {
+            'lambda_H': 1.0, 'lambda_D': 1.0, 
+            'mu_H': 0.5, 'mu_D': 0.5, 'mu_N': 0.2,
+            'p_H': 0.6, 'p_D': 0.6,
+            'n_H': 0.3, 'n_D': 0.3
+        })
+        
+        # Compute source terms using the SCIE3121 model equations
+        src_H, src_D, src_N = compute_cell_sources_scie3121_model(
+            phi_H, phi_D, phi_N, nutrient,
+            params['n_H'], params['n_D'],
+            params['lambda_H'], params['lambda_D'],
+            params['mu_H'], params['mu_D'],
+            params['p_H'], params['p_D'],
+            params['mu_N']
+        )
+        
+        # Compute net source (total production/death rate)
+        src_net = src_H + src_D + src_N
+        
+        # Apply smoothing if requested
+        if smooth_sigma > 0:
+            src_H = gaussian_filter(src_H, sigma=smooth_sigma)
+            src_D = gaussian_filter(src_D, sigma=smooth_sigma)
+            src_N = gaussian_filter(src_N, sigma=smooth_sigma)
+            src_net = gaussian_filter(src_net, sigma=smooth_sigma)
+        
+        # Determine slice based on plane
+        if index is None:
+            index = phi_H.shape[0] // 2
+        
+        if plane == 'XY':
+            slices = [field[index, :, :] for field in [src_H, src_D, src_N, src_net]]
+            xlabel, ylabel = 'X', 'Y'
+        elif plane == 'XZ':
+            slices = [field[:, index, :] for field in [src_H, src_D, src_N, src_net]]
+            xlabel, ylabel = 'X', 'Z'
+        elif plane == 'YZ':
+            slices = [field[:, :, index] for field in [src_H, src_D, src_N, src_net]]
+            xlabel, ylabel = 'Y', 'Z'
+        else:
+            raise ValueError("Plane must be 'XY', 'XZ', or 'YZ'")
+        
+        # Create subplots
+        fig, axes = plt.subplots(2, 2, figsize=(12, 10))
+        axes = axes.flatten()
+        titles = ['Healthy Cell Source', 'Diseased Cell Source', 
+                 'Necrotic Cell Source', 'Net Cell Source']
+        
+        for ax, data, title, cmap in zip(axes, slices, titles, cmaps):
+            # Symmetric colormap around zero
+            vmax = max(abs(np.min(data)), abs(np.max(data)))
+            im = ax.imshow(data.T, origin='lower', cmap=cmap, vmin=-vmax, vmax=vmax)
+            plt.colorbar(im, ax=ax, label='Production Rate')
+            ax.set_xlabel(xlabel)
+            ax.set_ylabel(ylabel)
+            ax.set_title(title)
+        
+        plt.suptitle(f'Cell Source Fields at Step {step_index}\n{plane}-plane, index={index}')
+        plt.tight_layout()
+        plt.show()
+        return plt.gcf()
+
 # Helper functions 
 def load_simulation_history(npz_filename):
     """Load simulation history from an NPZ file."""
@@ -679,15 +762,16 @@ def main():
         params=SCIE3121_params,
         initial_conditions=SphericalTumor(grid_shape=(30, 30, 30), radius=7, nutrient_value=1.0),
     )
-    analyzer = scie3121SimulationAnalyzer(filepath='data/project_model_test_sim_data.npz') 
+    analyzer = scie3121SimulationAnalyzer(filepath='data/base_sim_data.npz') 
     #analyzer.visualize_velocity_field(model, step=0)
     #analyzer.animate_velocity_field(model)
     analyzer.animate_cross_section(plane='XY', interval=200)
     #alyzer.plot_combined_cross_section(step_index=0, plane='XY', index=None, smooth_sigma=2.0, levels=50, cmaps=None) 
     #analyzer.plot_nutrient_field(step_index=14, plane='XY', index=None, smooth_sigma=2.0, vmin=None, vmax=None, levels=50, cmap='viridis')
     #analyzer.animate_nutrient_field(plane='XY', index=None, interval=200, save_as=None)
-    analyzer.plot_population_radii(threshold=0.05, smooth_window=5)
-    analyzer.plot_sphericity(threshold=0.05, smooth_window=5)
+    #analyzer.plot_population_radii(threshold=0.05, smooth_window=5)
+    #analyzer.plot_sphericity(threshold=0.05, smooth_window=5)
+    analyzer.plot_source_fields(step_index=-1, plane='XY', index=None, smooth_sigma=2.0, cmaps=['RdBu', 'RdBu', 'RdBu', 'RdBu'])  
    
     
 if __name__ == "__main__":

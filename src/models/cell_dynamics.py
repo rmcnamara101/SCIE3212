@@ -291,9 +291,9 @@ def compute_cell_dynamics_scie3121_model(phi_H, phi_D, phi_N, nutrient, dx, gamm
     )
 
     # Compute divergence terms for final derivatives
-    dphi_H = -divergence(ux * phi_H, uy * phi_H, uz * phi_H, dx) - divergence(Jx_H, Jy_H, Jz_H, dx)
-    dphi_D = -divergence(ux * phi_D, uy * phi_D, uz * phi_D, dx) - divergence(Jx_D, Jy_D, Jz_D, dx)
-    dphi_N = -divergence(ux * phi_N, uy * phi_N, uz * phi_N, dx) - divergence(Jx_N, Jy_N, Jz_N, dx)
+    dphi_H = np.clip(-divergence(ux * phi_H, uy * phi_H, uz * phi_H, dx) - divergence(Jx_H, Jy_H, Jz_H, dx), -1, 1)
+    dphi_D = np.clip(-divergence(ux * phi_D, uy * phi_D, uz * phi_D, dx) - divergence(Jx_D, Jy_D, Jz_D, dx), -1, 1)
+    dphi_N = np.clip(-divergence(ux * phi_N, uy * phi_N, uz * phi_N, dx) - divergence(Jx_N, Jy_N, Jz_N, dx), -1, 1)
 
     # Debug: Check for NaN/Inf in derivatives
     if np.any(np.isnan(dphi_H)) or np.any(np.isinf(dphi_H)):

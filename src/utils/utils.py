@@ -44,21 +44,23 @@ experimental_params = {
 
 SCIE3121_params = {
     # growth rates
-    "lambda_H": 0.6, # day^-1
-    "lambda_D": 0.8, # day^-1
+    "lambda_H": 1.2, # day^-1
+    "lambda_D": 1.7, # day^-1
 
     # death rates
-    "mu_H": 0.2, # day^-1
-    "mu_D": 0.2, # day^-1
-    "mu_N": 0.01, # day^-1
+    "mu_H": 0.3, # day^-1
+    "mu_D": 0.3, # day^-1
+    "mu_N": 0.001, # day^-1
 
     # probability terms
-    "p_H": 0.8, # unitless
-    "p_D": 0.67, # unitless
+    "p_H": 0.6, # unitless
+    "p_D": 0.8
+    
+    , # unitless
 
     # nutrient saturation for each cell type
-    "n_H": 0.08, # unitless
-    "n_D": 0.3, # unitless
+    "n_H": 0.1, # unitless
+    "n_D": 0.1, # unitless
 
     # physical constants
     'gamma': -10.0, # J mm^-2
@@ -66,7 +68,7 @@ SCIE3121_params = {
     'M': 0.1, # mm^5 day^-1 
 
     # diffusion constant of nutrient field
-    "D_n": 500.0, # mm^2 day^-1
+    "D_n": 400.0, # mm^2 day^-1
 }
 
 # src/utils/utils.py

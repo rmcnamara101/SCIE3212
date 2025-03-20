@@ -201,7 +201,7 @@ class TumorGrowthModel:
     def _initialize_history(self) -> dict:
         return {
             'step': [0], 'healthy cell volume fraction': [self.phi_H], 'progenitor cell volume fraction': [self.phi_P],
-            'differentiated cell volume fraction': [self.phi_D], 'necrotic cell volume fraction': [self.phi_N]
+            'differentiated cell volume fraction': [self.phi_D], 'necrotic cell volume fraction': [self.phi_N], 'nutrient': [self.nutrient],
         }
 
 
@@ -215,7 +215,7 @@ class TumorGrowthModel:
         self.history['progenitor cell volume fraction'].append(self.phi_P)
         self.history['differentiated cell volume fraction'].append(self.phi_D)
         self.history['necrotic cell volume fraction'].append(self.phi_N)
-   
+        self.history['nutrient'].append(self.nutrient)
 
     def _initialize_fields(self, initial_conditions: InitialCondition) -> None:
         shape = self.grid_shape

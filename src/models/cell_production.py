@@ -65,9 +65,13 @@ import numba as nb
 
 @nb.njit
 def compute_cell_sources(phi_H, phi_P, phi_D, phi_N, nutrient, n_S, n_P, n_D, lambda_S, lambda_P, mu_S, mu_P, mu_D, alpha_D, p_0, p_1, gamma_N):
-    H_S = np.where(n_S - nutrient > 0, 1.0, 0.0)
-    H_P = np.where(n_P - nutrient > 0, 1.0, 0.0)
-    H_D = np.where(n_D - nutrient > 0, 1.0, 0.0)
+    # Replace Heaviside step functions with smooth hyperbolic tangent transitions
+    # The k parameter controls the steepness of the transition (higher = steeper)
+    k = 10.0  # Steepness parameter
+    
+    H_S = 0.5 * (1 + np.tanh(k * (n_S - nutrient)))
+    H_P = 0.5 * (1 + np.tanh(k * (n_P - nutrient)))
+    H_D = 0.5 * (1 + np.tanh(k * (n_D - nutrient)))
 
     src_S = lambda_S * nutrient * phi_H * (2 * p_0 - 1) - mu_S * H_S * phi_H
     src_P = lambda_S * nutrient * 2 * (1 - p_0) * phi_H + lambda_P * nutrient * phi_P * (2 * p_1 - 1) - mu_P * H_P * phi_P
@@ -84,13 +88,15 @@ def compute_cell_sources(phi_H, phi_P, phi_D, phi_N, nutrient, n_S, n_P, n_D, la
 
 @nb.njit
 def compute_cell_sources_scie3121_model(phi_H, phi_D, phi_N, nutrient, n_H, n_D, lambda_H, lambda_D, mu_H, mu_D, p_H, p_D, mu_N):
-    # Make sure these thresholds are appropriate
-    H_H = np.where(n_H - nutrient > 0, 1.0, 0.0)
-    H_D = np.where(n_D - nutrient > 0, 1.0, 0.0)
-
+    # Replace Heaviside step functions with smooth hyperbolic tangent transitions
+    # The k parameter controls the steepness of the transition (higher = steeper)
+    k = 5  # Steepness parameter
     
+    H_H = 0.5 * (1 + np.tanh(k * (nutrient - n_H)))
+    H_D = 0.5 * (1 + np.tanh(k * (nutrient - n_D)))
+
     # Ensure proper balance between growth and death
-    src_H = lambda_H * nutrient * phi_H * (2 * p_H - 1) - mu_H * H_H * phi_H
+    src_H = lambda_H * nutrient * phi_H * (2 * p_H - 1) - mu_H * H_H * phi_H + 2 * lambda_D * nutrient * (1 - p_D) * phi_D
     src_D = 2 * lambda_H * nutrient * (1 - p_H) * phi_H + lambda_D * nutrient * phi_D * (2 * p_D - 1) - mu_D * H_D * phi_D 
     
     # Make sure cells are properly transitioning to necrotic state
@@ -108,9 +114,6 @@ def compute_cell_sources_scie3121_model(phi_H, phi_D, phi_N, nutrient, n_H, n_D,
 
 def compute_pressure_cell_sources(phi_H, phi_D, phi_N, nutrient, n_H, n_D, lambda_H, lambda_D, mu_H, mu_D, p_H, p_D, mu_N):
     
-    H_H = np.where(n_H - nutrient > 0, 1.0, 0.0)
-    H_D = np.where(n_D - nutrient > 0, 1.0, 0.0)
-
     src_H = lambda_H * nutrient * phi_H * (2 * p_H - 1)
     src_D = 2 * lambda_H * nutrient * (1 - p_H) * phi_H + lambda_D * nutrient * phi_D * (2 * p_D - 1)
     src_N = mu_N * phi_N

@@ -32,7 +32,7 @@ sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from src.models.tumor_growth import TumorGrowthModel
 from src.visualization.plot_tumor import VolumeFractionPlotter
 from src.visualization.animate_tumor import TumorAnimator
-from src.models.initial_conditions import SphericalTumor
+from src.models.initial_conditions import *
 from src.utils.utils import experimental_params, SCIE3121_params
 from src.models.SCIE3121_model import SCIE3121_MODEL
 
@@ -256,14 +256,17 @@ def compare_with_real_data(simulation_file, real_data_path):
 
 def main():
     # Original simulation code
-    grid_shape = (80, 80, 80)
-    dx = 200
-    dt = 0.5
+    grid_shape = (90, 90, 90)
+    dx = 75
+    dt = 0.1
     params = SCIE3121_params
-    steps = 100
-    save_steps = 10
+    steps = 150
+    save_steps = 5
 
-    initial_conditions = SphericalTumor(grid_shape, radius=5, nutrient_value=1.0)
+    #initial_conditions = SphericalTumor(grid_shape, radius=5, nutrient_value=0.5)
+    #initial_conditions = InvasiveTumor(grid_shape, base_radius=5, nutrient_value=1.0)
+    #initial_conditions = MultipleTumors(grid_shape, centers=[(0.3, 0.3, 0.3), (0.7, 0.7, 0.7)], radii=[5, 4], nutrient_value=1.0)
+    initial_conditions = RandomBlobTumor(grid_shape, base_radius=6, nutrient_value=0.1)
 
     model = SCIE3121_MODEL(
         grid_shape=grid_shape,
@@ -274,7 +277,7 @@ def main():
         save_steps=save_steps
     )
 
-    model.run_and_save_simulation(steps=steps, name="project_model_test")
+    model.run_and_save_simulation(steps=steps, name="base")
 
     # Uncomment to run parameter optimization
     # Example parameter ranges to explore

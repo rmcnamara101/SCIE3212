@@ -24,7 +24,7 @@ def compute_nutrient_diffusion(C_S, C_P, C_D, C_N, nutrient, dx, D_n, boundary_v
 @nb.njit
 def compute_nutrient_diffusion_scie3121_model(phi_H, phi_D, phi_N, nutrient, dx, D_n, boundary_value):
     # Adjust these parameters - they may be causing issues
-    consumption_rate = 0.2
+    consumption_rate = 0.1
     production_rate = 1.0
     microenvironment_nutrient_saturation = 1.0
     phi_T = phi_H + phi_D + phi_N  
