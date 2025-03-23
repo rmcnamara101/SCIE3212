@@ -641,16 +641,26 @@ class scie3121SimulationAnalyzer:
 def load_simulation_history(npz_filename):
     """Load simulation history from an NPZ file."""
     data = np.load(npz_filename, allow_pickle=True)
-    history = {key: data[key].item() if key == 'history' else data[key] for key in data}
+    
+    # If the data is nested under 'history', extract it
+    if 'history' in data:
+        history = data['history'].item()  # .item() is needed because it's stored as a 0d array
+    else:
+        history = {key: data[key] for key in data.files if key != 'Simulation Metadata'}
+    
+    # Add metadata if present
+    if 'Simulation Metadata' in data:
+        history['Simulation Metadata'] = data['Simulation Metadata'].item()
+    
     return history
 
 def compute_total_volumes(history):
     """Compute total volumes for each cell type over time."""
-    steps = history['step']
+    steps = np.arange(len(history['healthy cell volume fraction']))  # Create step array if not present
     healthy_volumes = [np.sum(phi) for phi in history['healthy cell volume fraction']]
-    diseased_volumes = [np.sum(phi) for phi in history['diseased cell volume fraction']]  # Changed to match typo
+    diseased_volumes = [np.sum(phi) for phi in history['diseased cell volume fraction']]
     necrotic_volumes = [np.sum(phi) for phi in history['necrotic cell volume fraction']]
-    total_volumes = [h + d + n for h, d, n in zip(healthy_volumes, diseased_volumes, necrotic_volumes)]  # Adjusted to 3 terms
+    total_volumes = [h + d + n for h, d, n in zip(healthy_volumes, diseased_volumes, necrotic_volumes)]
     return steps, healthy_volumes, diseased_volumes, necrotic_volumes, total_volumes
 
 def create_distance_grid_from_field(field):

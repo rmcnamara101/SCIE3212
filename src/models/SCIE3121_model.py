@@ -70,11 +70,28 @@ from src.models.initial_conditions import InitialCondition
 from src.models.tumor_growth import TumorGrowthModel
 
 try:
-    from src.models.cpp.cpp_simulation import SimulationCore
-    USE_CPP = True
-except ImportError:
+    print("Attempting to import C++ module...")
+    import os
+    import sys
+    module_dir = os.path.dirname(__file__)
+    print(f"Adding {module_dir} to Python path")
+    sys.path.append(module_dir)
+    print(f"Current directory: {os.getcwd()}")
+    print(f"Python path: {os.environ.get('PYTHONPATH', '')}")
+    module_path = os.path.join(module_dir, "cpp_simulation.so")
+    print(f"Looking for module at: {module_path}")
+    if os.path.exists(module_path):
+        print(f"Module file exists")
+        import cpp_simulation
+        SimulationCore = cpp_simulation.SimulationCore
+        print("Successfully imported C++ module")
+        USE_CPP = True
+    else:
+        print(f"Module file not found")
+        raise ImportError(f"Module file not found at {module_path}")
+except ImportError as e:
     USE_CPP = False
-    print("Warning: C++ implementation not available, using Python version")
+    print(f"Warning: C++ implementation not available, using Python version. Error: {e}")
 
 class SCIE3121_MODEL(TumorGrowthModel):
 
@@ -92,26 +109,43 @@ class SCIE3121_MODEL(TumorGrowthModel):
         self.diffusion_dynamics = diffusion_dynamics(self)
 
         if USE_CPP:
+            # Create dx arrays for x and y directions
+            dx_x = np.full_like(self.phi_H, self.dx)
+            dx_y = np.full_like(self.phi_H, self.dx)
+            
+            # Convert n_H and n_D to arrays
+            n_H_array = np.full_like(self.phi_H, self.n_H)
+            n_D_array = np.full_like(self.phi_H, self.n_D)
+            
             self.cpp_sim = SimulationCore(
                 self.phi_H,
                 self.phi_D,
                 self.phi_N,
                 self.nutrient,
-                self.dx,
+                n_H_array,
+                n_D_array,
                 self.dt,
+                self.params['epsilon'],
                 self.params
             )
 
     def _update(self, step):
         if USE_CPP:
-            # Just step the simulation
+            # Step the simulation
             self.cpp_sim.step_rk4()
             
-            # Only convert to numpy arrays when we need to save the history
+            # Update state and history at save steps
             if step % self.save_steps == 0:
+                # Get current state from C++
                 self.phi_H, self.phi_D, self.phi_N, self.nutrient = self.cpp_sim.get_state()
                 self._enforce_volume_fractions()
-                self._update_history()
+                
+                # Update history with correct keys
+                self.history['step'].append(step)
+                self.history['healthy cell volume fraction'].append(self.phi_H.copy())
+                self.history['diseased cell volume fraction'].append(self.phi_D.copy())
+                self.history['necrotic cell volume fraction'].append(self.phi_N.copy())
+                self.history['nutrient'].append(self.nutrient.copy())
         else:
             """
             Update the fields for a single step of the simulation using RK4 method.

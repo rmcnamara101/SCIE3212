@@ -5,11 +5,13 @@
 #include <vector>
 #include <tuple>
 #include <array>
+#include <iostream>
 #include <Eigen/Sparse>
 #include <Eigen/SparseLU>
 #ifdef _OPENMP
 #include <omp.h>
 #endif
+#include <cmath>  // for std::isfinite
 
 // Add these helper macros for vectorization hints
 #if defined(__GNUC__) || defined(__clang__)
@@ -18,6 +20,19 @@
 #define VECTORIZE_HINT __pragma(vector_always)
 #else
 #define VECTORIZE_HINT
+#endif
+
+// Add these optimization hints at the top
+#ifdef __GNUC__
+#define FORCE_INLINE __attribute__((always_inline)) inline
+#else
+#define FORCE_INLINE inline
+#endif
+
+// Add SIMD hints
+#if defined(__AVX2__)
+#include <immintrin.h>
+#define USE_SIMD
 #endif
 
 namespace py = pybind11;
@@ -122,7 +137,7 @@ private:
     std::vector<double> gradient_x(const std::vector<double>& field);
     std::vector<double> gradient_y(const std::vector<double>& field);
     std::vector<double> gradient_z(const std::vector<double>& field);
-    size_t idx(size_t i, size_t j, size_t k) const {
+    FORCE_INLINE size_t idx(size_t i, size_t j, size_t k) const {
         return i * m_shape[1] * m_shape[2] + j * m_shape[2] + k;
     }
 

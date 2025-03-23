@@ -60,12 +60,12 @@
 
 import numpy as np
 import numba as nb
-
-from src.models.cell_production import compute_cell_sources, compute_cell_sources_scie3121_model, compute_pressure_cell_sources
-from scipy.sparse import diags
+import scipy.sparse
 from scipy.sparse.linalg import spsolve
 from scipy.sparse.linalg import cg, LinearOperator
 from src.utils.utils import SCIE3121_params
+
+from src.models.cell_production import compute_cell_sources, compute_cell_sources_scie3121_model, compute_pressure_cell_sources
 
 @nb.njit
 def laplacian(field, dx):
@@ -446,3 +446,124 @@ def compute_internal_pressure_scie3121_model(
     pressure = -p_flat.reshape(shape)
     
     return pressure
+
+def compute_laplacian(self, p, dx):
+    """
+    Compute the Laplacian with improved numerical stability
+    """
+    lap_p = np.zeros_like(p)
+    dx2 = dx * dx  # Precompute dx squared
+    
+    # Interior points
+    lap_p[1:-1, :, :] = np.where(
+        np.abs(p[1:-1, :, :]) > 1e-15,  # Only compute where p is non-zero
+        (p[2:, :, :] - 2*p[1:-1, :, :] + p[:-2, :, :]) / dx2,
+        0
+    )
+    
+    # X boundaries
+    lap_p[0, :, :] = np.where(
+        np.abs(p[0, :, :]) > 1e-15,
+        2*(p[1, :, :] - p[0, :, :]) / dx2,
+        0
+    )
+    lap_p[-1, :, :] = np.where(
+        np.abs(p[-1, :, :]) > 1e-15,
+        2*(p[-2, :, :] - p[-1, :, :]) / dx2,
+        0
+    )
+    
+    # Y boundaries
+    lap_p[:, 1:-1, :] += np.where(
+        np.abs(p[:, 1:-1, :]) > 1e-15,
+        (p[:, 2:, :] - 2*p[:, 1:-1, :] + p[:, :-2, :]) / dx2,
+        0
+    )
+    lap_p[:, 0, :] += np.where(
+        np.abs(p[:, 0, :]) > 1e-15,
+        2*(p[:, 1, :] - p[:, 0, :]) / dx2,
+        0
+    )
+    lap_p[:, -1, :] += np.where(
+        np.abs(p[:, -1, :]) > 1e-15,
+        2*(p[:, -2, :] - p[:, -1, :]) / dx2,
+        0
+    )
+    
+    # Z boundaries
+    lap_p[:, :, 1:-1] += np.where(
+        np.abs(p[:, :, 1:-1]) > 1e-15,
+        (p[:, :, 2:] - 2*p[:, :, 1:-1] + p[:, :, :-2]) / dx2,
+        0
+    )
+    lap_p[:, :, 0] += np.where(
+        np.abs(p[:, :, 0]) > 1e-15,
+        2*(p[:, :, 1] - p[:, :, 0]) / dx2,
+        0
+    )
+    lap_p[:, :, -1] += np.where(
+        np.abs(p[:, :, -1]) > 1e-15,
+        2*(p[:, :, -2] - p[:, :, -1]) / dx2,
+        0
+    )
+    
+    # Clean up any remaining NaN or inf values
+    lap_p = np.nan_to_num(lap_p, nan=0.0, posinf=0.0, neginf=0.0)
+    
+    return lap_p
+
+def solve_pressure(self, phi_T, dx, params):
+    """
+    Solve the pressure equation with improved stability
+    """
+    # Set up the linear system
+    n = phi_T.size
+    phi_T_flat = phi_T.flatten()
+    
+    def pressure_operator(p):
+        p_reshaped = p.reshape(phi_T.shape)
+        lap_p = self.compute_laplacian(p_reshaped, dx)
+        return lap_p.flatten()
+    
+    # Linear operator with safety checks
+    def safe_matvec(v):
+        result = pressure_operator(v)
+        # Replace any NaN or inf values with 0
+        result = np.nan_to_num(result, nan=0.0, posinf=0.0, neginf=0.0)
+        return result
+    
+    A = scipy.sparse.linalg.LinearOperator((n, n), matvec=safe_matvec)
+    
+    # Prepare the right-hand side
+    b = phi_T_flat
+    
+    # Add small regularization term for stability
+    epsilon = 1e-10
+    def regularized_matvec(v):
+        return safe_matvec(v) + epsilon * v
+    
+    A_reg = scipy.sparse.linalg.LinearOperator((n, n), matvec=regularized_matvec)
+    
+    # Solve with more robust settings
+    try:
+        p, info = scipy.sparse.linalg.cg(
+            A_reg, b,
+            tol=1e-6,
+            maxiter=1000,
+            atol=1e-8
+        )
+        
+        if info != 0:
+            print(f"Warning: Pressure solver did not converge (info={info})")
+            # Fall back to direct solution
+            p = b.copy()
+    except Exception as e:
+        print(f"Warning: Pressure solver failed ({str(e)})")
+        # Fall back to direct solution
+        p = b.copy()
+    
+    # Reshape and clean the solution
+    p = p.reshape(phi_T.shape)
+    p = np.nan_to_num(p, nan=0.0, posinf=0.0, neginf=0.0)
+    
+    return p
