@@ -1,0 +1,112 @@
+
+# --- Grid & time ---
+domain:
+  shape: [128, 128, 1]      # Nx, Ny, Nz (set Nz=1 for 2D)
+  dx: 1.0
+
+time:
+  dt: 0.01
+  steps: 1000
+
+# --- Nutrient / globals (tune as needed) ---
+nutrient:
+  diffusion: 1.0            # D_n
+  supply: 1.0               # external source term, if any
+  decay: 0.0                # optional decay
+
+# Column-stochastic transfer convention:
+#   P[i, j] = fraction of population j that becomes i (sum of each column = 1)
+# For each source population, you may provide either:
+#   - a single mapping: {to: <name>, rate: <0..1>}
+#   - a list of mappings: [{to: X, rate: a}, {to: Y, rate: b}, ...]
+# Any unassigned remainder stays as itself (self-loop).
+populations:
+  Healthy:
+    label: Healthy Cells
+    color: Green
+    dynamics:
+      lambda: 1.20                 # proliferation
+      mu: 0.10                     # death
+      mobility: 0.50
+      nutrient_threshold: 0.30
+      nutrient_consumption: 0.10
+      nutrient_production: 0.00
+    transfer:
+      to: Diseased
+      rate: 0.99
+
+  Diseased:
+    label: Diseased Cells
+    color: Red
+    dynamics:
+      lambda: 1.00
+      mu: 0.20
+      mobility: 0.60
+      nutrient_threshold: 0.25
+      nutrient_consumption: 0.12
+      nutrient_production: 0.00
+    transfer:
+      - to: Necrotic
+        rate: 0.20
+      - to: Quiescent
+        rate: 0.10
+
+  Necrotic:
+    label: Necrotic Cells
+    color: Black
+    dynamics:
+      lambda: 0.00
+      mu: 0.05
+      mobility: 0.00
+      nutrient_threshold: 0.00
+      nutrient_consumption: 0.00
+      nutrient_production: 0.00
+    # no transfer block -> entire column is a self-loop
+
+  Quiescent:
+    label: Quiescent Cells
+    color: Blue
+    dynamics:
+      lambda: 0.05
+      mu: 0.05
+      mobility: 0.30
+      nutrient_threshold: 0.40
+      nutrient_consumption: 0.05
+      nutrient_production: 0.00
+    transfer:
+      to: Diseased
+      rate: 0.05                  # small return to cycling pool
+
+  StemLike:
+    label: Stem-like Cells
+    color: Purple
+    dynamics:
+      lambda: 0.80
+      mu: 0.10
+      mobility: 0.70
+      nutrient_threshold: 0.20
+      nutrient_consumption: 0.08
+      nutrient_production: 0.00
+    transfer:
+      to: Diseased
+      rate: 0.15
+
+# --- Initial conditions (optional; adapt to your seeding code) ---
+initial:
+  populations:
+    Healthy:
+      type: gaussian_blob
+      center: [64, 64, 0]
+      radius: 10
+      amplitude: 0.9
+    Diseased:
+      type: zero
+    Necrotic:
+      type: zero
+    Quiescent:
+      type: zero
+    StemLike:
+      type: zero
+  nutrient:
+    type: uniform
+    value: 1.0

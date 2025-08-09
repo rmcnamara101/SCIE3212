@@ -1,0 +1,37 @@
+# This is a template for a YAML file that defines a tumour growth model.
+# It is used to define the model and its parameters.
+
+simulation:
+  name: <name of the simulation>
+  seed: <seed for the simulation>
+
+domain:
+  shape: <shape of the domain> # integer defining the number of grid points in each dimension
+  dx: <spacing of the grid> # float defining the spacing of the grid
+
+time:
+  steps: <simulation time steps>
+  dt: <time step>
+
+populations:
+  name:
+    label: <label of the population>
+    color: <color of the population>
+    dynamics:
+      lambda: <growth rate> # float
+      mu: <death rate> # float
+      mobility: <mobility> # float
+      nutrient_threshold: <nutrient threshold> # float
+      nutrient_consumption: <nutrient uptake rate> # float
+      nutrient_production: <nutrient production rate> # float
+    transfer: 
+        to: <name of the population> # string matching another population name
+        rate: <transfer rate> # float defining proportion of cells that transfer 
+
+
+nutrient:
+  - name: <name of the nutrient>
+    label: <label of the nutrient>
+    color: <color of the nutrient>
+    dynamics:
+      diffusion: <diffusion rate> # float

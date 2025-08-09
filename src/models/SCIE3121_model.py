@@ -57,7 +57,6 @@
 
 import numpy as np
 from typing import Tuple
-from scipy.integrate import solve_ivp
 
 from src.utils.utils import SCIE3121_params
 
@@ -69,29 +68,6 @@ from src.models.initial_conditions import InitialCondition
 # define base model
 from src.models.tumor_growth import TumorGrowthModel
 
-try:
-    print("Attempting to import C++ module...")
-    import os
-    import sys
-    module_dir = os.path.dirname(__file__)
-    print(f"Adding {module_dir} to Python path")
-    sys.path.append(module_dir)
-    print(f"Current directory: {os.getcwd()}")
-    print(f"Python path: {os.environ.get('PYTHONPATH', '')}")
-    module_path = os.path.join(module_dir, "cpp_simulation.so")
-    print(f"Looking for module at: {module_path}")
-    if os.path.exists(module_path):
-        print(f"Module file exists")
-        import cpp_simulation
-        SimulationCore = cpp_simulation.SimulationCore
-        print("Successfully imported C++ module")
-        USE_CPP = True
-    else:
-        print(f"Module file not found")
-        raise ImportError(f"Module file not found at {module_path}")
-except ImportError as e:
-    USE_CPP = False
-    print(f"Warning: C++ implementation not available, using Python version. Error: {e}")
 
 class SCIE3121_MODEL(TumorGrowthModel):
 

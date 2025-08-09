@@ -1,3 +1,0 @@
-/Users/rileymcnamara/CODE/2025/SCIE3212/src/models/cpp/build/CMakeFiles/cpp_simulation.dir
-/Users/rileymcnamara/CODE/2025/SCIE3212/src/models/cpp/build/CMakeFiles/edit_cache.dir
-/Users/rileymcnamara/CODE/2025/SCIE3212/src/models/cpp/build/CMakeFiles/rebuild_cache.dir
