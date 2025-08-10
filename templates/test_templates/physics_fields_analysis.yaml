@@ -2,12 +2,12 @@
 # It is used to define the model and its parameters.
 
 simulation:
-  name: Original Simulation Structure
-  seed: 1081
+  name: Physics Fields Analysis
+  seed: 1209
 
 domain:
-  shape: 60 # integer defining the number of grid points in each dimension
-  dx: 0.2 # float defining the spacing of the grid
+  shape: 200 # integer defining the number of grid points in each dimension
+  dx: 0.1 # float defining the spacing of the grid
 
 time:
   steps: 1
@@ -15,25 +15,11 @@ time:
 
 populations:
   Healthy:
-    label: Healthy Cells
+    label: Tumour Cells
     color: Green
     dynamics:
       lambda: 1.2 # float
       mu: 0.8 # float
-      mobility: 0.5 # float
-      nutrient_threshold: 0.3 # float
-      nutrient_consumption: 0.1 # float
-      nutrient_production: 0.07 # float
-    transfer: 
-        to: Diseased # string matching another population name
-        rate: 0.01 # float defining proportion of cells that transfer 
-
-  Diseased:
-    label: Diseased Cells
-    color: Red
-    dynamics:
-      lambda: 1.5 # float
-      mu: 0.7 # float
       mobility: 0.5 # float
       nutrient_threshold: 0.3 # float
       nutrient_consumption: 0.1 # float
@@ -62,20 +48,20 @@ nutrient:
 
 physics:
   adhesion_energy:
-    m: 0.01
+    m: 1
 
 # Initial conditions configuration
 initial_conditions:
   type: gaussian_random_blob # Options: "spherical", "gaussian_random_blob", "multiple_spheres", "uniform", "custom"
   
-  center: [30, 30, 30] # Center coordinates (optional, defaults to domain center)
-  radius: 10 # Radius of the sphere (optional, defaults to domain_size/4)
+  center: [100, 100, 100] # Center coordinates (optional, defaults to domain center)
+  radius: 50 # Radius of the sphere (optional, defaults to domain_size/4)
   
-  deformation_strength: 0.2 # How much to deform (0.0=sphere, 0.5=very deformed, optional, defaults to 0.3)
+  deformation_strength: 0.5 # How much to deform (0.0=sphere, 0.5=very deformed, optional, defaults to 0.3)
   
   seeding_densities:
-    Healthy: 0.9 # Density for specific population
-    Diseased: 0.1 # Density for specific population
+    Tumour Cells: 0.9 # Density for specific population
+    Necrotic Cells: 0.1 # Density for specific population
   
   nutrient:
     type: gradient # Options: "uniform", "gradient" (optional, uses default nutrient manager if not specified)

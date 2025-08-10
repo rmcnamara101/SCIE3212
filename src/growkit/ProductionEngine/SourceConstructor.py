@@ -1,0 +1,437 @@
+import numpy as np
+from numba import njit
+
+from src.growkit.ProductionEngine.MatrixConstructor import MatrixConstructor
+
+class SourceConstructor:
+    """
+    Source vector constructor that implements the unified vectorized form:
+    
+    A_hat = G_N * n * P * alpha_hat - D * phi_hat
+    
+    where:
+    - A_hat: source term vector for all populations
+    - G_N: global necrotic feedback factor
+    - n: local nutrient field
+    - P: transfer matrix (column-stochastic)
+    - alpha_hat: proliferation-weighted populations (alpha_hat_i = lambda_i * phi_i)
+    - D: death matrix (nutrient-modulated death rates)
+    - phi_hat: stacked cell fraction fields for all M populations
+    """
+    
+    def __init__(self, cfg, populations):
+        """
+        Initialize the source constructor.
+        
+        Args:
+            cfg: Configuration dictionary
+            populations: Population definitions from YAML
+            matrix_constructor: MatrixConstructor instance for transfer matrix P
+        """
+        self.cfg = cfg
+        self.pops = populations
+        self.labels = list(populations.keys())
+        self.M = len(self.labels)
+        self.matrix_constructor = MatrixConstructor(cfg, populations)
+        
+        # Extract population parameters
+        self._extract_population_params()
+        
+        # Build transfer matrix P
+        self.P, self.name_to_idx = self.matrix_constructor.build_transfer_matrix()
+        
+        # Build death matrix D
+        self.D = self._build_death_matrix()
+        
+        # Necrotic feedback parameters
+        self.beta_N = cfg["populations"]["Necrotic"]["dynamics"]["beta_N"]
+    
+    def _extract_population_params(self):
+        """Extract proliferation and death parameters from population definitions."""
+        self.lambda_ = np.array([p["dynamics"]["lambda"] for p in self.pops.values()], dtype=np.float32)
+        self.mu = np.array([p["dynamics"]["mu"] for p in self.pops.values()], dtype=np.float32)
+        self.nutrient_thresholds = np.array([p["dynamics"]["nutrient_threshold"] for p in self.pops.values()], dtype=np.float32)
+    
+    def _build_death_matrix(self):
+        """
+        Build death matrix D with nutrient-modulated death rates.
+        
+        D[i,i] = mu_i * Theta_i for each population
+        D[M-1,i] = -mu_i * Theta_i for viable populations (mass flows into necrotic)
+        D[i,j] = 0 otherwise
+        
+        Returns:
+            D: (M, M) death matrix where M includes all populations including necrotic
+        """
+        M = self.M
+        D = np.zeros((M, M), dtype=np.float32)
+        
+        # For each population, set death rates
+        for i, (name, pop) in enumerate(self.pops.items()):
+            mu_i = self.mu[i]
+            
+            # Death matrix entries for this population
+            D[i, i] = mu_i  # Death from population i
+            D[M-1, i] = -mu_i  # Mass flows into necrotic (last row)
+        
+        return D
+    
+    def _compute_nutrient_switches(self, nutrient_field):
+        """
+        Compute smooth nutrient switches Theta_i for each population.
+        
+        Args:
+            nutrient_field: Local nutrient concentration field
+            
+        Returns:
+            Theta: (M,) array of nutrient switches
+        """
+        k = 5.0  # Steepness parameter for smooth transition
+        Theta = np.zeros(self.M, dtype=np.float32)
+        
+        # Use the mean nutrient level for computing switches
+        mean_nutrient = np.mean(nutrient_field)
+        
+        for i in range(self.M):
+            n_thresh = self.nutrient_thresholds[i]
+            # Smooth Heaviside function: 0.5 * (1 + tanh(k * (nutrient - threshold)))
+            Theta[i] = 0.5 * (1 + np.tanh(k * (mean_nutrient - n_thresh)))
+        
+        return Theta
+    
+    def _compute_necrotic_feedback(self, phi_hat):
+        """
+        Compute global necrotic feedback factor G_N.
+        
+        G_N(t) = exp(-beta_N * V_N(t))
+        where V_N is the total necrotic volume
+        
+        Args:
+            phi_hat: Stacked cell fraction fields for all populations
+            
+        Returns:
+            G_N: Global necrotic feedback factor
+        """
+        # Assuming necrotic is the last population
+        V_N = np.sum(phi_hat[-1])  # Total necrotic volume
+        G_N = np.exp(-self.beta_N * V_N)
+        return G_N
+    
+    def _compute_proliferation_weighted_populations(self, phi_hat):
+        """
+        Compute proliferation-weighted populations alpha_hat.
+        
+        alpha_hat_i = lambda_i * phi_i
+        
+        Args:
+            phi_hat: Stacked cell fraction fields for all populations
+            
+        Returns:
+            alpha_hat: Proliferation-weighted populations
+        """
+        alpha_hat = np.zeros_like(phi_hat)
+        for i in range(self.M):
+            alpha_hat[i] = self.lambda_[i] * phi_hat[i]
+        return alpha_hat
+    
+    def compute_source_vector(self, phi_hat, nutrient_field):
+        """
+        Compute the complete source vector A_hat.
+        
+        A_hat = G_N * n * P * alpha_hat - D * phi_hat
+        
+        Args:
+            phi_hat: Stacked cell fraction fields for all M populations
+            nutrient_field: Local nutrient concentration field
+            
+        Returns:
+            A_hat: Source term vector for all populations (including necrotic)
+        """
+        # Compute nutrient switches
+        Theta = self._compute_nutrient_switches(nutrient_field)
+        
+        # Compute necrotic feedback
+        G_N = self._compute_necrotic_feedback(phi_hat)
+        
+        # Compute proliferation-weighted populations
+        alpha_hat = self._compute_proliferation_weighted_populations(phi_hat)
+        
+        # Apply nutrient modulation to death matrix
+        D_modulated = self.D.copy()
+        for i in range(self.M):
+            D_modulated[i, i] *= Theta[i]
+        
+        # Compute source vector components
+        # Growth term: G_N * n * P * alpha_hat
+        growth_term = G_N * nutrient_field * np.tensordot(self.P, alpha_hat, axes=([1], [0]))
+        
+        # Death term: D * phi_hat
+        death_term = np.tensordot(D_modulated, phi_hat, axes=([1], [0]))
+        
+        # Combine terms
+        A_hat = growth_term - death_term
+        
+        return A_hat
+    
+    def compute_pressure_source_vector(self, phi_hat, nutrient_field):
+        """
+        Compute the pressure source vector that excludes mass transfer terms.
+        
+        For the pressure equation, we only want absolute growth/death terms that
+        actually change the total volume, not redistribution of existing mass.
+        
+        Args:
+            phi_hat: Stacked cell fraction fields for all M populations
+            nutrient_field: Local nutrient concentration field
+            
+        Returns:
+            pressure_source: Source term for pressure equation (scalar field)
+        """
+        # Compute nutrient switches
+        Theta = self._compute_nutrient_switches(nutrient_field)
+        
+        # Compute necrotic feedback
+        G_N = self._compute_necrotic_feedback(phi_hat)
+        
+        # Compute proliferation-weighted populations
+        alpha_hat = self._compute_proliferation_weighted_populations(phi_hat)
+        
+        # For pressure, we only want absolute growth/death, not mass transfer
+        # Growth: sum over all populations of their absolute growth
+        growth_terms = np.zeros_like(nutrient_field)
+        for i in range(self.M):
+            # Only count growth that stays in the same population (diagonal of P)
+            if i < self.P.shape[0] and i < self.P.shape[1]:
+                growth_terms += G_N * nutrient_field * self.P[i, i] * alpha_hat[i]
+        
+        # Death: sum over all populations of their absolute death (excluding necrotic)
+        death_terms = np.zeros_like(nutrient_field)
+        for i in range(self.M - 1):  # Exclude necrotic population
+            death_terms += self.mu[i] * Theta[i] * phi_hat[i]
+        
+        # Pressure source is net growth minus net death
+        pressure_source = growth_terms - death_terms
+        
+        return pressure_source
+    
+    def compute_pressure_source_vector_vectorized(self, phi_hat, nutrient_field):
+        """
+        Vectorized version of pressure source computation for efficiency.
+        
+        Args:
+            phi_hat: Stacked cell fraction fields for all M populations
+            nutrient_field: Local nutrient concentration field
+            
+        Returns:
+            pressure_source: Source term for pressure equation (scalar field)
+        """
+        # Compute nutrient switches (vectorized)
+        k = 5.0
+        if nutrient_field.ndim == 3:
+            nutrient_field_expanded = nutrient_field[None, :, :, :]
+        else:
+            nutrient_field_expanded = nutrient_field
+            
+        Theta = 0.5 * (1 + np.tanh(k * (nutrient_field_expanded[:, None, :, :, :] - self.nutrient_thresholds[None, :, None, None, None])))
+        
+        # Compute necrotic feedback
+        V_N = np.sum(phi_hat[:, -1])  # Total necrotic volume
+        G_N = np.exp(-self.beta_N * V_N)  # G_N is a scalar
+        
+        # Compute proliferation-weighted populations
+        alpha_hat = self.lambda_[None, :, None, None, None] * phi_hat[:, :self.M]
+        
+        # For pressure, only count absolute growth/death, not mass transfer
+        # Growth: only diagonal terms of P (growth that stays in same population)
+        growth_terms = np.zeros_like(nutrient_field)
+        for i in range(self.M):
+            if i < self.P.shape[0] and i < self.P.shape[1]:
+                growth_terms += G_N * nutrient_field * self.P[i, i] * alpha_hat[:, i]
+        
+        # Death: only absolute death rates (excluding necrotic)
+        death_terms = np.zeros_like(nutrient_field)
+        for i in range(self.M - 1):  # Exclude necrotic population
+            death_terms += self.mu[i] * np.mean(Theta[:, i]) * phi_hat[:, i]
+        
+        # Pressure source is net growth minus net death
+        pressure_source = growth_terms - death_terms
+        
+        return pressure_source.squeeze()
+    
+    def compute_source_vector_vectorized(self, phi_hat, nutrient_field):
+        """
+        Vectorized version of source vector computation for efficiency.
+        
+        Args:
+            phi_hat: Stacked cell fraction fields for all M populations
+            nutrient_field: Local nutrient concentration field
+            
+        Returns:
+            A_hat: Source term vector for all populations
+        """
+        M = self.M
+        
+        # Reshape inputs for broadcasting
+        if phi_hat.ndim == 3:  # Single 3D field
+            phi_hat = phi_hat.reshape(1, *phi_hat.shape)
+            nutrient_field = nutrient_field.reshape(1, *nutrient_field.shape)
+        
+        # Compute nutrient switches (vectorized)
+        k = 5.0
+        # Handle the case where nutrient_field might be 3D or 4D
+        if nutrient_field.ndim == 3:
+            # Single 3D field, add batch dimension
+            nutrient_field_expanded = nutrient_field[None, :, :, :]
+        else:
+            # Already has batch dimension
+            nutrient_field_expanded = nutrient_field
+            
+        Theta = 0.5 * (1 + np.tanh(k * (nutrient_field_expanded[:, None, :, :, :] - self.nutrient_thresholds[None, :, None, None, None])))
+        
+        # Compute necrotic feedback - always a global scalar
+        V_N = np.sum(phi_hat[:, -1])  # Total necrotic volume across all spatial dimensions
+        G_N = np.exp(-self.beta_N * V_N)  # G_N is a scalar
+        
+        # Compute proliferation-weighted populations
+        alpha_hat = self.lambda_[None, :, None, None, None] * phi_hat[:, :M]
+        
+        # Apply nutrient modulation to death matrix
+        D_modulated = self.D.copy()
+        for i in range(M):
+            # Theta[:, i] is a spatial field, so we need to take the mean
+            D_modulated[i, i] *= np.mean(Theta[:, i])
+        
+        # Compute source vector
+        # Growth term: G_N * n * P * alpha_hat
+        # G_N is scalar, nutrient_field is 3D, alpha_hat is (M, nx, ny, nz)
+        # P is (M, M), alpha_hat is (M, nx, ny, nz)
+        # We want P * alpha_hat = (M, nx, ny, nz)
+        growth_term = (G_N * 
+                      nutrient_field[None, :, :, :] * 
+                      np.tensordot(self.P, alpha_hat, axes=([1], [0])))
+        
+        # Death term: D * phi_hat
+        death_term = np.tensordot(D_modulated, phi_hat, axes=([1], [0]))
+        
+        # Combine terms
+        A_hat = growth_term - death_term
+        
+        return A_hat.squeeze()
+
+
+@njit
+def compute_source_vector_numba(phi_hat, nutrient_field, lambda_, mu, nutrient_thresholds, 
+                               P, D, beta_N):
+    """
+    Numba-optimized version of source vector computation.
+    
+    Args:
+        phi_hat: Stacked cell fraction fields for all M populations
+        nutrient_field: Local nutrient concentration field
+        lambda_: Proliferation rates for each population
+        mu: Death rates for each population
+        nutrient_thresholds: Nutrient thresholds for each population
+        P: Transfer matrix
+        D: Death matrix
+        beta_N: Necrotic feedback parameter
+        
+    Returns:
+        A_hat: Source term vector for all populations
+    """
+    M = lambda_.shape[0]
+    shape = phi_hat.shape[1:]  # Spatial dimensions
+    
+    # Initialize output
+    A_hat = np.zeros((M+1, *shape), dtype=np.float32)
+    
+    # Compute nutrient switches
+    k = 5.0
+    Theta = np.zeros(M, dtype=np.float32)
+    for i in range(M):
+        # Use mean nutrient level for computing switches (Numba-compatible)
+        mean_nutrient = np.mean(nutrient_field)
+        Theta[i] = 0.5 * (1 + np.tanh(k * (mean_nutrient - nutrient_thresholds[i])))
+    
+    # Compute necrotic feedback
+    V_N = np.sum(phi_hat[M-1])  # Assuming necrotic is last population
+    G_N = np.exp(-beta_N * V_N)
+    
+    # Compute proliferation-weighted populations
+    alpha_hat = np.zeros_like(phi_hat[:M])
+    for i in range(M):
+        alpha_hat[i] = lambda_[i] * phi_hat[i]
+    
+    # Apply nutrient modulation to death matrix
+    D_modulated = D.copy()
+    for i in range(M):
+        D_modulated[i, i] *= Theta[i]
+        D_modulated[M, i] *= Theta[i]
+    
+    # Compute source vector
+    for i in range(M+1):
+        for j in range(M):
+            # Growth term contribution
+            if i < M:
+                A_hat[i] += G_N * nutrient_field * P[i, j] * alpha_hat[j]
+            
+            # Death term contribution
+            A_hat[i] -= D_modulated[i, j] * phi_hat[j]
+    
+    return A_hat
+
+
+@njit
+def compute_pressure_source_vector_numba(phi_hat, nutrient_field, lambda_, mu, nutrient_thresholds, 
+                                        P, beta_N):
+    """
+    Numba-optimized version of pressure source computation.
+    
+    For the pressure equation, only absolute growth/death terms are considered,
+    excluding mass transfer between populations.
+    
+    Args:
+        phi_hat: Stacked cell fraction fields for all M populations
+        nutrient_field: Local nutrient concentration field
+        lambda_: Proliferation rates for each population
+        mu: Death rates for each population
+        nutrient_thresholds: Nutrient thresholds for each population
+        P: Transfer matrix
+        beta_N: Necrotic feedback parameter
+        
+    Returns:
+        pressure_source: Source term for pressure equation (scalar field)
+    """
+    M = lambda_.shape[0]
+    shape = phi_hat.shape[1:]  # Spatial dimensions
+    
+    # Initialize output
+    pressure_source = np.zeros(shape, dtype=np.float32)
+    
+    # Compute nutrient switches
+    k = 5.0
+    Theta = np.zeros(M, dtype=np.float32)
+    for i in range(M):
+        # Use mean nutrient level for computing switches (Numba-compatible)
+        mean_nutrient = np.mean(nutrient_field)
+        Theta[i] = 0.5 * (1 + np.tanh(k * (mean_nutrient - nutrient_thresholds[i])))
+    
+    # Compute necrotic feedback
+    V_N = np.sum(phi_hat[M-1])  # Assuming necrotic is last population
+    G_N = np.exp(-beta_N * V_N)
+    
+    # Compute proliferation-weighted populations
+    alpha_hat = np.zeros_like(phi_hat[:M])
+    for i in range(M):
+        alpha_hat[i] = lambda_[i] * phi_hat[i]
+    
+    # For pressure, only count absolute growth/death, not mass transfer
+    # Growth: only diagonal terms of P (growth that stays in same population)
+    for i in range(M):
+        if i < P.shape[0] and i < P.shape[1]:
+            pressure_source += G_N * nutrient_field * P[i, i] * alpha_hat[i]
+    
+    # Death: only absolute death rates (excluding necrotic)
+    for i in range(M - 1):  # Exclude necrotic population
+        pressure_source -= mu[i] * Theta[i] * phi_hat[i]
+    
+    return pressure_source

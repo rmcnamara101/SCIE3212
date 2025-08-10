@@ -1,7 +1,7 @@
 
 # --- Grid & time ---
 domain:
-  shape: [128, 128, 1]      # Nx, Ny, Nz (set Nz=1 for 2D)
+  shape: 128      # Nx, Ny, Nz (set Nz=1 for 2D)
   dx: 1.0
 
 time:
@@ -51,18 +51,6 @@ populations:
       - to: Quiescent
         rate: 0.10
 
-  Necrotic:
-    label: Necrotic Cells
-    color: Black
-    dynamics:
-      lambda: 0.00
-      mu: 0.05
-      mobility: 0.00
-      nutrient_threshold: 0.00
-      nutrient_consumption: 0.00
-      nutrient_production: 0.00
-    # no transfer block -> entire column is a self-loop
-
   Quiescent:
     label: Quiescent Cells
     color: Blue
@@ -90,6 +78,18 @@ populations:
     transfer:
       to: Diseased
       rate: 0.15
+
+  Necrotic:
+    label: Necrotic Cells
+    color: Black
+    dynamics:
+      lambda: 0.00
+      mu: 0.05
+      mobility: 0.00
+      nutrient_threshold: 0.00
+      nutrient_consumption: 0.00
+      nutrient_production: 0.00
+    # no transfer block -> entire column is a self-loop
 
 # --- Initial conditions (optional; adapt to your seeding code) ---
 initial:

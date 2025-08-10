@@ -13,6 +13,41 @@ time:
   steps: <simulation time steps>
   dt: <time step>
 
+# Initial conditions configuration
+initial_conditions:
+  type: <type of initial conditions> # Options: "spherical", "gaussian_random_blob", "multiple_spheres", "uniform", "custom"
+  
+  # Parameters for spherical initial conditions
+  center: [<x>, <y>, <z>] # Center coordinates (optional, defaults to domain center)
+  radius: <radius> # Radius of the sphere (optional, defaults to domain_size/4)
+  
+  # Parameters for deformed blob
+  radius: <radius> # Base radius of the blob (optional, defaults to domain_size/4)
+  deformation_strength: <deformation_strength> # How much to deform (0.0=sphere, 0.5=very deformed, optional, defaults to 0.3)
+  
+  # Parameters for multiple spheres
+  spheres:
+    - center: [<x>, <y>, <z>] # Center of first sphere
+      radius: <radius> # Radius of first sphere
+      population: <population_index> # Population index (0-based)
+      density: <density> # Initial density for this sphere
+    - center: [<x>, <y>, <z>] # Center of second sphere
+      radius: <radius> # Radius of second sphere
+      population: <population_index> # Population index (0-based)
+      density: <density> # Initial density for this sphere
+  
+  # Seeding densities for each population (optional, will use defaults if not specified)
+  seeding_densities:
+    <population_label>: <density> # Density for specific population
+    # Example: "tumor": 0.8, "stroma": 0.2
+  
+  # Nutrient field initialization (optional)
+  nutrient:
+    type: <nutrient_type> # Options: "uniform", "gradient" (optional, uses default nutrient manager if not specified)
+    concentration: <concentration> # For uniform nutrient field (optional, defaults to 1.0)
+    concentration_max: <max_concentration> # For gradient nutrient field (optional, defaults to 1.0)
+    concentration_min: <min_concentration> # For gradient nutrient field (optional, defaults to 0.0)
+
 populations:
   name:
     label: <label of the population>
@@ -27,7 +62,6 @@ populations:
     transfer: 
         to: <name of the population> # string matching another population name
         rate: <transfer rate> # float defining proportion of cells that transfer 
-
 
 nutrient:
   - name: <name of the nutrient>
