@@ -6,7 +6,7 @@ simulation:
   seed: 1081
 
 domain:
-  shape: 60 # integer defining the number of grid points in each dimension
+  shape: 50 # integer defining the number of grid points in each dimension
   dx: 0.2 # float defining the spacing of the grid
 
 time:
@@ -68,7 +68,7 @@ physics:
 initial_conditions:
   type: gaussian_random_blob # Options: "spherical", "gaussian_random_blob", "multiple_spheres", "uniform", "custom"
   
-  center: [30, 30, 30] # Center coordinates (optional, defaults to domain center)
+  center: [25, 25, 25] # Center coordinates (optional, defaults to domain center)
   radius: 10 # Radius of the sphere (optional, defaults to domain_size/4)
   
   deformation_strength: 0.2 # How much to deform (0.0=sphere, 0.5=very deformed, optional, defaults to 0.3)

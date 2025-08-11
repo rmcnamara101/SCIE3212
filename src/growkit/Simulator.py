@@ -14,6 +14,7 @@ import time
 from pathlib import Path
 import yaml
 from collections import defaultdict
+import os
 
 from src.growkit.Fields.FieldManager import FieldManager
 from src.growkit.PhysicsEngine import VectorizedCellDynamics
@@ -230,6 +231,15 @@ class TumorGrowthSimulator:
                 self.profiler.start_timer("physics_fields_update")
                 self.field_manager.update_physics_fields(phi_hat_new, nutrient_field_new)
                 self.profiler.end_timer("physics_fields_update")
+                
+                # Normalize volume fractions after each time step
+                self.profiler.start_timer("volume_fraction_normalization")
+                phi_hat_normalized = self.field_manager.normalize_volume_fractions(add_host_field=False)
+                self.profiler.end_timer("volume_fraction_normalization")
+                
+                # Update fields with normalized values
+                if phi_hat_normalized is not None:
+                    self.field_manager.set_cell_fields(phi_hat_normalized, nutrient_field_new)
         else:
             self.profiler.start_timer("rk4_integration")
             phi_hat_new, nutrient_field_new = self.integrator.step_with_nutrient_update(
@@ -250,6 +260,15 @@ class TumorGrowthSimulator:
             self.profiler.start_timer("physics_fields_update")
             self.field_manager.update_physics_fields(phi_hat_new, nutrient_field_new)
             self.profiler.end_timer("physics_fields_update")
+            
+            # Normalize volume fractions after each time step
+            self.profiler.start_timer("volume_fraction_normalization")
+            phi_hat_normalized = self.field_manager.normalize_volume_fractions(add_host_field=False)
+            self.profiler.end_timer("volume_fraction_normalization")
+            
+            # Update fields with normalized values
+            if phi_hat_normalized is not None:
+                self.field_manager.set_cell_fields(phi_hat_normalized, nutrient_field_new)
         
         # Update time
         self.time += dt_used
@@ -261,8 +280,15 @@ class TumorGrowthSimulator:
         step_time = self.profiler.timings["total_step"][-1] if self.profiler.timings["total_step"] else 0
         self.step_times.append(step_time)
         
-        total_cells = np.sum(phi_hat_new)
+        # Get the final normalized fields for statistics
+        phi_hat_final, _ = self.field_manager.get_cell_fields()
+        total_cells = np.sum(phi_hat_final)
         self.total_cells.append(total_cells)
+        
+        # Check volume fraction constraints and log if there are issues
+        is_valid, max_deviation, mean_deviation = self.field_manager.check_volume_fraction_constraints()
+        if not is_valid:  # Warn if there are negative values or overflow
+            print(f"Warning: Volume fraction constraint violation - Max deviation: {max_deviation:.6f}, Mean deviation: {mean_deviation:.6f}")
         
         return success
     
@@ -431,4 +457,214 @@ class TumorGrowthSimulator:
             "performance_summary": self.get_performance_summary()
         }
         
+        return simulation_data
+
+    def run_and_save_simulation(self, total_steps, save_interval=1, output_dir=None, 
+                               initial_conditions=None, profile_interval=0, 
+                               save_physics_fields=True, save_plots=False):
+        """
+        Run simulation with customizable parameters and save all field data for later plotting.
+        
+        Args:
+            total_steps: Total number of simulation steps to run
+            save_interval: How often to save data (every nth step, default=1 for every step)
+            output_dir: Directory to save simulation data (defaults to self.output_dir)
+            initial_conditions: Optional initial conditions dictionary
+            profile_interval: How often to print detailed timing breakdown (0 to disable)
+            save_physics_fields: Whether to save physics fields (pressure, velocity, etc.)
+            save_plots: Whether to save plots during simulation (can be slow)
+            
+        Returns:
+            simulation_data: Dictionary containing simulation results and metadata
+        """
+        if output_dir is None:
+            output_dir = self.output_dir
+        else:
+            output_dir = Path(output_dir)
+        
+        # Create output directory
+        os.makedirs(output_dir, exist_ok=True)
+        
+        print(f"Starting tumor growth simulation with save/load functionality...")
+        print(f"Grid size: {self.field_manager.grid}")
+        print(f"Number of populations: {self.field_manager.M}")
+        print(f"Total time steps: {total_steps}")
+        print(f"Save interval: {save_interval}")
+        print(f"Time step size: {self.integrator.dt}")
+        print(f"Output directory: {output_dir}")
+        if profile_interval > 0:
+            print(f"Profiling enabled - detailed breakdown every {profile_interval} steps")
+        
+        # Initialize fields using field manager
+        self.initialize_fields(initial_conditions)
+        
+        # Initialize storage for saved data
+        saved_steps = []
+        saved_times = []
+        saved_phi_hat = []
+        saved_nutrient_fields = []
+        saved_physics_data = []
+        
+        # Main simulation loop
+        for step in range(1, total_steps + 1):
+            # Perform simulation step
+            success = self.step()
+            
+            if not success:
+                print(f"Warning: Step {step} failed, retrying with smaller time step")
+                continue
+            
+            # Save data at specified intervals
+            if step % save_interval == 0:
+                # Get current fields
+                phi_hat, nutrient_field = self.field_manager.get_cell_fields()
+                
+                # Store basic data
+                saved_steps.append(step)
+                saved_times.append(self.time)
+                saved_phi_hat.append(phi_hat.copy())
+                saved_nutrient_fields.append(nutrient_field.copy())
+                
+                # Store physics data if requested
+                if save_physics_fields:
+                    physics_data = {
+                        "pressure": self.field_manager.pressure.copy(),
+                        "velocity": self.field_manager.velocity.copy(),
+                        "energy_derivative": self.field_manager.energy_derivative.copy(),
+                        "mass_flux": self.field_manager.mass_flux.copy()
+                    }
+                    saved_physics_data.append(physics_data)
+                
+                # Save plots if requested
+                if save_plots:
+                    self.save_plots(step)
+                
+                print(f"Saved data for step {step}/{total_steps}, Time: {self.time:.3f}")
+            
+            # Print progress and profiling info
+            if step % 10 == 0:
+                phi_hat, _ = self.field_manager.get_cell_fields()
+                total_cells = np.sum(phi_hat)
+                avg_step_time = np.mean(self.step_times[-10:])
+                print(f"Step {step}/{total_steps}, Time: {self.time:.3f}, "
+                      f"Total cells: {total_cells:.3f}, Avg step time: {avg_step_time:.3f}s")
+                
+                # Print detailed profiling breakdown
+                if profile_interval > 0 and step % profile_interval == 0:
+                    self.profiler.print_step_summary(step)
+        
+        print(f"Simulation completed!")
+        print(f"Final time: {self.time:.3f}")
+        print(f"Average step time: {np.mean(self.step_times):.3f}s")
+        print(f"Saved {len(saved_steps)} data points")
+        
+        # Print final performance summary
+        self.profiler.print_final_summary()
+        
+        # Prepare simulation data for return
+        simulation_data = {
+            "metadata": {
+                "total_steps": total_steps,
+                "save_interval": save_interval,
+                "final_time": self.time,
+                "grid_size": self.field_manager.grid,
+                "num_populations": self.field_manager.M,
+                "time_step": self.integrator.dt,
+                "output_dir": str(output_dir),
+                "saved_steps": saved_steps,
+                "saved_times": saved_times
+            },
+            "field_data": {
+                "phi_hat": saved_phi_hat,
+                "nutrient_fields": saved_nutrient_fields
+            },
+            "performance": {
+                "step_times": self.step_times,
+                "total_cells": self.total_cells,
+                "performance_summary": self.get_performance_summary()
+            }
+        }
+        
+        # Add physics data if saved
+        if save_physics_fields and saved_physics_data:
+            simulation_data["physics_data"] = saved_physics_data
+        
+        # Save complete simulation data to file
+        simulation_file = output_dir / "simulation_data.npz"
+        self._save_simulation_data(simulation_data, simulation_file)
+        print(f"Complete simulation data saved to {simulation_file}")
+        
+        return #simulation_data
+    
+    def _save_simulation_data(self, simulation_data, filepath):
+        """
+        Save simulation data to compressed numpy file.
+        
+        Args:
+            simulation_data: Dictionary containing simulation data
+            filepath: Path to save the data
+        """
+        # Convert lists to arrays for efficient storage
+        save_dict = {
+            "metadata": simulation_data["metadata"],
+            "phi_hat": np.array(simulation_data["field_data"]["phi_hat"]),
+            "nutrient_fields": np.array(simulation_data["field_data"]["nutrient_fields"]),
+            "step_times": np.array(simulation_data["performance"]["step_times"]),
+            "total_cells": np.array(simulation_data["performance"]["total_cells"])
+        }
+        
+        # Add physics data if available
+        if "physics_data" in simulation_data:
+            physics_data = simulation_data["physics_data"]
+            save_dict.update({
+                "pressure": np.array([p["pressure"] for p in physics_data]),
+                "velocity": np.array([p["velocity"] for p in physics_data]),
+                "energy_derivative": np.array([p["energy_derivative"] for p in physics_data]),
+                "mass_flux": np.array([p["mass_flux"] for p in physics_data])
+            })
+        
+        # Save with compression
+        np.savez_compressed(filepath, **save_dict)
+    
+    def load_simulation_data(self, filepath):
+        """
+        Load simulation data from saved file.
+        
+        Args:
+            filepath: Path to the saved simulation data file
+            
+        Returns:
+            simulation_data: Dictionary containing loaded simulation data
+        """
+        print(f"Loading simulation data from {filepath}...")
+        
+        # Load data
+        data = np.load(filepath, allow_pickle=True)
+        
+        # Reconstruct simulation data structure
+        simulation_data = {
+            "metadata": data["metadata"].item(),
+            "field_data": {
+                "phi_hat": data["phi_hat"],
+                "nutrient_fields": data["nutrient_fields"]
+            },
+            "performance": {
+                "step_times": data["step_times"],
+                "total_cells": data["total_cells"]
+            }
+        }
+        
+        # Add physics data if available
+        if "pressure" in data:
+            simulation_data["physics_data"] = []
+            for i in range(len(data["pressure"])):
+                physics_data = {
+                    "pressure": data["pressure"][i],
+                    "velocity": data["velocity"][i],
+                    "energy_derivative": data["energy_derivative"][i],
+                    "mass_flux": data["mass_flux"][i]
+                }
+                simulation_data["physics_data"].append(physics_data)
+        
+        print(f"Loaded simulation data with {len(simulation_data['field_data']['phi_hat'])} saved steps")
         return simulation_data

@@ -99,6 +99,86 @@ class FieldManager:
         self.phi_hat = phi_hat
         self.nutrient_field = nutrient_field
 
+    def normalize_volume_fractions(self, add_host_field=False):
+        """
+        Normalize volume fractions to ensure they are bounded by 1 at each spatial point.
+        Only normalizes regions where there are actually cells (total density > 0).
+        
+        Args:
+            add_host_field: Whether to add a host field (currently not implemented)
+            
+        Returns:
+            phi_hat_normalized: Normalized cell fraction fields
+        """
+        if self.phi_hat is None:
+            return None
+        
+        # Ensure all fractions are non-negative
+        phi_hat = np.clip(self.phi_hat, 0.0, 1.0)
+        
+        # Calculate total cell fraction at each spatial point
+        phi_T = np.sum(phi_hat, axis=0)  # Shape: (nx, ny, nz)
+        
+        # Only normalize regions where there are actually cells (total density > 0)
+        # and where the total density significantly exceeds 1 (to prevent over-saturation)
+        cell_mask = phi_T > 0  # Regions with cells
+        overflow_mask = phi_T > 1.01  # Regions where total density significantly exceeds 1 (1% tolerance)
+        
+        # Combine masks: only normalize where there are cells AND they overflow
+        normalize_mask = cell_mask & overflow_mask
+        
+        if np.any(normalize_mask):
+            # Create scaling factor to normalize to sum = 1 only where needed
+            scaling = np.ones_like(phi_T)
+            scaling[normalize_mask] = 1.0 / phi_T[normalize_mask]
+            
+            # Apply scaling to all cell types
+            phi_hat_normalized = phi_hat * scaling[None, :, :, :]
+        else:
+            phi_hat_normalized = phi_hat.copy()
+        
+        # Update the stored fields
+        self.phi_hat = phi_hat_normalized
+        
+        return phi_hat_normalized
+
+    def check_volume_fraction_constraints(self, tolerance=1e-6):
+        """
+        Check if volume fraction constraints are satisfied.
+        
+        Args:
+            tolerance: Tolerance for checking if sum is bounded by 1
+            
+        Returns:
+            is_valid: Boolean indicating if constraints are satisfied
+            max_deviation: Maximum deviation from sum = 1 (only for regions with cells)
+            mean_deviation: Mean deviation from sum = 1 (only for regions with cells)
+        """
+        if self.phi_hat is None:
+            return False, 0.0, 0.0
+        
+        phi_T = np.sum(self.phi_hat, axis=0)
+        
+        # Check if any values are negative
+        has_negative = np.any(self.phi_hat < 0)
+        
+        # Check deviations from sum = 1 only in regions where there are cells
+        cell_mask = phi_T > 0
+        if np.any(cell_mask):
+            deviations = np.abs(phi_T[cell_mask] - 1.0)
+            max_deviation = np.max(deviations)
+            mean_deviation = np.mean(deviations)
+        else:
+            max_deviation = 0.0
+            mean_deviation = 0.0
+        
+        # Check if any regions significantly exceed 1 (overflow)
+        has_overflow = np.any(phi_T > 1.01 + tolerance)
+        
+        is_valid = not has_negative and not has_overflow
+        
+        return is_valid, max_deviation, mean_deviation
+
 
 
 
