@@ -3,6 +3,9 @@ import numpy as np
 from pathlib import Path
 import yaml
 
+from src.growkit.Fields.InitialConditions.InitialConditions import InitialConditions
+from src.growkit.PhysicsEngine.VectorizedCellDynamics import VectorizedCellDynamics
+
 class FieldManager:
     def __init__(self, cfg_path: str):
 
@@ -28,6 +31,7 @@ class FieldManager:
         self.velocity = np.zeros((3,) + self.grid, dtype=np.float32)  # Velocity field (ux, uy, uz)
         self.energy_derivative = np.zeros(self.grid, dtype=np.float32)  # Adhesion energy derivative field (scalar)
         self.mass_flux = np.zeros((self.M, 3) + self.grid, dtype=np.float32)  # Mass flux fields (M populations, 3 components each)
+        self.source_terms = np.zeros((self.M,) + self.grid, dtype=np.float32)  # Source terms (growth/death) for all populations
 
     def initialize_fields(self, initial_conditions=None):
         """
@@ -38,7 +42,6 @@ class FieldManager:
         """
         if initial_conditions is None:
             # Use the new InitialConditions class
-            from src.growkit.Fields.InitialConditions.InitialConditions import InitialConditions
             ic_manager = InitialConditions(self.cfg)
             self.phi_hat, self.nutrient_field = ic_manager.initialize_cell_fields()
         else:
@@ -48,25 +51,26 @@ class FieldManager:
                 self.nutrient_field = initial_conditions["nutrient"].copy()
             else:
                 # Initialize nutrient field using the new system
-                from src.growkit.Fields.InitialConditions.InitialConditions import InitialConditions
                 ic_manager = InitialConditions(self.cfg)
                 _, self.nutrient_field = ic_manager.initialize_cell_fields()
 
-    def update_physics_fields(self, phi_hat, nutrient_field):
+    def update_physics_fields(self, phi_hat, nutrient_field, cell_dynamics=None, source_terms=None):
         """
         Update physics fields based on current cell and nutrient fields.
         
         Args:
             phi_hat: Current cell fraction fields
             nutrient_field: Current nutrient field
+            cell_dynamics: Optional pre-initialized VectorizedCellDynamics instance
+            source_terms: Optional pre-computed source terms
         """
         # Update stored fields
         self.phi_hat = phi_hat
         self.nutrient_field = nutrient_field
         
-        # Compute physics fields using the physics engine
-        from src.growkit.PhysicsEngine import VectorizedCellDynamics
-        cell_dynamics = VectorizedCellDynamics(self.cfg, self.cfg["populations"], self)
+        # Use provided cell_dynamics or create new one
+        if cell_dynamics is None:
+            cell_dynamics = VectorizedCellDynamics(self.cfg, self.cfg["populations"], self)
         
         # Compute energy derivative
         phi_T = np.sum(phi_hat, axis=0)
@@ -77,6 +81,10 @@ class FieldManager:
         
         # Compute mass fluxes (this will update mass_flux in field_manager)
         cell_dynamics.compute_mass_fluxes(phi_hat, self.dx, self.energy_derivative)
+        
+        # Store source terms if provided
+        if source_terms is not None:
+            self.source_terms = source_terms
 
     def get_cell_fields(self):
         """

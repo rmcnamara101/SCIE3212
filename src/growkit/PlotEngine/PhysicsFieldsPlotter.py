@@ -632,12 +632,18 @@ class PhysicsFieldsPlotter:
                     self.velocity = physics["velocity"]
                     self.energy_derivative = physics["energy_derivative"]
                     self.mass_flux = physics["mass_flux"]
+                    # Load source terms if available
+                    if "source_terms" in physics:
+                        self.source_terms = physics["source_terms"]
+                    else:
+                        self.source_terms = np.zeros((self.M,) + self.grid)
                 else:
                     # Initialize empty physics fields
                     self.pressure = np.zeros(self.grid)
                     self.velocity = np.zeros((3,) + self.grid)
                     self.energy_derivative = np.zeros(self.grid)
                     self.mass_flux = np.zeros((self.M, 3) + self.grid)
+                    self.source_terms = np.zeros((self.M,) + self.grid)
         
         # Create mock field manager
         field_manager = MockFieldManager(simulation_data, step_idx)
@@ -918,4 +924,209 @@ class PhysicsFieldsPlotter:
             cmap=cmap, output_dir=output_dir, save_plot=save_plot, show_plot=show_plot,
             add_contours=add_contours, contour_colors=contour_colors,
             contour_levels=contour_levels, contour_linewidths=contour_linewidths
+        )
+    
+    def plot_source_terms(self, population_idx=0, step=0, z_slice=None, cmap="RdBu_r", 
+                         alpha=0.8, output_dir=None, save_plot=False, show_plot=True,
+                         add_boundary_contours=False, tumor_boundary_level=0.5,
+                         boundary_color='darkblue', tumor_boundary_color='black'):
+        """
+        Plot source terms (growth/death) for a specific population.
+        
+        Args:
+            population_idx: Index of population to plot
+            step: Current simulation step for filename
+            z_slice: Z-slice to plot (defaults to center)
+            cmap: Colormap for the plot (RdBu_r for red=growth, blue=death)
+            alpha: Transparency of the surface
+            output_dir: Directory to save plot
+            save_plot: Whether to save the plot
+            show_plot: Whether to display the plot
+            add_boundary_contours: Whether to add tumor boundary contours
+            tumor_boundary_level: Density level for tumor boundary contour
+            boundary_color: Color for boundary region contour
+            tumor_boundary_color: Color for tumor boundary contour
+        """
+        if population_idx >= self.M:
+            print(f"Warning: Population index {population_idx} out of range (0-{self.M-1})")
+            return
+            
+        nx, ny, nz = self.grid
+        if z_slice is None:
+            z_slice = nz // 2
+        
+        # Create coordinate grids
+        x = np.arange(nx) * self.dx
+        y = np.arange(ny) * self.dx
+        X, Y = np.meshgrid(x, y, indexing='ij')
+        source_slice = self.field_manager.source_terms[population_idx, :, :, z_slice]
+        
+        # Create plot
+        fig = plt.figure(figsize=(10, 8))
+        ax = fig.add_subplot(111, projection='3d')
+        
+        surf = ax.plot_surface(X, Y, source_slice, cmap=cmap, alpha=alpha)
+        ax.set_title(f'Source Terms - {self.labels[population_idx]} (z={z_slice})')
+        ax.set_xlabel('X')
+        ax.set_ylabel('Y')
+        ax.set_zlabel('Source Term')
+        fig.colorbar(surf, ax=ax, shrink=0.5, aspect=5, label='Growth/Death Rate')
+        
+        # Add tumor boundary contours if requested
+        if add_boundary_contours:
+            self._add_tumor_contours(ax, population_idx, z_slice, 
+                                   [tumor_boundary_level], [tumor_boundary_color], [2])
+        
+        # Save plot if requested
+        if save_plot and output_dir:
+            os.makedirs(output_dir, exist_ok=True)
+            filename = f"source_terms_pop{population_idx}_step{step:06d}.png"
+            filepath = os.path.join(output_dir, filename)
+            plt.savefig(filepath, dpi=300, bbox_inches='tight')
+            print(f"Saved source terms plot to {filepath}")
+        
+        if show_plot:
+            plt.show()
+        else:
+            plt.close()
+    
+    def plot_nutrient_field(self, step=0, z_slice=None, cmap="viridis", alpha=0.8, 
+                           output_dir=None, save_plot=False, show_plot=True,
+                           add_boundary_contours=False, tumor_boundary_level=0.5,
+                           boundary_color='darkblue', tumor_boundary_color='black'):
+        """
+        Plot nutrient field as 3D surface plot.
+        
+        Args:
+            step: Current simulation step for filename
+            z_slice: Z-slice to plot (defaults to center)
+            cmap: Colormap for the plot
+            alpha: Transparency of the surface
+            output_dir: Directory to save plot
+            save_plot: Whether to save the plot
+            show_plot: Whether to display the plot
+            add_boundary_contours: Whether to add tumor boundary contours
+            tumor_boundary_level: Density level for tumor boundary contour
+            boundary_color: Color for boundary region contour
+            tumor_boundary_color: Color for tumor boundary contour
+        """
+        nx, ny, nz = self.grid
+        if z_slice is None:
+            z_slice = nz // 2
+        
+        # Create coordinate grids
+        x = np.arange(nx) * self.dx
+        y = np.arange(ny) * self.dx
+        X, Y = np.meshgrid(x, y, indexing='ij')
+        nutrient_slice = self.field_manager.nutrient_field[:, :, z_slice]
+        
+        # Create plot
+        fig = plt.figure(figsize=(10, 8))
+        ax = fig.add_subplot(111, projection='3d')
+        
+        surf = ax.plot_surface(X, Y, nutrient_slice, cmap=cmap, alpha=alpha)
+        ax.set_title(f'Nutrient Field (z={z_slice})')
+        ax.set_xlabel('X')
+        ax.set_ylabel('Y')
+        ax.set_zlabel('Nutrient Concentration')
+        fig.colorbar(surf, ax=ax, shrink=0.5, aspect=5, label='Concentration')
+        
+        # Add tumor boundary contours if requested
+        if add_boundary_contours:
+            # Use the first population for contours (usually the main tumor population)
+            self._add_tumor_contours(ax, 0, z_slice, 
+                                   [tumor_boundary_level], [tumor_boundary_color], [2])
+        
+        # Save plot if requested
+        if save_plot and output_dir:
+            os.makedirs(output_dir, exist_ok=True)
+            filename = f"nutrient_field_step{step:06d}.png"
+            filepath = os.path.join(output_dir, filename)
+            plt.savefig(filepath, dpi=300, bbox_inches='tight')
+            print(f"Saved nutrient field plot to {filepath}")
+        
+        if show_plot:
+            plt.show()
+        else:
+            plt.close()
+    
+    def plot_source_terms_from_saved(self, simulation_data, population_idx=0, step_idx=0, 
+                                   z_slice=None, cmap="RdBu_r", alpha=0.8, output_dir=None, 
+                                   save_plot=False, show_plot=True, add_boundary_contours=False, 
+                                   tumor_boundary_level=0.5, boundary_color='darkblue', 
+                                   tumor_boundary_color='black'):
+        """
+        Plot source terms from saved simulation data.
+        
+        Args:
+            simulation_data: Dictionary containing simulation data
+            population_idx: Index of population to plot
+            step_idx: Index of the saved step to plot
+            z_slice: Z-slice to plot (defaults to center)
+            cmap: Colormap for the plot
+            alpha: Transparency of the surface
+            output_dir: Directory to save plot
+            save_plot: Whether to save the plot
+            show_plot: Whether to display the plot
+            add_boundary_contours: Whether to add tumor boundary contours
+            tumor_boundary_level: Density level for tumor boundary contour
+            boundary_color: Color for boundary region contour
+            tumor_boundary_color: Color for tumor boundary contour
+        """
+        # Get step information
+        step = simulation_data["metadata"]["saved_steps"][step_idx]
+        time = simulation_data["metadata"]["saved_times"][step_idx]
+        
+        print(f"Plotting source terms for population {population_idx}, step {step} (time={time:.3f}) from saved data...")
+        
+        # Create plotter for this step
+        plotter = self.from_simulation_data(simulation_data, step_idx)
+        
+        # Plot source terms
+        plotter.plot_source_terms(
+            population_idx=population_idx, step=step, z_slice=z_slice, cmap=cmap, 
+            alpha=alpha, output_dir=output_dir, save_plot=save_plot, show_plot=show_plot,
+            add_boundary_contours=add_boundary_contours, 
+            tumor_boundary_level=tumor_boundary_level,
+            boundary_color=boundary_color, 
+            tumor_boundary_color=tumor_boundary_color
+        )
+    
+    def plot_nutrient_field_from_saved(self, simulation_data, step_idx=0, z_slice=None, 
+                                     cmap="viridis", alpha=0.8, output_dir=None, 
+                                     save_plot=False, show_plot=True, add_boundary_contours=False, 
+                                     tumor_boundary_level=0.5, boundary_color='darkblue', 
+                                     tumor_boundary_color='black'):
+        """
+        Plot nutrient field from saved simulation data.
+        
+        Args:
+            simulation_data: Dictionary containing simulation data
+            step_idx: Index of the saved step to plot
+            z_slice: Z-slice to plot (defaults to center)
+            cmap: Colormap for the plot
+            alpha: Transparency of the surface
+            output_dir: Directory to save plot
+            save_plot: Whether to save the plot
+            show_plot: Whether to display the plot
+            add_boundary_contours: Whether to add tumor boundary contours
+            tumor_boundary_level: Density level for tumor boundary contour
+            boundary_color: Color for boundary region contour
+            tumor_boundary_color: Color for tumor boundary contour
+        """
+        # Get step information
+        step = simulation_data["metadata"]["saved_steps"][step_idx]
+        time = simulation_data["metadata"]["saved_times"][step_idx]
+        
+        print(f"Plotting nutrient field for step {step} (time={time:.3f}) from saved data...")
+        
+        # Create plotter for this step
+        plotter = self.from_simulation_data(simulation_data, step_idx)
+        
+        # Plot nutrient field
+        plotter.plot_nutrient_field(
+            step=step, z_slice=z_slice, cmap=cmap, alpha=alpha, output_dir=output_dir, 
+            save_plot=save_plot, show_plot=show_plot, add_boundary_contours=add_boundary_contours,
+            tumor_boundary_level=tumor_boundary_level, boundary_color=boundary_color,
+            tumor_boundary_color=tumor_boundary_color
         )

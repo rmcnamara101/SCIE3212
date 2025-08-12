@@ -1,26 +1,30 @@
 """
 Vectorized Solid Velocity Module
 
-This module computes the solid velocity vector field in a vectorized form.
-The solid velocity is defined as:
+This module computes the solid velocity field using the pressure gradient and adhesion energy.
+The velocity is computed as:
 
 u = -(∇p + (δE/δφ_T) ∇φ_T)
 
-where p is the pressure field, δE/δφ_T is the adhesion energy derivative,
-and φ_T is the total cell density.
+where:
+- p: pressure field (solved from Poisson equation)
+- δE/δφ_T: adhesion energy derivative
+- φ_T: total cell density
 
 Author: Riley Jae McNamara
 Date: 2025-02-19
 """
 
 import numpy as np
+import time
+from functools import lru_cache
 from src.growkit.MathEngine.Operators import gradient
 from src.growkit.Integrator.PressureSolver import PressureSolver
 
 
 class VectorizedSolidVelocity:
     """
-    Vectorized solid velocity computer that handles velocity field computation.
+    Vectorized solid velocity computer that handles all populations simultaneously.
     """
     
     def __init__(self, cfg, populations, field_manager=None):
@@ -38,12 +42,44 @@ class VectorizedSolidVelocity:
         self.M = len(self.labels)
         self.field_manager = field_manager
         
-        # Initialize pressure solver with flexible parameter extraction
+        # Initialize pressure solver
         self.pressure_solver = self._create_pressure_solver(cfg)
+        
+        # Cache for pressure solutions to avoid redundant solves during RK4
+        self._pressure_cache = {}
+        self._cache_hits = 0
+        self._cache_misses = 0
+    
+    def _compute_state_hash(self, phi_hat, nutrient_field, energy_deriv):
+        """
+        Compute a hash of the current state for caching.
+        Uses a simplified hash based on key features to avoid expensive full comparisons.
+        """
+        # Compute total cell density
+        phi_T = np.sum(phi_hat, axis=0)
+        
+        # Use key statistics for hashing (much faster than full array comparison)
+        phi_T_mean = np.mean(phi_T)
+        phi_T_std = np.std(phi_T)
+        phi_T_max = np.max(phi_T)
+        nutrient_mean = np.mean(nutrient_field)
+        energy_mean = np.mean(energy_deriv) if energy_deriv is not None else 0.0
+        
+        # Create a more aggressive hash for RK4 intermediate steps
+        # Round to fewer decimal places to catch more similar states
+        state_hash = hash((
+            round(phi_T_mean, 4),  # Reduced precision for more cache hits
+            round(phi_T_std, 4), 
+            round(phi_T_max, 4),
+            round(nutrient_mean, 4),
+            round(energy_mean, 4)
+        ))
+        
+        return state_hash
     
     def compute_solid_velocity(self, phi_hat, nutrient_field, dx, energy_deriv=None):
         """
-        Compute solid velocity field.
+        Compute solid velocity field with caching for RK4 efficiency.
         
         Args:
             phi_hat: Stacked cell fraction fields (M, nx, ny, nz)
@@ -67,10 +103,31 @@ class VectorizedSolidVelocity:
         if len(phi_hat) < 2:
             raise ValueError("Need at least 2 populations for pressure solver")
         
-        # Solve for pressure using the stacked phi_hat
-        pressure = self.pressure_solver.solve_pressure(
-            phi_hat, nutrient_field, dx, energy_deriv=energy_deriv
-        )
+        # Check cache for similar state
+        state_hash = self._compute_state_hash(phi_hat, nutrient_field, energy_deriv)
+        
+        if state_hash in self._pressure_cache:
+            # Cache hit - reuse pressure solution
+            self._cache_hits += 1
+            pressure = self._pressure_cache[state_hash]
+            print(f"Pressure solver cache hit! (hits: {self._cache_hits}, misses: {self._cache_misses})")
+        else:
+            # Cache miss - solve pressure equation
+            self._cache_misses += 1
+            time_start = time.time()
+            pressure = self.pressure_solver.solve_pressure(
+                phi_hat, nutrient_field, dx, energy_deriv=energy_deriv
+            )
+            time_end = time.time()
+            print(f"Pressure solver time: {time_end - time_start} seconds (cache miss)")
+            
+            # Cache the result (limit cache size to prevent memory issues)
+            if len(self._pressure_cache) < 20:  # Increased cache size for RK4
+                self._pressure_cache[state_hash] = pressure
+            else:
+                # Clear cache if it gets too large
+                self._pressure_cache.clear()
+                self._pressure_cache[state_hash] = pressure
         
         # Store pressure in field manager if available
         if self.field_manager is not None:

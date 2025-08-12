@@ -5,12 +5,13 @@ This module integrates the separated physics components (Energy, MassFlux, Solid
 to compute the complete cell dynamics in a vectorized form following the same pattern
 as SourceConstructor and FieldManager. The dynamics equation is:
 
-dφ_hat/dt = -∇·(u ⊗ φ_hat) - ∇·J_hat
+dφ_hat/dt = -∇·(u ⊗ φ_hat) - ∇·J_hat + A_hat
 
 where:
 - φ_hat: stacked cell fraction fields for all M populations
 - u: solid velocity field (same for all populations)
 - J_hat: stacked mass flux fields for all M populations
+- A_hat: source terms (growth/death) for all populations
 - ⊗: outer product (velocity applied to each population)
 
 Author: Riley Jae McNamara
@@ -19,6 +20,8 @@ Date: 2025-02-19
 
 import numpy as np
 from numba import njit
+import time
+
 from src.growkit.MathEngine.Operators import _gradient_neumann
 
 
@@ -27,7 +30,7 @@ class VectorizedCellDynamics:
     Vectorized cell dynamics computer that handles all populations simultaneously.
     """
     
-    def __init__(self, cfg, populations, field_manager=None):
+    def __init__(self, cfg, populations, field_manager=None, source_constructor=None):
         """
         Initialize the vectorized cell dynamics computer.
         
@@ -35,12 +38,14 @@ class VectorizedCellDynamics:
             cfg: Configuration dictionary
             populations: Population definitions from YAML
             field_manager: Optional FieldManager instance for storing pressure/velocity
+            source_constructor: Optional SourceConstructor instance for growth/death terms
         """
         self.cfg = cfg
         self.pops = populations
         self.labels = list(populations.keys())
         self.M = len(self.labels)
         self.field_manager = field_manager
+        self.source_constructor = source_constructor
         
         # Initialize separated physics components
         from src.growkit.PhysicsEngine.Energy.VectorizedEnergy import VectorizedEnergy
@@ -50,6 +55,30 @@ class VectorizedCellDynamics:
         self.energy_computer = VectorizedEnergy(cfg, populations, field_manager)
         self.mass_flux_computer = VectorizedMassFlux(cfg, populations, field_manager)
         self.velocity_computer = VectorizedSolidVelocity(cfg, populations, field_manager)
+        
+        # Pre-compile Numba functions to avoid JIT compilation overhead
+        self._precompile_numba_functions()
+    
+    def _precompile_numba_functions(self):
+        """Pre-compile Numba functions to avoid JIT compilation overhead."""
+        print("Pre-compiling Numba functions...")
+        
+        # Create dummy arrays for compilation
+        dummy_shape = (3, 10, 10, 10)  # Small arrays for compilation
+        dummy_phi_hat = np.random.random(dummy_shape).astype(np.float32)
+        dummy_ux = np.random.random((10, 10, 10)).astype(np.float32)
+        dummy_uy = np.random.random((10, 10, 10)).astype(np.float32)
+        dummy_uz = np.random.random((10, 10, 10)).astype(np.float32)
+        dummy_J_hat = np.random.random((3, 3, 10, 10, 10)).astype(np.float32)
+        dummy_A_hat = np.random.random(dummy_shape).astype(np.float32)
+        dummy_dx = 0.2
+        
+        # Compile the functions
+        try:
+            _ = compute_cell_dynamics_numba(dummy_phi_hat, dummy_ux, dummy_uy, dummy_uz, dummy_J_hat, dummy_A_hat, dummy_dx)
+            print("Numba functions compiled successfully!")
+        except Exception as e:
+            print(f"Warning: Numba compilation failed: {e}")
     
     def compute_energy_derivative(self, phi_T, dx):
         """
@@ -92,7 +121,7 @@ class VectorizedCellDynamics:
         """
         return self.mass_flux_computer.compute_mass_fluxes(phi_hat, dx, energy_deriv)
     
-    def compute_dynamics(self, phi_hat, nutrient_field, dx):
+    def compute_dynamics(self, phi_hat, nutrient_field, dx, source_terms=None):
         """
         Compute cell dynamics derivatives for all populations.
         
@@ -100,26 +129,76 @@ class VectorizedCellDynamics:
             phi_hat: Stacked cell fraction fields (M, nx, ny, nz)
             nutrient_field: Nutrient concentration field
             dx: Grid spacing
+            source_terms: Pre-computed source terms (optional, for efficiency)
             
         Returns:
             dphi_hat: Derivatives of stacked cell fraction fields (M, nx, ny, nz)
         """
+        # Compute total cell density once
+        phi_T = np.sum(phi_hat, axis=0)
+        
+        # Compute energy derivative once and reuse
+        time_start = time.time()
+        energy_deriv = self.compute_energy_derivative(phi_T, dx)
+        time_end = time.time()
+        print(f"Energy derivative computation time: {time_end - time_start} seconds")
+        
         # Compute solid velocity
         ux, uy, uz = self.compute_solid_velocity(phi_hat, nutrient_field, dx)
         ux, uy, uz = -ux, -uy, -uz
         
-        # Compute mass fluxes
-        J_hat = self.compute_mass_fluxes(phi_hat, dx)
+        # Compute mass fluxes (pass precomputed energy derivative)
+        time_start = time.time()
+        J_hat = self.compute_mass_fluxes(phi_hat, dx, energy_deriv)
+        time_end = time.time()
+        print(f"Mass flux computation time: {time_end - time_start} seconds")
+        
+        # Use provided source terms or compute them if not available
+        if source_terms is None:
+            if self.source_constructor is not None:
+                time_start = time.time()
+                source_terms = self.source_constructor.compute_source_vector_vectorized(phi_hat, nutrient_field)
+                time_end = time.time()
+                print(f"Source terms computation time: {time_end - time_start} seconds")
+            else:
+                # If no source constructor, create zero source terms
+                source_terms = np.zeros_like(phi_hat)
         
         # Compute dynamics using the vectorized approach
-        return compute_cell_dynamics_numba(phi_hat, ux, uy, uz, J_hat, dx)
+        time_start = time.time()
+        result = compute_cell_dynamics_numba(phi_hat, ux, uy, uz, J_hat, source_terms, dx)
+        time_end = time.time()
+        print(f"Cell dynamics computation time: {time_end - time_start} seconds")
+        
+        return result
+    
+    def compute_source_terms(self, phi_hat, nutrient_field):
+        """
+        Compute source terms (growth/death) for all populations.
+        This should be called once per time step, not for each RK4 coefficient.
+        
+        Args:
+            phi_hat: Stacked cell fraction fields (M, nx, ny, nz)
+            nutrient_field: Nutrient concentration field
+            
+        Returns:
+            A_hat: Source terms for all populations (M, nx, ny, nz)
+        """
+        if self.source_constructor is not None:
+            time_start = time.time()
+            A_hat = self.source_constructor.compute_source_vector_vectorized(phi_hat, nutrient_field)
+            time_end = time.time()
+            print(f"Source terms computation time: {time_end - time_start} seconds")
+            return A_hat
+        else:
+            return np.zeros_like(phi_hat)
 
 
 
 
 
 @njit
-def compute_cell_dynamics_numba(phi_hat, ux, uy, uz, J_hat, dx):
+def compute_cell_dynamics_numba(phi_hat, ux, uy, uz, J_hat, A_hat, dx):
     """
     Compute cell dynamics derivatives using Numba optimization.
     
@@ -127,6 +206,7 @@ def compute_cell_dynamics_numba(phi_hat, ux, uy, uz, J_hat, dx):
         phi_hat: Stacked cell fraction fields (M, nx, ny, nz)
         ux, uy, uz: Velocity components
         J_hat: Stacked mass flux fields (M, 3, nx, ny, nz)
+        A_hat: Source terms (growth/death) for all populations (M, nx, ny, nz)
         dx: Grid spacing
         
     Returns:
@@ -153,8 +233,11 @@ def compute_cell_dynamics_numba(phi_hat, ux, uy, uz, J_hat, dx):
                       _gradient_neumann(Jy, dx, 1) + 
                       _gradient_neumann(Jz, dx, 2))
         
-        # Total derivative
-        dphi_hat[i] = advection + mass_flux
+        # Source term: A_i (growth/death)
+        source_term = A_hat[i]
+        
+        # Total derivative: dφ_i/dt = -∇·(u φ_i) - ∇·J_i + A_i
+        dphi_hat[i] = advection + mass_flux + source_term
         
         # Clip for stability
         dphi_hat[i] = np.clip(dphi_hat[i], -1, 1)

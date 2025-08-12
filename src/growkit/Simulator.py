@@ -16,8 +16,10 @@ import yaml
 from collections import defaultdict
 import os
 
+# Pre-import all modules to avoid runtime import overhead
 from src.growkit.Fields.FieldManager import FieldManager
-from src.growkit.PhysicsEngine import VectorizedCellDynamics
+from src.growkit.PhysicsEngine.VectorizedCellDynamics import VectorizedCellDynamics
+from src.growkit.PhysicsEngine.Nutrient.NutrientField import NutrientField
 from src.growkit.ProductionEngine.SourceConstructor import SourceConstructor
 from src.growkit.Integrator.RK4Integrator import RK4Integrator, AdaptiveRK4Integrator
 
@@ -118,16 +120,15 @@ class TumorGrowthSimulator:
         # Initialize field manager
         self.field_manager = FieldManager(cfg_path)
         
-        # Initialize physics components
-        self.cell_dynamics = VectorizedCellDynamics(
-            self.cfg, self.cfg["populations"], self.field_manager
-        )
-        
         # Initialize source constructor for nutrient dynamics
         self.source_constructor = SourceConstructor(self.cfg, self.cfg["populations"])
         
+        # Initialize physics components
+        self.cell_dynamics = VectorizedCellDynamics(
+            self.cfg, self.cfg["populations"], self.field_manager, self.source_constructor
+        )
+        
         # Initialize nutrient field manager
-        from src.growkit.PhysicsEngine.Nutrient.NutrientField import NutrientField
         self.nutrient_manager = NutrientField(self.cfg, self.cfg["populations"])
         
         # Initialize integrator
@@ -164,7 +165,7 @@ class TumorGrowthSimulator:
         """
         self.field_manager.initialize_fields(initial_conditions)
     
-    def dynamics_function(self, phi_hat, nutrient_field, dx):
+    def dynamics_function(self, phi_hat, nutrient_field, dx, source_terms=None):
         """
         Wrapper function for cell dynamics computation.
         
@@ -172,11 +173,12 @@ class TumorGrowthSimulator:
             phi_hat: Cell fraction fields
             nutrient_field: Nutrient field
             dx: Grid spacing
+            source_terms: Pre-computed source terms (optional, for efficiency)
             
         Returns:
             dphi_hat: Cell dynamics derivatives
         """
-        return self.cell_dynamics.compute_dynamics(phi_hat, nutrient_field, dx)
+        return self.cell_dynamics.compute_dynamics(phi_hat, nutrient_field, dx, source_terms)
     
     def nutrient_function(self, phi_hat, nutrient_field, dx):
         """
@@ -207,11 +209,20 @@ class TumorGrowthSimulator:
         phi_hat, nutrient_field = self.field_manager.get_cell_fields()
         self.profiler.end_timer("field_retrieval")
         
+        # Compute source terms once per time step (not for each RK4 coefficient)
+        self.profiler.start_timer("source_terms_computation")
+        source_terms = self.cell_dynamics.compute_source_terms(phi_hat, nutrient_field)
+        self.profiler.end_timer("source_terms_computation")
+        
+        # Create a dynamics function that uses the pre-computed source terms
+        def dynamics_function_with_source(phi_hat, nutrient_field, dx):
+            return self.dynamics_function(phi_hat, nutrient_field, dx, source_terms)
+        
         # Perform RK4 step with nutrient update
         if isinstance(self.integrator, AdaptiveRK4Integrator):
             self.profiler.start_timer("adaptive_integration")
             phi_hat_new, dt_used, success = self.integrator.step_adaptive(
-                phi_hat, nutrient_field, self.field_manager.dx, self.dynamics_function
+                phi_hat, nutrient_field, self.field_manager.dx, dynamics_function_with_source
             )
             self.profiler.end_timer("adaptive_integration")
             
@@ -221,44 +232,21 @@ class TumorGrowthSimulator:
                     phi_hat_new, nutrient_field, self.field_manager.dx
                 )
                 self.profiler.end_timer("nutrient_update")
-                
-                # Update fields in field manager
-                self.profiler.start_timer("field_update")
-                self.field_manager.set_cell_fields(phi_hat_new, nutrient_field_new)
-                self.profiler.end_timer("field_update")
-                
-                # Update physics fields
-                self.profiler.start_timer("physics_fields_update")
-                self.field_manager.update_physics_fields(phi_hat_new, nutrient_field_new)
-                self.profiler.end_timer("physics_fields_update")
-                
-                # Normalize volume fractions after each time step
-                self.profiler.start_timer("volume_fraction_normalization")
-                phi_hat_normalized = self.field_manager.normalize_volume_fractions(add_host_field=False)
-                self.profiler.end_timer("volume_fraction_normalization")
-                
-                # Update fields with normalized values
-                if phi_hat_normalized is not None:
-                    self.field_manager.set_cell_fields(phi_hat_normalized, nutrient_field_new)
         else:
             self.profiler.start_timer("rk4_integration")
-            phi_hat_new, nutrient_field_new = self.integrator.step_with_nutrient_update(
+            phi_hat_new, nutrient_field_new = self.integrator.step_optimized(
                 phi_hat, nutrient_field, self.field_manager.dx,
-                self.dynamics_function, self.nutrient_function
+                dynamics_function_with_source, self.nutrient_function
             )
             self.profiler.end_timer("rk4_integration")
             
             success = True
             dt_used = self.integrator.dt
-            
-            # Update fields in field manager
-            self.profiler.start_timer("field_update")
-            self.field_manager.set_cell_fields(phi_hat_new, nutrient_field_new)
-            self.profiler.end_timer("field_update")
-            
-            # Update physics fields
+        
+        if success:
+            # Update physics fields (this also updates the field manager's stored fields)
             self.profiler.start_timer("physics_fields_update")
-            self.field_manager.update_physics_fields(phi_hat_new, nutrient_field_new)
+            self.field_manager.update_physics_fields(phi_hat_new, nutrient_field_new, self.cell_dynamics, source_terms)
             self.profiler.end_timer("physics_fields_update")
             
             # Normalize volume fractions after each time step
@@ -266,9 +254,11 @@ class TumorGrowthSimulator:
             phi_hat_normalized = self.field_manager.normalize_volume_fractions(add_host_field=False)
             self.profiler.end_timer("volume_fraction_normalization")
             
-            # Update fields with normalized values
+            # Update fields with normalized values (only if normalization was needed)
             if phi_hat_normalized is not None:
+                self.profiler.start_timer("field_update")
                 self.field_manager.set_cell_fields(phi_hat_normalized, nutrient_field_new)
+                self.profiler.end_timer("field_update")
         
         # Update time
         self.time += dt_used
@@ -531,7 +521,8 @@ class TumorGrowthSimulator:
                         "pressure": self.field_manager.pressure.copy(),
                         "velocity": self.field_manager.velocity.copy(),
                         "energy_derivative": self.field_manager.energy_derivative.copy(),
-                        "mass_flux": self.field_manager.mass_flux.copy()
+                        "mass_flux": self.field_manager.mass_flux.copy(),
+                        "source_terms": self.field_manager.source_terms.copy()
                     }
                     saved_physics_data.append(physics_data)
                 
@@ -620,7 +611,8 @@ class TumorGrowthSimulator:
                 "pressure": np.array([p["pressure"] for p in physics_data]),
                 "velocity": np.array([p["velocity"] for p in physics_data]),
                 "energy_derivative": np.array([p["energy_derivative"] for p in physics_data]),
-                "mass_flux": np.array([p["mass_flux"] for p in physics_data])
+                "mass_flux": np.array([p["mass_flux"] for p in physics_data]),
+                "source_terms": np.array([p["source_terms"] for p in physics_data])
             })
         
         # Save with compression
@@ -664,6 +656,9 @@ class TumorGrowthSimulator:
                     "energy_derivative": data["energy_derivative"][i],
                     "mass_flux": data["mass_flux"][i]
                 }
+                # Add source terms if available
+                if "source_terms" in data:
+                    physics_data["source_terms"] = data["source_terms"][i]
                 simulation_data["physics_data"].append(physics_data)
         
         print(f"Loaded simulation data with {len(simulation_data['field_data']['phi_hat'])} saved steps")

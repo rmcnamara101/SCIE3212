@@ -263,52 +263,37 @@ class SourceConstructor:
         Vectorized version of source vector computation for efficiency.
         
         Args:
-            phi_hat: Stacked cell fraction fields for all M populations
-            nutrient_field: Local nutrient concentration field
+            phi_hat: Stacked cell fraction fields for all M populations (M, nx, ny, nz)
+            nutrient_field: Local nutrient concentration field (nx, ny, nz)
             
         Returns:
-            A_hat: Source term vector for all populations
+            A_hat: Source term vector for all populations (M, nx, ny, nz)
         """
         M = self.M
         
-        # Reshape inputs for broadcasting
-        if phi_hat.ndim == 3:  # Single 3D field
-            phi_hat = phi_hat.reshape(1, *phi_hat.shape)
-            nutrient_field = nutrient_field.reshape(1, *nutrient_field.shape)
-        
         # Compute nutrient switches (vectorized)
         k = 5.0
-        # Handle the case where nutrient_field might be 3D or 4D
-        if nutrient_field.ndim == 3:
-            # Single 3D field, add batch dimension
-            nutrient_field_expanded = nutrient_field[None, :, :, :]
-        else:
-            # Already has batch dimension
-            nutrient_field_expanded = nutrient_field
-            
-        Theta = 0.5 * (1 + np.tanh(k * (nutrient_field_expanded[:, None, :, :, :] - self.nutrient_thresholds[None, :, None, None, None])))
+        # Use mean nutrient level for computing switches (simplified approach)
+        mean_nutrient = np.mean(nutrient_field)
+        Theta = 0.5 * (1 + np.tanh(k * (mean_nutrient - self.nutrient_thresholds)))
         
         # Compute necrotic feedback - always a global scalar
-        V_N = np.sum(phi_hat[:, -1])  # Total necrotic volume across all spatial dimensions
+        V_N = np.sum(phi_hat[-1])  # Total necrotic volume (assuming necrotic is last population)
         G_N = np.exp(-self.beta_N * V_N)  # G_N is a scalar
         
         # Compute proliferation-weighted populations
-        alpha_hat = self.lambda_[None, :, None, None, None] * phi_hat[:, :M]
+        alpha_hat = self.lambda_[:, None, None, None] * phi_hat  # (M, nx, ny, nz)
         
         # Apply nutrient modulation to death matrix
         D_modulated = self.D.copy()
         for i in range(M):
-            # Theta[:, i] is a spatial field, so we need to take the mean
-            D_modulated[i, i] *= np.mean(Theta[:, i])
+            D_modulated[i, i] *= Theta[i]
         
         # Compute source vector
         # Growth term: G_N * n * P * alpha_hat
-        # G_N is scalar, nutrient_field is 3D, alpha_hat is (M, nx, ny, nz)
-        # P is (M, M), alpha_hat is (M, nx, ny, nz)
-        # We want P * alpha_hat = (M, nx, ny, nz)
-        growth_term = (G_N * 
-                      nutrient_field[None, :, :, :] * 
-                      np.tensordot(self.P, alpha_hat, axes=([1], [0])))
+        # G_N is scalar, nutrient_field is (nx, ny, nz), alpha_hat is (M, nx, ny, nz)
+        # P is (M, M), we want P * alpha_hat = (M, nx, ny, nz)
+        growth_term = G_N * nutrient_field[None, :, :, :] * np.tensordot(self.P, alpha_hat, axes=([1], [0]))
         
         # Death term: D * phi_hat
         death_term = np.tensordot(D_modulated, phi_hat, axes=([1], [0]))
@@ -316,7 +301,7 @@ class SourceConstructor:
         # Combine terms
         A_hat = growth_term - death_term
         
-        return A_hat.squeeze()
+        return A_hat
 
 
 @njit
