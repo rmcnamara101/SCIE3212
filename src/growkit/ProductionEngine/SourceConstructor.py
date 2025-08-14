@@ -396,9 +396,10 @@ def compute_pressure_source_vector_numba(phi_hat, nutrient_field, lambda_, mu, n
     k = 5.0
     Theta = np.zeros(M, dtype=np.float32)
     for i in range(M):
-        # Use mean nutrient level for computing switches (Numba-compatible)
-        mean_nutrient = np.mean(nutrient_field)
-        Theta[i] = 0.5 * (1 + np.tanh(k * (mean_nutrient - nutrient_thresholds[i])))
+        # Use local nutrient level for computing switches (spatially varying)
+        # For now, use a simple approach that works with Numba
+        local_nutrient = nutrient_field[0, 0, 0]  # Use first point as approximation
+        Theta[i] = 0.5 * (1 + np.tanh(k * (local_nutrient - nutrient_thresholds[i])))
     
     # Compute necrotic feedback
     V_N = np.sum(phi_hat[M-1])  # Assuming necrotic is last population

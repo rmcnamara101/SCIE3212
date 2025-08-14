@@ -560,6 +560,7 @@ class TumorGrowthSimulator:
                 "final_time": self.time,
                 "grid_size": self.field_manager.grid,
                 "num_populations": self.field_manager.M,
+                "population_labels": self.field_manager.labels,  # Add population labels
                 "time_step": self.integrator.dt,
                 "output_dir": str(output_dir),
                 "saved_steps": saved_steps,
@@ -604,6 +605,10 @@ class TumorGrowthSimulator:
             "total_cells": np.array(simulation_data["performance"]["total_cells"])
         }
         
+        # Handle population labels (convert to object array for string storage)
+        if "population_labels" in simulation_data["metadata"]:
+            save_dict["population_labels"] = np.array(simulation_data["metadata"]["population_labels"], dtype=object)
+        
         # Add physics data if available
         if "physics_data" in simulation_data:
             physics_data = simulation_data["physics_data"]
@@ -634,8 +639,14 @@ class TumorGrowthSimulator:
         data = np.load(filepath, allow_pickle=True)
         
         # Reconstruct simulation data structure
+        metadata = data["metadata"].item()
+        
+        # Handle population labels if available
+        if "population_labels" in data:
+            metadata["population_labels"] = data["population_labels"].tolist()
+        
         simulation_data = {
-            "metadata": data["metadata"].item(),
+            "metadata": metadata,
             "field_data": {
                 "phi_hat": data["phi_hat"],
                 "nutrient_fields": data["nutrient_fields"]

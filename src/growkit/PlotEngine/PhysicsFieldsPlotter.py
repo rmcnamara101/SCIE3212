@@ -931,7 +931,7 @@ class PhysicsFieldsPlotter:
                          add_boundary_contours=False, tumor_boundary_level=0.5,
                          boundary_color='darkblue', tumor_boundary_color='black'):
         """
-        Plot source terms (growth/death) for a specific population.
+        Plot source terms (growth/death) for a specific population as 2D color map.
         
         Args:
             population_idx: Index of population to plot
@@ -958,24 +958,36 @@ class PhysicsFieldsPlotter:
         # Create coordinate grids
         x = np.arange(nx) * self.dx
         y = np.arange(ny) * self.dx
-        X, Y = np.meshgrid(x, y, indexing='ij')
         source_slice = self.field_manager.source_terms[population_idx, :, :, z_slice]
+        
+        # Handle NaN and infinite values
+        source_slice = np.nan_to_num(source_slice, nan=0.0, posinf=0.0, neginf=0.0)
         
         # Create plot
         fig = plt.figure(figsize=(10, 8))
-        ax = fig.add_subplot(111, projection='3d')
+        ax = fig.add_subplot(111)
         
-        surf = ax.plot_surface(X, Y, source_slice, cmap=cmap, alpha=alpha)
-        ax.set_title(f'Source Terms - {self.labels[population_idx]} (z={z_slice})')
-        ax.set_xlabel('X')
-        ax.set_ylabel('Y')
-        ax.set_zlabel('Source Term')
-        fig.colorbar(surf, ax=ax, shrink=0.5, aspect=5, label='Growth/Death Rate')
+        # Use symmetric colormap limits for better visualization
+        vmax = np.max(np.abs(source_slice))
+        vmin = -vmax if vmax > 0 else -1.0
+        
+        im = ax.imshow(source_slice, extent=[x[0], x[-1], y[0], y[-1]], 
+                      origin='lower', cmap=cmap, aspect='equal', vmin=vmin, vmax=vmax)
         
         # Add tumor boundary contours if requested
         if add_boundary_contours:
-            self._add_tumor_contours(ax, population_idx, z_slice, 
-                                   [tumor_boundary_level], [tumor_boundary_color], [2])
+            # Get tumor density for boundary detection
+            tumor_density = self.field_manager.phi_hat[population_idx, :, :, z_slice]
+            ax.contour(tumor_density, levels=[tumor_boundary_level], 
+                      colors=tumor_boundary_color, linewidths=3, alpha=0.9,
+                      extent=[x[0], x[-1], y[0], y[-1]], origin='lower')
+        
+        ax.set_title(f'Source Terms - {self.labels[population_idx]} (z={z_slice})')
+        ax.set_xlabel('X')
+        ax.set_ylabel('Y')
+        fig.colorbar(im, ax=ax, label='Growth/Death Rate')
+        
+        plt.tight_layout()
         
         # Save plot if requested
         if save_plot and output_dir:
@@ -995,7 +1007,7 @@ class PhysicsFieldsPlotter:
                            add_boundary_contours=False, tumor_boundary_level=0.5,
                            boundary_color='darkblue', tumor_boundary_color='black'):
         """
-        Plot nutrient field as 3D surface plot.
+        Plot nutrient field as 2D color map.
         
         Args:
             step: Current simulation step for filename
@@ -1017,25 +1029,32 @@ class PhysicsFieldsPlotter:
         # Create coordinate grids
         x = np.arange(nx) * self.dx
         y = np.arange(ny) * self.dx
-        X, Y = np.meshgrid(x, y, indexing='ij')
         nutrient_slice = self.field_manager.nutrient_field[:, :, z_slice]
+        
+        # Handle NaN and infinite values
+        nutrient_slice = np.nan_to_num(nutrient_slice, nan=0.0, posinf=0.0, neginf=0.0)
         
         # Create plot
         fig = plt.figure(figsize=(10, 8))
-        ax = fig.add_subplot(111, projection='3d')
+        ax = fig.add_subplot(111)
         
-        surf = ax.plot_surface(X, Y, nutrient_slice, cmap=cmap, alpha=alpha)
-        ax.set_title(f'Nutrient Field (z={z_slice})')
-        ax.set_xlabel('X')
-        ax.set_ylabel('Y')
-        ax.set_zlabel('Nutrient Concentration')
-        fig.colorbar(surf, ax=ax, shrink=0.5, aspect=5, label='Concentration')
+        im = ax.imshow(nutrient_slice, extent=[x[0], x[-1], y[0], y[-1]], 
+                      origin='lower', cmap=cmap, aspect='equal')
         
         # Add tumor boundary contours if requested
         if add_boundary_contours:
             # Use the first population for contours (usually the main tumor population)
-            self._add_tumor_contours(ax, 0, z_slice, 
-                                   [tumor_boundary_level], [tumor_boundary_color], [2])
+            tumor_density = self.field_manager.phi_hat[0, :, :, z_slice]
+            ax.contour(tumor_density, levels=[tumor_boundary_level], 
+                      colors=tumor_boundary_color, linewidths=3, alpha=0.9,
+                      extent=[x[0], x[-1], y[0], y[-1]], origin='lower')
+        
+        ax.set_title(f'Nutrient Field (z={z_slice})')
+        ax.set_xlabel('X')
+        ax.set_ylabel('Y')
+        fig.colorbar(im, ax=ax, label='Concentration')
+        
+        plt.tight_layout()
         
         # Save plot if requested
         if save_plot and output_dir:

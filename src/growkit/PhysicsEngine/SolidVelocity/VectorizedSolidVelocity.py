@@ -65,14 +65,14 @@ class VectorizedSolidVelocity:
         nutrient_mean = np.mean(nutrient_field)
         energy_mean = np.mean(energy_deriv) if energy_deriv is not None else 0.0
         
-        # Create a more aggressive hash for RK4 intermediate steps
-        # Round to fewer decimal places to catch more similar states
+        # Create a more sensitive hash to avoid over-caching
+        # Use more decimal places to distinguish between similar states
         state_hash = hash((
-            round(phi_T_mean, 4),  # Reduced precision for more cache hits
-            round(phi_T_std, 4), 
-            round(phi_T_max, 4),
-            round(nutrient_mean, 4),
-            round(energy_mean, 4)
+            round(phi_T_mean, 6),  # Increased precision to reduce false cache hits
+            round(phi_T_std, 6), 
+            round(phi_T_max, 6),
+            round(nutrient_mean, 6),
+            round(energy_mean, 6)
         ))
         
         return state_hash
@@ -106,7 +106,10 @@ class VectorizedSolidVelocity:
         # Check cache for similar state
         state_hash = self._compute_state_hash(phi_hat, nutrient_field, energy_deriv)
         
-        if state_hash in self._pressure_cache:
+        # Temporary debug: disable caching to see if that fixes the issue
+        use_cache = False  # Set to False to disable caching for debugging
+        
+        if use_cache and state_hash in self._pressure_cache:
             # Cache hit - reuse pressure solution
             self._cache_hits += 1
             pressure = self._pressure_cache[state_hash]
@@ -122,9 +125,9 @@ class VectorizedSolidVelocity:
             print(f"Pressure solver time: {time_end - time_start} seconds (cache miss)")
             
             # Cache the result (limit cache size to prevent memory issues)
-            if len(self._pressure_cache) < 20:  # Increased cache size for RK4
+            if use_cache and len(self._pressure_cache) < 20:  # Increased cache size for RK4
                 self._pressure_cache[state_hash] = pressure
-            else:
+            elif use_cache and len(self._pressure_cache) >= 20:
                 # Clear cache if it gets too large
                 self._pressure_cache.clear()
                 self._pressure_cache[state_hash] = pressure

@@ -203,32 +203,9 @@ class InitialConditions:
         """Initialize nutrient field."""
         nx, ny, nz = self.grid
         
-        # Check if nutrient initialization is specified in config
-        nutrient_config = self.ic_config.get("nutrient", {})
-        
-        if nutrient_config.get("type") == "uniform":
-            concentration = nutrient_config.get("concentration", 1.0)
-            return np.full((nx, ny, nz), concentration, dtype=np.float32)
-        elif nutrient_config.get("type") == "gradient":
-            # Create a gradient from high to low concentration
-            concentration_max = nutrient_config.get("concentration_max", 1.0)
-            concentration_min = nutrient_config.get("concentration_min", 0.0)
-            
-            nutrient_field = np.zeros((nx, ny, nz), dtype=np.float32)
-            for i in range(nx):
-                # Linear gradient along x-axis
-                concentration = concentration_max - (concentration_max - concentration_min) * i / nx
-                nutrient_field[i, :, :] = concentration
-            return nutrient_field
-        else:
-            # Default: use nutrient manager
-            try:
-                from src.growkit.PhysicsEngine.Nutrient.NutrientField import NutrientField
-                nutrient_manager = NutrientField(self.cfg, self.cfg["populations"])
-                return nutrient_manager.initialize_nutrient_field((nx, ny, nz), self.dx)
-            except ImportError:
-                # Fallback to uniform nutrient field
-                return np.full((nx, ny, nz), 1.0, dtype=np.float32)
+        from src.growkit.PhysicsEngine.Nutrient.NutrientField import NutrientField
+        nutrient_manager = NutrientField(self.cfg, self.cfg["populations"])
+        return nutrient_manager.initialize_nutrient_field((nx, ny, nz))
     
     def get_initial_conditions_summary(self) -> Dict:
         """Get a summary of the initial conditions configuration."""

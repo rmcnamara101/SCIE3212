@@ -45,35 +45,21 @@ class NutrientField:
         for label, pop_data in populations.items():
             self.population_consumption_rates[label] = float(pop_data.get('dynamics', {}).get('nutrient_consumption', 0.1))
     
-    def initialize_nutrient_field(self, shape, dx):
+    def initialize_nutrient_field(self, shape):
         """
-        Initialize nutrient field with boundary conditions.
+        Initialize nutrient field with uniform concentration of 1.0.
         
         Args:
             shape: Grid shape (nx, ny, nz)
             dx: Grid spacing
             
         Returns:
-            nutrient_field: Initial nutrient concentration field
+            nutrient_field: Initial nutrient concentration field (uniform at 1.0)
         """
         nx, ny, nz = shape
-        nutrient_field = np.ones(shape, dtype=np.float32) * self.boundary_value
         
-        # Set boundary conditions (Dirichlet at boundaries)
-        # This creates a gradient from high concentration at boundaries to lower in center
-        for i in range(nx):
-            for j in range(ny):
-                for k in range(nz):
-                    # Distance from center (normalized)
-                    x_dist = abs(i - nx//2) / (nx//2)
-                    y_dist = abs(j - ny//2) / (ny//2)
-                    z_dist = abs(k - nz//2) / (nz//2)
-                    
-                    # Radial distance from center
-                    r = np.sqrt(x_dist**2 + y_dist**2 + z_dist**2)
-                    
-                    # Linear interpolation from boundary to center
-                    nutrient_field[i, j, k] = self.boundary_value * (1.0 - 0.5 * r)
+        # Always create uniform nutrient field with value 1.0
+        nutrient_field = np.ones(shape, dtype=np.float32)
         
         return nutrient_field
     
