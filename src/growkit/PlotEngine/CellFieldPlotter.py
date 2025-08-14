@@ -223,6 +223,7 @@ class CellFieldPlotter:
         # Find population index by label
         try:
             population_idx = self.labels.index(label)
+            print(f"Found population '{label}' at index {population_idx}")
         except ValueError:
             print(f"Error: Population label '{label}' not found. Available labels: {self.labels}")
             return
@@ -351,6 +352,37 @@ class CellFieldPlotter:
         else:
             population_name = self.labels[population_idx]
         
+        print(f"Plotting evolution for population: {population_name} (index: {population_idx})")
+        print(f"Available population labels: {self.labels}")
+        print(f"Step indices: {step_indices}")
+        
+        # Set default center coordinates if not provided
+        if center_x is None:
+            center_x = self.grid[0] // 2
+        if center_y is None:
+            center_y = self.grid[1] // 2
+        
+        # Convert to integers for slice indices
+        center_x = int(center_x)
+        center_y = int(center_y)
+        
+        # Calculate zoom window size
+        window_size = min(self.grid[0], self.grid[1]) // zoom_factor
+        half_window = window_size // 2
+        
+        # Calculate window boundaries
+        x_start = int(max(0, center_x - half_window))
+        x_end = int(min(self.grid[0], center_x + half_window))
+        y_start = int(max(0, center_y - half_window))
+        y_end = int(min(self.grid[1], center_y + half_window))
+        
+        # Create coordinate grids for zoomed region
+        x_region = np.arange(x_start, x_end) * self.dx
+        y_region = np.arange(y_start, y_end) * self.dx
+        
+        # Find global min/max for consistent color scaling
+        vmin, vmax = 0, 1
+        
         # Plot each step
         for i, step_idx in enumerate(step_indices):
             ax = axes_flat[i]
@@ -362,30 +394,6 @@ class CellFieldPlotter:
             # Get phi_hat for this step
             phi_hat = simulation_data["field_data"]["phi_hat"][step_idx]
             
-            # Set default center coordinates if not provided
-            if center_x is None:
-                center_x = self.grid[0] // 2
-            if center_y is None:
-                center_y = self.grid[1] // 2
-            
-            # Convert to integers for slice indices
-            center_x = int(center_x)
-            center_y = int(center_y)
-            
-            # Calculate zoom window size
-            window_size = min(self.grid[0], self.grid[1]) // zoom_factor
-            half_window = window_size // 2
-            
-            # Calculate window boundaries
-            x_start = int(max(0, center_x - half_window))
-            x_end = int(min(self.grid[0], center_x + half_window))
-            y_start = int(max(0, center_y - half_window))
-            y_end = int(min(self.grid[1], center_y + half_window))
-            
-            # Create coordinate grids for zoomed region
-            x_region = np.arange(x_start, x_end) * self.dx
-            y_region = np.arange(y_start, y_end) * self.dx
-            
             # Extract density data for zoomed region
             if population_idx is None:
                 # Plot total density (sum of all populations)
@@ -394,9 +402,9 @@ class CellFieldPlotter:
                 # Plot specific population
                 density_slice = phi_hat[population_idx, x_start:x_end, y_start:y_end, z_slice]
             
-            # Create the plot
+            # Create the plot with consistent color scaling
             im = ax.imshow(density_slice, extent=[x_region[0], x_region[-1], y_region[0], y_region[-1]], 
-                          origin='lower', cmap=cmap, aspect='equal')
+                          origin='lower', cmap=cmap, aspect='equal', vmin=vmin, vmax=vmax)
             
             # Add contours if requested
             if add_contours:

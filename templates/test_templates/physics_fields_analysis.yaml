@@ -10,16 +10,30 @@ domain:
   dx: 100 # float defining the spacing of the grid
 
 time:
-  steps: 5
-  dt: 10
+  steps: 5 # integer defining the number of steps to run the simulation for
+  dt: 1 # float defining the time step
 
 populations:
   Healthy:
+    label: Stem Cells
+    color: Green
+    dynamics:
+      lambda: 1.2 # float
+      mu: 0.1 # float
+      mobility: 0.5 # float
+      nutrient_threshold: 0.3 # float
+      nutrient_consumption: 0.1 # float
+      nutrient_production: 0.07 # float
+      transfer: 
+        to: Tumour
+        rate: 0.1 # float defining proportion of cells that transfer 
+
+  Tumour:
     label: Tumour Cells
     color: Green
     dynamics:
       lambda: 1.2 # float
-      mu: 0.0 # float
+      mu: 0.5 # float
       mobility: 0.5 # float
       nutrient_threshold: 0.3 # float
       nutrient_consumption: 0.1 # float
@@ -35,7 +49,7 @@ populations:
       nutrient_threshold: 0.0 # float
       nutrient_consumption: 0.0 # float
       nutrient_production: 0.0 # float
-      beta_N: 0.1 # float
+      beta_N: 0.0000001 # float
 
 
 nutrient:
@@ -44,13 +58,12 @@ nutrient:
   color: Orange
   dynamics:
     diffusion: 20 # float
-    boundary_value: 1.0
+    boundary_value: 1.0 # float defining the value of the nutrient at the boundary
 
 physics:
   adhesion_energy:
-    m: 1
+    m: 0.1
 
-# Initial conditions configuration
 initial_conditions:
   type: gaussian_random_blob # Options: "spherical", "gaussian_random_blob", "multiple_spheres", "uniform", "custom"
   
@@ -60,7 +73,8 @@ initial_conditions:
   deformation_strength: 0.3 # How much to deform (0.0=sphere, 0.5=very deformed, optional, defaults to 0.3)
   
   seeding_densities:
-    Tumour Cells: 1.0 # Density for specific population
+    Tumour Cells: 0.8 # Density for specific population
+    Stem Cells: 0.2 # Density for specific population
     Necrotic Cells: 0.0 # Density for specific population
   
   nutrient:

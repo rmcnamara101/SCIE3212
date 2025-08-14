@@ -62,7 +62,7 @@ class PhysicsFieldsPlotter:
                            add_boundary_contours=False, tumor_boundary_level=0.5,
                            boundary_color='darkblue', tumor_boundary_color='black'):
         """
-        Plot pressure field as 3D surface plot.
+        Plot pressure field as 2D heatmap.
         
         Args:
             step: Current simulation step for filename
@@ -84,19 +84,30 @@ class PhysicsFieldsPlotter:
         # Create coordinate grids
         x = np.arange(nx) * self.dx
         y = np.arange(ny) * self.dx
-        X, Y = np.meshgrid(x, y, indexing='ij')
         pressure_slice = self.field_manager.pressure[:, :, z_slice]
+        
+        # Handle NaN and infinite values
+        pressure_slice = np.nan_to_num(pressure_slice, nan=0.0, posinf=0.0, neginf=0.0)
         
         # Create plot
         fig = plt.figure(figsize=(10, 8))
-        ax = fig.add_subplot(111, projection='3d')
+        ax = fig.add_subplot(111)
         
-        surf = ax.plot_surface(X, Y, pressure_slice, cmap=cmap, alpha=alpha)
+        im = ax.imshow(pressure_slice, extent=[x[0], x[-1], y[0], y[-1]], 
+                      origin='lower', cmap=cmap, aspect='equal')
+        
+        # Add tumor boundary contours if requested
+        if add_boundary_contours:
+            # Get total tumor density for boundary detection
+            tumor_density = np.sum(self.field_manager.phi_hat, axis=0)[:, :, z_slice]
+            ax.contour(tumor_density, levels=[tumor_boundary_level], 
+                      colors=tumor_boundary_color, linewidths=3, alpha=0.9,
+                      extent=[x[0], x[-1], y[0], y[-1]], origin='lower')
+        
         ax.set_title(f'Pressure Field (z={z_slice})')
         ax.set_xlabel('X')
         ax.set_ylabel('Y')
-        ax.set_zlabel('Pressure')
-        fig.colorbar(surf, ax=ax, shrink=0.5, aspect=5)
+        fig.colorbar(im, ax=ax, label='Pressure')
         
         plt.tight_layout()
         
