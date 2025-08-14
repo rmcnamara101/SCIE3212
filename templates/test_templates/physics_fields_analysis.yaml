@@ -6,12 +6,12 @@ simulation:
   seed: 1209
 
 domain:
-  shape: 65 # integer defining the number of grid points in each dimension
-  dx: 20 # float defining the spacing of the grid
+  shape: 80 # integer defining the number of grid points in each dimension
+  dx: 100 # float defining the spacing of the grid
 
 time:
-  steps: 100
-  dt: 1
+  steps: 5
+  dt: 10
 
 populations:
   Healthy:

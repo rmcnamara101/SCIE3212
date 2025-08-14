@@ -134,7 +134,7 @@ class VectorizedSolidVelocity:
         
         # Store pressure in field manager if available
         if self.field_manager is not None:
-            self.field_manager.pressure = pressure
+            self.field_manager.pressure = -pressure
         
         # Compute pressure gradient
         grad_p_x, grad_p_y, grad_p_z = gradient(pressure, dx)
