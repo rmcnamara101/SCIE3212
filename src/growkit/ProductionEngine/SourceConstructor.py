@@ -84,18 +84,18 @@ class SourceConstructor:
             nutrient_field: Local nutrient concentration field
             
         Returns:
-            Theta: (M,) array of nutrient switches
+            Theta: (M, nx, ny, nz) array of nutrient switches for each spatial location
         """
         k = 5.0  # Steepness parameter for smooth transition
-        Theta = np.zeros(self.M, dtype=np.float32)
+        shape = nutrient_field.shape
+        Theta = np.zeros((self.M, *shape), dtype=np.float32)
         
-        # Use the mean nutrient level for computing switches
-        mean_nutrient = np.mean(nutrient_field)
-        
+        # Use local nutrient levels for computing switches
         for i in range(self.M):
             n_thresh = self.nutrient_thresholds[i]
             # Smooth Heaviside function: 0.5 * (1 + tanh(k * (nutrient - threshold)))
-            Theta[i] = 0.5 * (1 + np.tanh(k * (mean_nutrient - n_thresh)))
+            # Apply to each spatial location
+            Theta[i] = 0.5 * (1 + np.tanh(k * (nutrient_field - n_thresh)))
         
         return Theta
     
@@ -254,7 +254,7 @@ class SourceConstructor:
             death_terms += self.mu[i] * np.mean(Theta[:, i]) * phi_hat[:, i]
         
         # Pressure source is net growth minus net death
-        pressure_source = growth_terms - death_terms
+        pressure_source = growth_terms + death_terms
         
         return pressure_source.squeeze()
     
@@ -271,11 +271,8 @@ class SourceConstructor:
         """
         M = self.M
         
-        # Compute nutrient switches (vectorized)
-        k = 5.0
-        # Use mean nutrient level for computing switches (simplified approach)
-        mean_nutrient = np.mean(nutrient_field)
-        Theta = 0.5 * (1 + np.tanh(k * (mean_nutrient - self.nutrient_thresholds)))
+        # Compute nutrient switches (spatially varying)
+        Theta = self._compute_nutrient_switches(nutrient_field)  # (M, nx, ny, nz)
         
         # Compute necrotic feedback - always a global scalar
         V_N = np.sum(phi_hat[-1])  # Total necrotic volume (assuming necrotic is last population)
@@ -284,10 +281,12 @@ class SourceConstructor:
         # Compute proliferation-weighted populations
         alpha_hat = self.lambda_[:, None, None, None] * phi_hat  # (M, nx, ny, nz)
         
-        # Apply nutrient modulation to death matrix
-        D_modulated = self.D.copy()
+        # Apply nutrient modulation to death matrix (spatially varying)
+        # D_modulated[i,j] = D[i,j] * Theta[j] for each spatial location
+        D_modulated = np.zeros((M, M, *nutrient_field.shape), dtype=np.float32)
         for i in range(M):
-            D_modulated[i, i] *= Theta[i]
+            for j in range(M):
+                D_modulated[i, j] = self.D[i, j] * Theta[j]
         
         # Compute source vector
         # Growth term: G_N * n * P * alpha_hat
@@ -295,8 +294,13 @@ class SourceConstructor:
         # P is (M, M), we want P * alpha_hat = (M, nx, ny, nz)
         growth_term = G_N * nutrient_field[None, :, :, :] * np.tensordot(self.P, alpha_hat, axes=([1], [0]))
         
-        # Death term: D * phi_hat
-        death_term = np.tensordot(D_modulated, phi_hat, axes=([1], [0]))
+        # Death term: D_modulated * phi_hat (spatially varying)
+        # D_modulated is (M, M, nx, ny, nz), phi_hat is (M, nx, ny, nz)
+        # We want to compute sum_j D_modulated[i,j] * phi_hat[j] for each i and spatial location
+        death_term = np.zeros_like(phi_hat)
+        for i in range(M):
+            for j in range(M):
+                death_term[i] += D_modulated[i, j] * phi_hat[j]
         
         # Combine terms
         A_hat = growth_term - death_term
@@ -329,13 +333,15 @@ def compute_source_vector_numba(phi_hat, nutrient_field, lambda_, mu, nutrient_t
     # Initialize output
     A_hat = np.zeros((M+1, *shape), dtype=np.float32)
     
-    # Compute nutrient switches
+    # Compute nutrient switches (spatially varying, simplified for Numba)
     k = 5.0
-    Theta = np.zeros(M, dtype=np.float32)
+    Theta = np.zeros((M, *shape), dtype=np.float32)
     for i in range(M):
-        # Use mean nutrient level for computing switches (Numba-compatible)
-        mean_nutrient = np.mean(nutrient_field)
-        Theta[i] = 0.5 * (1 + np.tanh(k * (mean_nutrient - nutrient_thresholds[i])))
+        for x in range(shape[0]):
+            for y in range(shape[1]):
+                for z in range(shape[2]):
+                    local_nutrient = nutrient_field[x, y, z]
+                    Theta[i, x, y, z] = 0.5 * (1 + np.tanh(k * (local_nutrient - nutrient_thresholds[i])))
     
     # Compute necrotic feedback
     V_N = np.sum(phi_hat[M-1])  # Assuming necrotic is last population
@@ -346,21 +352,19 @@ def compute_source_vector_numba(phi_hat, nutrient_field, lambda_, mu, nutrient_t
     for i in range(M):
         alpha_hat[i] = lambda_[i] * phi_hat[i]
     
-    # Apply nutrient modulation to death matrix
-    D_modulated = D.copy()
-    for i in range(M):
-        D_modulated[i, i] *= Theta[i]
-        D_modulated[M, i] *= Theta[i]
-    
-    # Compute source vector
+    # Apply nutrient modulation to death matrix (spatially varying)
+    # Compute source vector with spatially varying death rates
     for i in range(M+1):
         for j in range(M):
-            # Growth term contribution
-            if i < M:
-                A_hat[i] += G_N * nutrient_field * P[i, j] * alpha_hat[j]
-            
-            # Death term contribution
-            A_hat[i] -= D_modulated[i, j] * phi_hat[j]
+            for x in range(shape[0]):
+                for y in range(shape[1]):
+                    for z in range(shape[2]):
+                        # Growth term contribution
+                        if i < M:
+                            A_hat[i, x, y, z] += G_N * nutrient_field[x, y, z] * P[i, j] * alpha_hat[j, x, y, z]
+                        
+                        # Death term contribution (spatially varying)
+                        A_hat[i, x, y, z] -= D[i, j] * Theta[j, x, y, z] * phi_hat[j, x, y, z]
     
     return A_hat
 
@@ -392,14 +396,15 @@ def compute_pressure_source_vector_numba(phi_hat, nutrient_field, lambda_, mu, n
     # Initialize output
     pressure_source = np.zeros(shape, dtype=np.float32)
     
-    # Compute nutrient switches
+    # Compute nutrient switches (spatially varying, simplified for Numba)
     k = 5.0
-    Theta = np.zeros(M, dtype=np.float32)
+    Theta = np.zeros((M, *shape), dtype=np.float32)
     for i in range(M):
-        # Use local nutrient level for computing switches (spatially varying)
-        # For now, use a simple approach that works with Numba
-        local_nutrient = nutrient_field[0, 0, 0]  # Use first point as approximation
-        Theta[i] = 0.5 * (1 + np.tanh(k * (local_nutrient - nutrient_thresholds[i])))
+        for x in range(shape[0]):
+            for y in range(shape[1]):
+                for z in range(shape[2]):
+                    local_nutrient = nutrient_field[x, y, z]
+                    Theta[i, x, y, z] = 0.5 * (1 + np.tanh(k * (local_nutrient - nutrient_thresholds[i])))
     
     # Compute necrotic feedback
     V_N = np.sum(phi_hat[M-1])  # Assuming necrotic is last population
@@ -414,10 +419,16 @@ def compute_pressure_source_vector_numba(phi_hat, nutrient_field, lambda_, mu, n
     # Growth: only diagonal terms of P (growth that stays in same population)
     for i in range(M):
         if i < P.shape[0] and i < P.shape[1]:
-            pressure_source += G_N * nutrient_field * P[i, i] * alpha_hat[i]
+            for x in range(shape[0]):
+                for y in range(shape[1]):
+                    for z in range(shape[2]):
+                        pressure_source[x, y, z] += G_N * nutrient_field[x, y, z] * P[i, i] * alpha_hat[i, x, y, z]
     
     # Death: only absolute death rates (excluding necrotic)
     for i in range(M - 1):  # Exclude necrotic population
-        pressure_source -= mu[i] * Theta[i] * phi_hat[i]
+        for x in range(shape[0]):
+            for y in range(shape[1]):
+                for z in range(shape[2]):
+                    pressure_source[x, y, z] -= mu[i] * Theta[i, x, y, z] * phi_hat[i, x, y, z]
     
     return pressure_source

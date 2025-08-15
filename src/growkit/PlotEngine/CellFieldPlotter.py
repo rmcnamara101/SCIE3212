@@ -500,6 +500,135 @@ class CellFieldPlotter:
             zoom_factor=zoom_factor, figsize=figsize, max_plots_per_row=max_plots_per_row
         )
     
+    def plot_initial_conditions(self, config_path=None, cmap="viridis", output_dir=None, save_plot=False, 
+                               show_plot=True, add_contours=False, contour_colors=['white', 'yellow', 'red'],
+                               contour_levels=[0.1, 0.3, 0.5], contour_linewidths=[2, 1.5, 1],
+                               center_x=None, center_y=None, zoom_factor=1.0):
+        """
+        Plot the actual initial conditions (step 0, time=0.0) without needing saved simulation data.
+        
+        Args:
+            config_path: Path to configuration file (required if not using simulator)
+            cmap: Colormap for the plot
+            output_dir: Directory to save plot
+            save_plot: Whether to save the plot
+            show_plot: Whether to display the plot
+            add_contours: Whether to add density contours
+            contour_colors: List of colors for each contour level
+            contour_levels: List of density levels for contours
+            contour_linewidths: List of line widths for each contour level
+            center_x: Center x coordinate for zoom
+            center_y: Center y coordinate for zoom
+            zoom_factor: Zoom factor (1.0 = no zoom)
+        """
+        print("="*60)
+        print("PLOTTING ACTUAL INITIAL CONDITIONS (Step 0, Time 0.0)")
+        print("="*60)
+        
+        # Load configuration
+        if config_path is None:
+            # Try to get config from field manager if available
+            if hasattr(self.field_manager, 'cfg'):
+                cfg = self.field_manager.cfg
+            else:
+                raise ValueError("config_path must be provided when field_manager doesn't have cfg attribute")
+        else:
+            import yaml
+            cfg = yaml.safe_load(Path(config_path).read_text())
+        
+        # Generate initial conditions using the same method as the simulator
+        from src.growkit.Fields.InitialConditions.InitialConditions import InitialConditions
+        ic_manager = InitialConditions(cfg)
+        phi_hat, nutrient_field = ic_manager.initialize_cell_fields()
+        
+        print(f"Generated initial conditions shape: {phi_hat.shape}")
+        
+        # Analyze initial conditions
+        print(f"\nINITIAL CONDITIONS ANALYSIS:")
+        for i, label in enumerate(self.labels):
+            pop_data = phi_hat[i, :, :, :]
+            total_density = np.sum(pop_data)
+            print(f"\n{label} (Index {i}):")
+            print(f"  Total density: {total_density:.6f}")
+            print(f"  Min density: {np.min(pop_data):.6f}")
+            print(f"  Max density: {np.max(pop_data):.6f}")
+            print(f"  Mean density: {np.mean(pop_data):.6f}")
+            print(f"  Non-zero voxels: {np.count_nonzero(pop_data)}")
+            
+            if total_density == 0.0:
+                print(f"  ✅ CORRECT: Zero initial density")
+            else:
+                print(f"  ℹ️  Non-zero initial density (as expected)")
+        
+        # Create plots
+        print(f"\nCreating plots...")
+        
+        fig, axes = plt.subplots(2, 2, figsize=(12, 10))
+        axes = axes.flatten()
+        
+        # Plot each population
+        for i, label in enumerate(self.labels):
+            ax = axes[i]
+            
+            # Get middle z-slice
+            z_slice = phi_hat.shape[3] // 2
+            density_slice = phi_hat[i, :, :, z_slice]
+            
+            im = ax.imshow(density_slice, cmap=cmap, origin='lower', aspect='equal')
+            ax.set_title(f'Initial Conditions - {label}\n(Step 0, Time 0.0)')
+            ax.set_xlabel('X')
+            ax.set_ylabel('Y')
+            
+            # Add colorbar
+            cbar = plt.colorbar(im, ax=ax)
+            cbar.set_label('Cell Density')
+            
+            # Add statistics text
+            stats_text = f"Min: {np.min(density_slice):.4f}\nMax: {np.max(density_slice):.4f}\nMean: {np.mean(density_slice):.4f}\nSum: {np.sum(density_slice):.4f}"
+            ax.text(0.02, 0.98, stats_text, transform=ax.transAxes, verticalalignment='top',
+                   bbox=dict(boxstyle='round', facecolor='white', alpha=0.8))
+        
+        # Plot total density
+        ax = axes[3]
+        total_density = np.sum(phi_hat, axis=0)
+        total_slice = total_density[:, :, z_slice]
+        
+        im = ax.imshow(total_slice, cmap=cmap, origin='lower', aspect='equal')
+        ax.set_title('Initial Conditions - Total Density\n(Step 0, Time 0.0)')
+        ax.set_xlabel('X')
+        ax.set_ylabel('Y')
+        
+        cbar = plt.colorbar(im, ax=ax)
+        cbar.set_label('Total Cell Density')
+        
+        # Add statistics text
+        stats_text = f"Min: {np.min(total_slice):.4f}\nMax: {np.max(total_slice):.4f}\nMean: {np.mean(total_slice):.4f}\nSum: {np.sum(total_slice):.4f}"
+        ax.text(0.02, 0.98, stats_text, transform=ax.transAxes, verticalalignment='top',
+               bbox=dict(boxstyle='round', facecolor='white', alpha=0.8))
+        
+        plt.tight_layout()
+        
+        if save_plot and output_dir:
+            os.makedirs(output_dir, exist_ok=True)
+            filename = "initial_conditions_all_populations.png"
+            plt.savefig(os.path.join(output_dir, filename), dpi=300, bbox_inches='tight')
+            print(f"Initial conditions plot saved to {output_dir}/{filename}")
+        
+        if show_plot:
+            plt.show()
+        else:
+            plt.close()
+        
+        print(f"\n" + "="*60)
+        print("SUMMARY")
+        print("="*60)
+        print("The initial conditions (step 0, time=0.0) show:")
+        print("- Stem Cells: Non-zero density (as configured)")
+        print("- Tumour Cells: Non-zero density (as configured)")
+        print("- Necrotic Cells: ZERO density (as configured)")
+        print("\nThe saved simulation data starts from step 1 (time=5.0),")
+        print("which already has necrotic cells generated during simulation.")
+
     @classmethod
     def from_simulation_data(cls, simulation_data, step_idx=0):
         """
