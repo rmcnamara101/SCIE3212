@@ -1,44 +1,44 @@
-# This is a template for a YAML file that defines a tumour growth model.
-# It is used to define the model and its parameters.
+# This is the template for the CSC-T-N model
 
 simulation:
-  name: Physics Fields Analysis
+  name: CSC-T-N Model
   seed: 1209
 
 domain:
-  shape: 80 # integer defining the number of grid points in each dimension
+  shape: 120 # integer defining the number of grid points in each dimension
   dx: 100 # float defining the spacing of the grid
 
 time:
   steps: 10 # integer defining the number of steps to run the simulation for
-  dt: 5 # float defining the time step
+  dt: 0.05 # float defining the time step
 
 populations:
-  Healthy:
+  Stem:
     label: Stem Cells
     color: Green
     dynamics:
-      lambda: 1 # float
-      mu: 0.1 # float
+      lambda: 100 # float
+      mu: 50 # float
       mobility: 0.5 # float
       nutrient_threshold: 0.3 # float
-      nutrient_consumption: 0.1 # float
-      nutrient_production: 0.07 # float
+      nutrient_consumption: 0.07 # float
+      nutrient_production: 0.02 # float
       transfer: 
         to: Tumour
-        rate: 0.1 # float defining proportion of cells that transfer 
-
+        rate: 0.9 # float defining proportion of cells that transfer 
+  
   Tumour:
     label: Tumour Cells
     color: Green
     dynamics:
-      lambda: 1 # float
-      mu: 0.1 # float
+      lambda: 200 # float
+      mu: 50 # float
       mobility: 0.5 # float
       nutrient_threshold: 0.3 # float
-      nutrient_consumption: 0.1 # float
-      nutrient_production: 0.07 # float
-
+      nutrient_consumption: 0.07 # float
+      nutrient_production: 0.05 # float
+    
+    
   Necrotic:
     label: Necrotic Cells
     color: Black
@@ -49,26 +49,26 @@ populations:
       nutrient_threshold: 0.0 # float
       nutrient_consumption: 0.0 # float
       nutrient_production: 0.0 # float
-      beta_N: 0 # float
-
+      beta_N: 0.00001 # float
 
 nutrient:
   name: General
   label: General nutrient
   color: Orange
   dynamics:
-    diffusion: 20 # float
+    diffusion: 100 # float
     boundary_value: 1.0 # float defining the value of the nutrient at the boundary
+    k: 1 # float defining the steepness of the nutrient switch
 
 physics:
   adhesion_energy:
-    m: 0.1
+    m: 100
 
 initial_conditions:
   type: gaussian_random_blob # Options: "spherical", "gaussian_random_blob", "multiple_spheres", "uniform", "custom"
   
-  center: [32, 32, 32] # Center coordinates (optional, defaults to domain center)
-  radius: 16 # Radius of the sphere (optional, defaults to domain_size/4)
+  center: [60, 60, 60] # Center coordinates (optional, defaults to domain center)
+  radius: 20 # Radius of the sphere (optional, defaults to domain_size/4)
   
   deformation_strength: 0.3 # How much to deform (0.0=sphere, 0.5=very deformed, optional, defaults to 0.3)
   
@@ -78,11 +78,13 @@ initial_conditions:
     Necrotic Cells: 0.0 # Density for specific population
   
   nutrient:
-    type: gradient # Options: "uniform", "gradient" (optional, uses default nutrient manager if not specified)
+    type: natural # Options: "uniform", "gradient" (optional, uses default nutrient manager if not specified)
     concentration: 1.0 # For uniform nutrient field (optional, defaults to 1.0)
     concentration_max: 1.0 # For gradient nutrient field (optional, defaults to 1.0)
     concentration_min: 0.0 # For gradient nutrient field (optional, defaults to 0.0)
 
-
-
-
+integrator:
+  type: adaptive_grid
+  padding: 10
+  threshold: 1e-6
+  min_sub_grid_size: 10

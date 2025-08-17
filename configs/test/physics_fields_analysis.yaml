@@ -1,0 +1,91 @@
+# This is a template for a YAML file that defines a tumour growth model.
+# It is used to define the model and its parameters.
+
+simulation:
+  name: Physics Fields Analysis
+  seed: 1209
+
+domain:
+  shape: 80 # integer defining the number of grid points in each dimension
+  dx: 1000 # float defining the spacing of the grid
+
+time:
+  steps: 10 # integer defining the number of steps to run the simulation for
+  dt: 0.05 # float defining the time step
+
+populations:
+  Stem:
+    label: Stem Cells
+    color: Green
+    dynamics:
+      lambda: 200 # float
+      mu: 0.1 # float
+      mobility: 0.5 # float
+      nutrient_threshold: 0.3 # float
+      nutrient_consumption: 0.1 # float
+      nutrient_production: 0.02 # float
+      #transfer: 
+      #  to: Tumour
+      #  rate: 0.1 # float defining proportion of cells that transfer 
+  
+
+
+  Tumour:
+    label: Tumour Cells
+    color: Green
+    dynamics:
+      lambda: 200 # float
+      mu: 0.1 # float
+      mobility: 0.5 # float
+      nutrient_threshold: 0.3 # float
+      nutrient_consumption: 0.1 # float
+      nutrient_production: 0.02 # float
+    
+    
+  Necrotic:
+    label: Necrotic Cells
+    color: Black
+    dynamics:
+      lambda: 0.0 # float
+      mu: 0.2 # float
+      mobility: 0.0 # float
+      nutrient_threshold: 0.0 # float
+      nutrient_consumption: 0.0 # float
+      nutrient_production: 0.0 # float
+      beta_N: 0.00001 # float
+
+
+nutrient:
+  name: General
+  label: General nutrient
+  color: Orange
+  dynamics:
+    diffusion: 100 # float
+    boundary_value: 1.0 # float defining the value of the nutrient at the boundary
+
+physics:
+  adhesion_energy:
+    m: 10
+
+initial_conditions:
+  type: gaussian_random_blob # Options: "spherical", "gaussian_random_blob", "multiple_spheres", "uniform", "custom"
+  
+  center: [40, 40, 40] # Center coordinates (optional, defaults to domain center)
+  radius: 5 # Radius of the sphere (optional, defaults to domain_size/4)
+  
+  deformation_strength: 0.3 # How much to deform (0.0=sphere, 0.5=very deformed, optional, defaults to 0.3)
+  
+  seeding_densities:
+    Tumour Cells: 0.8 # Density for specific population
+    Stem Cells: 0.2 # Density for specific population
+    Necrotic Cells: 0.0 # Density for specific population
+  
+  nutrient:
+    type: natural # Options: "uniform", "gradient" (optional, uses default nutrient manager if not specified)
+    concentration: 1.0 # For uniform nutrient field (optional, defaults to 1.0)
+    concentration_max: 1.0 # For gradient nutrient field (optional, defaults to 1.0)
+    concentration_min: 0.0 # For gradient nutrient field (optional, defaults to 0.0)
+
+
+
+

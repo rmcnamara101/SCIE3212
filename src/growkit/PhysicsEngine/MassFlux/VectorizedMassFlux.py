@@ -57,6 +57,10 @@ def compute_mass_fluxes_numba(phi_hat, phi_T, dx, energy_deriv, M_matrix):
         J_hat[i, 0] = scaling * Jx_base
         J_hat[i, 1] = scaling * Jy_base
         J_hat[i, 2] = scaling * Jz_base
+
+        J_hat[i, 0] = np.clip(J_hat[i, 0], -1, 1)
+        J_hat[i, 1] = np.clip(J_hat[i, 1], -1, 1)
+        J_hat[i, 2] = np.clip(J_hat[i, 2], -1, 1)
     
     return J_hat
 

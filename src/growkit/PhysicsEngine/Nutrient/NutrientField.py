@@ -35,9 +35,11 @@ class NutrientField:
         self.diffusion_coeff = float(cfg["nutrient"]["dynamics"]["diffusion"])
         self.consumption_rate = [0.0] * self.M
         self.production_rate = [0.0] * self.M
+        self.nutrient_threshold = [0.0] * self.M
         for pop in self.pops:
             self.consumption_rate[self.labels.index(pop)] = float(self.pops[pop].get('dynamics', {}).get('nutrient_consumption', 0.0))
             self.production_rate[self.labels.index(pop)] = float(self.pops[pop].get('dynamics', {}).get('nutrient_production', 0.0))
+            self.nutrient_threshold[self.labels.index(pop)] = float(self.pops[pop].get('dynamics', {}).get('nutrient_threshold', 0.0))
         self.boundary_value = float(cfg.get('nutrient', {}).get('boundary_value', 1.0))
         
         # Extract consumption rates for each population
@@ -45,21 +47,158 @@ class NutrientField:
         for label, pop_data in populations.items():
             self.population_consumption_rates[label] = float(pop_data.get('dynamics', {}).get('nutrient_consumption', 0.1))
     
-    def initialize_nutrient_field(self, shape):
+    def initialize_nutrient_field(self, shape, phi_hat=None, initialization_type="uniform"):
         """
-        Initialize nutrient field with uniform concentration of 1.0.
+        Initialize nutrient field with different strategies.
         
         Args:
             shape: Grid shape (nx, ny, nz)
-            dx: Grid spacing
+            phi_hat: Cell fraction fields (M, nx, ny, nz) - required for natural initialization
+            initialization_type: Type of initialization ("uniform", "natural", "gradient")
             
         Returns:
-            nutrient_field: Initial nutrient concentration field (uniform at 1.0)
+            nutrient_field: Initial nutrient concentration field
         """
         nx, ny, nz = shape
         
-        # Always create uniform nutrient field with value 1.0
-        nutrient_field = np.ones(shape, dtype=np.float32)
+        if initialization_type == "uniform":
+            # Always create uniform nutrient field with value 1.0
+            nutrient_field = np.ones(shape, dtype=np.float32)
+        elif initialization_type == "natural" and phi_hat is not None:
+            # Create natural nutrient field based on cell density
+            nutrient_field = self._create_natural_nutrient_field(phi_hat)
+        elif initialization_type == "gradient":
+            # Create a simple radial gradient
+            nutrient_field = self._create_radial_gradient_field(shape)
+        else:
+            # Default to uniform
+            nutrient_field = np.ones(shape, dtype=np.float32)
+        
+        return nutrient_field
+    
+    def _create_natural_nutrient_field(self, phi_hat):
+        """
+        Create a natural nutrient field that accounts for cell consumption.
+        
+        This creates a nutrient field where:
+        - Boundary has maximum concentration (1.0)
+        - Center has reduced concentration based on cell density
+        - Accounts for diffusion and consumption balance
+        
+        Args:
+            phi_hat: Cell fraction fields (M, nx, ny, nz)
+            
+        Returns:
+            nutrient_field: Natural nutrient concentration field
+        """
+        nx, ny, nz = phi_hat.shape[1:]
+        nutrient_field = np.ones((nx, ny, nz), dtype=np.float32)
+        
+        # Compute total cell density
+        total_cell_density = np.sum(phi_hat, axis=0)
+        
+        # Create a more realistic nutrient field
+        # Start with boundary conditions and solve a simplified steady-state
+        # This approximates the balance between diffusion and consumption
+        
+        # Parameters for natural nutrient field - adjusted for stronger effect
+        max_consumption_effect = 0.5  # Maximum reduction in center (50% reduction = 0.5 nutrient)
+        consumption_length_scale = min(nx, ny, nz) / 4  # Shorter length scale for steeper gradient
+        
+        # Create distance field from center (inverse of distance from boundary)
+        center = np.array([nx//2, ny//2, nz//2])
+        max_radius = np.sqrt(np.sum(center**2))
+        
+        distance_from_center = np.zeros((nx, ny, nz), dtype=np.float32)
+        for i in range(nx):
+            for j in range(ny):
+                for k in range(nz):
+                    # Distance from center
+                    dist = np.sqrt((i - center[0])**2 + (j - center[1])**2 + (k - center[2])**2)
+                    distance_from_center[i, j, k] = dist
+        
+        # Create consumption mask based on cell density
+        consumption_mask = total_cell_density > 0.1  # Only consider areas with significant cell density
+        
+        # Add spatial noise to break up linear patterns
+        # Create noise field with spatial correlation
+        noise_scale = 0.15  # Amplitude of noise (15% variation)
+        noise_length_scale = min(nx, ny, nz) / 16  # Spatial correlation length
+        
+        # Generate correlated noise using simple spatial filtering
+        raw_noise = np.random.normal(0, 1, (nx, ny, nz)).astype(np.float32)
+        noise_field = np.zeros_like(raw_noise)
+        
+        # Apply simple spatial smoothing to create correlated noise
+        for i in range(nx):
+            for j in range(ny):
+                for k in range(nz):
+                    # Simple 3D averaging kernel for spatial correlation
+                    i_start = max(0, i - 2)
+                    i_end = min(nx, i + 3)
+                    j_start = max(0, j - 2)
+                    j_end = min(ny, j + 3)
+                    k_start = max(0, k - 2)
+                    k_end = min(nz, k + 3)
+                    
+                    noise_field[i, j, k] = np.mean(raw_noise[i_start:i_end, j_start:j_end, k_start:k_end])
+        
+        # Normalize noise to [-1, 1] range
+        noise_field = noise_field / (np.max(np.abs(noise_field)) + 1e-8)
+        
+        # Apply natural nutrient reduction with stronger gradient effect and noise
+        for i in range(nx):
+            for j in range(ny):
+                for k in range(nz):
+                    if consumption_mask[i, j, k]:
+                        # Calculate consumption effect based on cell density and distance from center
+                        cell_density_factor = total_cell_density[i, j, k]
+                        
+                        # Create gradient: closer to center = more consumption
+                        # Normalize distance from center (0 at center, 1 at boundary)
+                        normalized_distance = distance_from_center[i, j, k] / max_radius
+                        
+                        # Apply stronger consumption in center with smooth gradient outward
+                        # This creates ~0.5 nutrient at center, ~1.0 at boundaries
+                        reduction = max_consumption_effect * cell_density_factor * (1.0 - normalized_distance)
+                        
+                        # Add noise to break up linear patterns
+                        noise_factor = 1.0 + noise_scale * noise_field[i, j, k]
+                        
+                        # Apply noise to the reduction factor
+                        nutrient_field[i, j, k] = max(0.1, 1.0 - reduction * noise_factor)
+                    else:
+                        # Areas without cells maintain full nutrient with slight noise
+                        noise_factor = 1.0 + 0.05 * noise_field[i, j, k]  # Smaller noise for empty areas
+                        nutrient_field[i, j, k] = max(0.8, 1.0 * noise_factor)
+        
+        return nutrient_field
+    
+    def _create_radial_gradient_field(self, shape):
+        """
+        Create a simple radial gradient nutrient field.
+        
+        Args:
+            shape: Grid shape (nx, ny, nz)
+            
+        Returns:
+            nutrient_field: Radial gradient nutrient field
+        """
+        nx, ny, nz = shape
+        nutrient_field = np.ones((nx, ny, nz), dtype=np.float32)
+        
+        center = np.array([nx//2, ny//2, nz//2])
+        max_radius = np.sqrt(np.sum(center**2))
+        
+        for i in range(nx):
+            for j in range(ny):
+                for k in range(nz):
+                    # Calculate distance from center
+                    dist = np.sqrt((i - center[0])**2 + (j - center[1])**2 + (k - center[2])**2)
+                    
+                    # Create gradient: higher at boundaries, lower at center
+                    gradient_factor = dist / max_radius
+                    nutrient_field[i, j, k] = 0.2 + 0.8 * gradient_factor
         
         return nutrient_field
     
@@ -78,17 +217,19 @@ class NutrientField:
         
         # Extract consumption rates as a simple array for Numba compatibility
         consumption_rates = np.array([self.population_consumption_rates[label] for label in self.labels], dtype=np.float32)
+        nutrient_threshold = np.array([self.nutrient_threshold[self.labels.index(label)] for label in self.labels], dtype=np.float32)
+        production_rate = np.array([self.production_rate[self.labels.index(label)] for label in self.labels], dtype=np.float32)
         
         # Compute nutrient update using Numba-optimized function
         return compute_nutrient_update_numba(
             nutrient_field, phi_hat, dx,
-            self.diffusion_coeff, np.array(self.production_rate, dtype=np.float32), consumption_rates
+            self.diffusion_coeff, production_rate, consumption_rates, nutrient_threshold
         )
 
 
 @njit
 def compute_nutrient_update_numba(nutrient_field, phi_hat, dx, 
-                                diffusion_coeff, production_rate, consumption_rates):
+                                diffusion_coeff, production_rate, consumption_rates, nutrient_threshold):
     """
     Compute nutrient field update using Numba optimization. 
     
@@ -107,6 +248,9 @@ def compute_nutrient_update_numba(nutrient_field, phi_hat, dx,
     """
     nx, ny, nz = nutrient_field.shape
     M = phi_hat.shape[0]
+    phi_T = np.sum(phi_hat, axis=0)
+    cutoff = 0.1
+    penetration_depth = 0.03
     
     # Initialize new nutrient field
     nutrient_field_new = np.zeros_like(nutrient_field, dtype=np.float32)
@@ -131,15 +275,17 @@ def compute_nutrient_update_numba(nutrient_field, phi_hat, dx,
                 for m in range(M):
                     # Each population consumes nutrient based on its density and consumption rate
                     # Use a simple linear consumption model
-                    consumption += consumption_rates[m] * phi_hat[m, i, j, k]
+                    consumption += consumption_rates[m] * phi_hat[m, i, j, k] * (nutrient_field[i, j, k] ** 2 / (nutrient_field[i, j, k] ** 2 + nutrient_threshold[m] ** 2))
 
                 # Compute production term
                 production = 0.0
                 for m in range(M):
                     production += production_rate[m] * phi_hat[m, i, j, k]
-                
+
+                medium_exchange = 0.1 / (1 + np.exp((-phi_T[i, j, k] - cutoff) / penetration_depth)) * (1 - nutrient_field[i, j, k])
+
                 # Update nutrient field 
-                nutrient_field_new[i, j, k] = nutrient_field[i, j, k] + diffusion - consumption + production
+                nutrient_field_new[i, j, k] = nutrient_field[i, j, k] + diffusion - consumption + production + medium_exchange
                 
                 # Ensure non-negative nutrient concentration
                 nutrient_field_new[i, j, k] = max(0.0, nutrient_field_new[i, j, k])

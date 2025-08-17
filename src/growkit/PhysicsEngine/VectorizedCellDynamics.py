@@ -138,37 +138,24 @@ class VectorizedCellDynamics:
         phi_T = np.sum(phi_hat, axis=0)
         
         # Compute energy derivative once and reuse
-        time_start = time.time()
         energy_deriv = self.compute_energy_derivative(phi_T, dx)
-        time_end = time.time()
-        print(f"Energy derivative computation time: {time_end - time_start} seconds")
         
         # Compute solid velocity
         ux, uy, uz = self.compute_solid_velocity(phi_hat, nutrient_field, dx)
-        ux, uy, uz = -ux, -uy, -uz
         
         # Compute mass fluxes (pass precomputed energy derivative)
-        time_start = time.time()
         J_hat = self.compute_mass_fluxes(phi_hat, dx, energy_deriv)
-        time_end = time.time()
-        print(f"Mass flux computation time: {time_end - time_start} seconds")
         
         # Use provided source terms or compute them if not available
         if source_terms is None:
             if self.source_constructor is not None:
-                time_start = time.time()
                 source_terms = self.source_constructor.compute_source_vector_vectorized(phi_hat, nutrient_field)
-                time_end = time.time()
-                print(f"Source terms computation time: {time_end - time_start} seconds")
             else:
                 # If no source constructor, create zero source terms
                 source_terms = np.zeros_like(phi_hat)
         
         # Compute dynamics using the vectorized approach
-        time_start = time.time()
         result = compute_cell_dynamics_numba(phi_hat, ux, uy, uz, J_hat, source_terms, dx)
-        time_end = time.time()
-        print(f"Cell dynamics computation time: {time_end - time_start} seconds")
         
         return result
     
@@ -185,10 +172,8 @@ class VectorizedCellDynamics:
             A_hat: Source terms for all populations (M, nx, ny, nz)
         """
         if self.source_constructor is not None:
-            time_start = time.time()
             A_hat = self.source_constructor.compute_source_vector_vectorized(phi_hat, nutrient_field)
-            time_end = time.time()
-            print(f"Source terms computation time: {time_end - time_start} seconds")
+    
             return A_hat
         else:
             return np.zeros_like(phi_hat)
@@ -218,10 +203,10 @@ def compute_cell_dynamics_numba(phi_hat, ux, uy, uz, J_hat, A_hat, dx):
     # Compute dynamics for each population
     for i in range(M):
         # Advection term: -∇·(u φ_i)
-        adv_x = ux * phi_hat[i]
-        adv_y = uy * phi_hat[i]
-        adv_z = uz * phi_hat[i]
-        advection = -(_gradient_neumann(adv_x, dx, 0) + 
+        adv_x = -ux * phi_hat[i]
+        adv_y = -uy * phi_hat[i]
+        adv_z = -uz * phi_hat[i]
+        advection = (_gradient_neumann(adv_x, dx, 0) + 
                       _gradient_neumann(adv_y, dx, 1) + 
                       _gradient_neumann(adv_z, dx, 2))
         
@@ -239,7 +224,5 @@ def compute_cell_dynamics_numba(phi_hat, ux, uy, uz, J_hat, A_hat, dx):
         # Total derivative: dφ_i/dt = -∇·(u φ_i) - ∇·J_i + A_i
         dphi_hat[i] = advection + mass_flux + source_term
         
-        # Clip for stability
-        dphi_hat[i] = np.clip(dphi_hat[i], -1, 1)
     
     return dphi_hat

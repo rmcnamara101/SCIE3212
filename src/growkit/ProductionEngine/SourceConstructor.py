@@ -86,7 +86,7 @@ class SourceConstructor:
         Returns:
             Theta: (M, nx, ny, nz) array of nutrient switches for each spatial location
         """
-        k = 5.0  # Steepness parameter for smooth transition
+        k = self.cfg["nutrient"]["dynamics"]["k"]  # Steepness parameter for smooth transition
         shape = nutrient_field.shape
         Theta = np.zeros((self.M, *shape), dtype=np.float32)
         
@@ -95,7 +95,7 @@ class SourceConstructor:
             n_thresh = self.nutrient_thresholds[i]
             # Smooth Heaviside function: 0.5 * (1 + tanh(k * (nutrient - threshold)))
             # Apply to each spatial location
-            Theta[i] = 0.5 * (1 + np.tanh(k * (nutrient_field - n_thresh)))
+            Theta[i] = 0.5 * (1 - np.tanh(k * (nutrient_field - n_thresh)))
         
         return Theta
     

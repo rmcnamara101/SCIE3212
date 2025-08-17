@@ -29,7 +29,7 @@ def compute_adhesion_energy_derivative_numba(phi, laplace_phi, m):
     Returns:
         Energy derivative field: δE/δφ
     """
-    # Add numerical stability
+
     phi = np.clip(phi, 0.0, 1.0)
     laplace_phi = np.clip(laplace_phi, -1.0, 1.0)
     
@@ -39,7 +39,6 @@ def compute_adhesion_energy_derivative_numba(phi, laplace_phi, m):
     # Compute energy derivative: δE/δφ = m * (f'(φ) - 0.01 * ∇²φ)
     energy_deriv = m * (f_prime - 0.01 * laplace_phi)
     
-    # Clip for stability
     energy_deriv = np.clip(energy_deriv, -1.0, 1.0)
     
     return energy_deriv

@@ -36,9 +36,6 @@ def rk4_step_vectorized(phi_hat, dt, k1, k2, k3, k4):
     # RK4 update: y(t + dt) = y(t) + dt*(k1 + 2*k2 + 2*k3 + k4)/6
     phi_hat_new = phi_hat + dt * (k1 + 2*k2 + 2*k3 + k4) / 6.0
     
-    # Ensure physical constraints (volume fractions between 0 and 1)
-    phi_hat_new = np.clip(phi_hat_new, 0.0, 1.0)
-    
     return phi_hat_new
 
 
@@ -74,17 +71,14 @@ class RK4Integrator:
         
         # k2 = f(t + dt/2, y + dt*k1/2)
         phi_hat_k2 = phi_hat + 0.5 * self.dt * k1
-        phi_hat_k2 = np.clip(phi_hat_k2, 0.0, 1.0)  # Physical constraints
         k2 = dynamics_function(phi_hat_k2, nutrient_field, dx)
         
         # k3 = f(t + dt/2, y + dt*k2/2)
         phi_hat_k3 = phi_hat + 0.5 * self.dt * k2
-        phi_hat_k3 = np.clip(phi_hat_k3, 0.0, 1.0)  # Physical constraints
         k3 = dynamics_function(phi_hat_k3, nutrient_field, dx)
         
         # k4 = f(t + dt, y + dt*k3)
         phi_hat_k4 = phi_hat + self.dt * k3
-        phi_hat_k4 = np.clip(phi_hat_k4, 0.0, 1.0)  # Physical constraints
         k4 = dynamics_function(phi_hat_k4, nutrient_field, dx)
         
         # Update using RK4 formula

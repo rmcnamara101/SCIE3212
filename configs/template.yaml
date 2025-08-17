@@ -43,7 +43,7 @@ initial_conditions:
   
   # Nutrient field initialization (optional)
   nutrient:
-    type: <nutrient_type> # Options: "uniform", "gradient" (optional, uses default nutrient manager if not specified)
+    type: <nutrient_type> # Options: "uniform", "gradient", "natural" (optional, uses default nutrient manager if not specified)
     concentration: <concentration> # For uniform nutrient field (optional, defaults to 1.0)
     concentration_max: <max_concentration> # For gradient nutrient field (optional, defaults to 1.0)
     concentration_min: <min_concentration> # For gradient nutrient field (optional, defaults to 0.0)
@@ -64,8 +64,9 @@ populations:
         rate: <transfer rate> # float defining proportion of cells that transfer 
 
 nutrient:
-  - name: <name of the nutrient>
-    label: <label of the nutrient>
-    color: <color of the nutrient>
-    dynamics:
-      diffusion: <diffusion rate> # float
+  name: <name of the nutrient>
+  label: <label of the nutrient>
+  color: <color of the nutrient>
+  dynamics:
+    diffusion: <diffusion rate> # float
+    boundary_value: <boundary value> # float defining the value of the nutrient at the boundary

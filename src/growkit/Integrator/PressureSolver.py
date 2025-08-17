@@ -216,9 +216,6 @@ def solve_pressure_poisson_optimized(phi_T, S_T, energy_deriv, dx, shape, rtol=1
         if not np.isfinite(p_flat).all():
             p_flat = np.nan_to_num(p_flat, nan=0.0, posinf=0.0, neginf=0.0)
         
-        # Clip extreme values
-        p_flat = np.clip(p_flat, -1e6, 1e6)
-        
     except Exception as e:
         # Fallback to zero solution
         p_flat = np.zeros_like(rhs_flat)

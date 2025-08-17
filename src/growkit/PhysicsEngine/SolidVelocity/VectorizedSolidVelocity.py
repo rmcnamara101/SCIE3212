@@ -16,7 +16,6 @@ Date: 2025-02-19
 """
 
 import numpy as np
-import time
 from functools import lru_cache
 from src.growkit.MathEngine.Operators import gradient
 from src.growkit.Integrator.PressureSolver import PressureSolver
@@ -47,8 +46,6 @@ class VectorizedSolidVelocity:
         
         # Cache for pressure solutions to avoid redundant solves during RK4
         self._pressure_cache = {}
-        self._cache_hits = 0
-        self._cache_misses = 0
     
     def _compute_state_hash(self, phi_hat, nutrient_field, energy_deriv):
         """
@@ -111,23 +108,17 @@ class VectorizedSolidVelocity:
         
         if use_cache and state_hash in self._pressure_cache:
             # Cache hit - reuse pressure solution
-            self._cache_hits += 1
             pressure = self._pressure_cache[state_hash]
-            print(f"Pressure solver cache hit! (hits: {self._cache_hits}, misses: {self._cache_misses})")
         else:
             # Cache miss - solve pressure equation
-            self._cache_misses += 1
-            time_start = time.time()
             pressure = self.pressure_solver.solve_pressure(
                 phi_hat, nutrient_field, dx, energy_deriv=energy_deriv
             )
-            time_end = time.time()
-            print(f"Pressure solver time: {time_end - time_start} seconds (cache miss)")
             
             # Cache the result (limit cache size to prevent memory issues)
-            if use_cache and len(self._pressure_cache) < 20:  # Increased cache size for RK4
+            if use_cache and len(self._pressure_cache) < 10:  # Increased cache size for RK4
                 self._pressure_cache[state_hash] = pressure
-            elif use_cache and len(self._pressure_cache) >= 20:
+            elif use_cache and len(self._pressure_cache) >= 10:
                 # Clear cache if it gets too large
                 self._pressure_cache.clear()
                 self._pressure_cache[state_hash] = pressure
@@ -143,11 +134,10 @@ class VectorizedSolidVelocity:
         grad_C_x, grad_C_y, grad_C_z = gradient(phi_T, dx)
         
         # Compute velocity: u = -(∇p + (δE/δφ_T) ∇φ_T)
-        ux = -(grad_p_x + energy_deriv * grad_C_x)
-        uy = -(grad_p_y + energy_deriv * grad_C_y)
-        uz = -(grad_p_z + energy_deriv * grad_C_z)
-        
-        # Clip velocities for stability
+        ux = (grad_p_x + energy_deriv * grad_C_x)
+        uy = (grad_p_y + energy_deriv * grad_C_y)
+        uz = (grad_p_z + energy_deriv * grad_C_z)
+
         ux = np.clip(ux, -1, 1)
         uy = np.clip(uy, -1, 1)
         uz = np.clip(uz, -1, 1)

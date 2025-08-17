@@ -15,6 +15,7 @@ from pathlib import Path
 import yaml
 from collections import defaultdict
 import os
+from tqdm import tqdm
 
 # Pre-import all modules to avoid runtime import overhead
 from src.growkit.Fields.FieldManager import FieldManager
@@ -22,6 +23,7 @@ from src.growkit.PhysicsEngine.VectorizedCellDynamics import VectorizedCellDynam
 from src.growkit.PhysicsEngine.Nutrient.NutrientField import NutrientField
 from src.growkit.ProductionEngine.SourceConstructor import SourceConstructor
 from src.growkit.Integrator.RK4Integrator import RK4Integrator, AdaptiveRK4Integrator
+from src.growkit.Integrator.AdaptiveGridIntegrator import AdaptiveGridRK4Integrator
 
 
 class Profiler:
@@ -133,12 +135,22 @@ class TumorGrowthSimulator:
         
         # Initialize integrator
         dt = self.cfg["time"]["dt"]
-        if self.cfg.get("integrator", {}).get("adaptive", False):
-            tolerance = self.cfg["integrator"].get("tolerance", 1e-6)
-            min_dt = self.cfg["integrator"].get("min_dt", 1e-8)
-            max_dt = self.cfg["integrator"].get("max_dt", 1e-2)
+        integrator_config = self.cfg.get("integrator", {})
+        
+        if integrator_config.get("type") == "adaptive_grid":
+            # Use adaptive grid integrator
+            padding = integrator_config.get("padding", 5)
+            threshold = integrator_config.get("threshold", 1e-6)
+            min_sub_grid_size = integrator_config.get("min_sub_grid_size", 10)
+            self.integrator = AdaptiveGridRK4Integrator(dt, padding, threshold, min_sub_grid_size)
+        elif integrator_config.get("adaptive", False):
+            # Use adaptive time step integrator
+            tolerance = integrator_config.get("tolerance", 1e-6)
+            min_dt = integrator_config.get("min_dt", 1e-8)
+            max_dt = integrator_config.get("max_dt", 1e-2)
             self.integrator = AdaptiveRK4Integrator(dt, tolerance, min_dt, max_dt)
         else:
+            # Use standard RK4 integrator
             self.integrator = RK4Integrator(dt)
         
         # Simulation parameters
@@ -194,13 +206,18 @@ class TumorGrowthSimulator:
         """
         return self.nutrient_manager.compute_nutrient_update(phi_hat, nutrient_field, dx)
     
-    def step(self):
+    def step_debug(self, step: int):
         """
-        Perform one simulation step with detailed profiling.
+        Perform one simulation step with detailed profiling and debug print statements.
         
+        Args:
+            step: Current simulation step
+            
         Returns:
             success: Whether the step was successful
         """
+        print(f"\n=== Step {step} Debug Information ===")
+        
         # Start overall step timing
         self.profiler.start_timer("total_step")
         
@@ -208,11 +225,13 @@ class TumorGrowthSimulator:
         self.profiler.start_timer("field_retrieval")
         phi_hat, nutrient_field = self.field_manager.get_cell_fields()
         self.profiler.end_timer("field_retrieval")
+        print(f"Field retrieval completed")
         
         # Compute source terms once per time step (not for each RK4 coefficient)
         self.profiler.start_timer("source_terms_computation")
         source_terms = self.cell_dynamics.compute_source_terms(phi_hat, nutrient_field)
         self.profiler.end_timer("source_terms_computation")
+        print(f"Source terms computed")
         
         # Create a dynamics function that uses the pre-computed source terms
         def dynamics_function_with_source(phi_hat, nutrient_field, dx):
@@ -225,6 +244,7 @@ class TumorGrowthSimulator:
                 phi_hat, nutrient_field, self.field_manager.dx, dynamics_function_with_source
             )
             self.profiler.end_timer("adaptive_integration")
+            print(f"Adaptive integration completed, dt_used: {dt_used}")
             
             if success:
                 self.profiler.start_timer("nutrient_update")
@@ -232,6 +252,18 @@ class TumorGrowthSimulator:
                     phi_hat_new, nutrient_field, self.field_manager.dx
                 )
                 self.profiler.end_timer("nutrient_update")
+                print(f"Nutrient update completed")
+        elif isinstance(self.integrator, AdaptiveGridRK4Integrator):
+            self.profiler.start_timer("adaptive_grid_integration")
+            phi_hat_new, nutrient_field_new = self.integrator.step_with_nutrient_update(
+                phi_hat, nutrient_field, self.field_manager.dx,
+                dynamics_function_with_source, self.nutrient_function
+            )
+            self.profiler.end_timer("adaptive_grid_integration")
+            print(f"Adaptive grid integration completed")
+            
+            success = True
+            dt_used = self.integrator.dt
         else:
             self.profiler.start_timer("rk4_integration")
             phi_hat_new, nutrient_field_new = self.integrator.step_optimized(
@@ -239,6 +271,7 @@ class TumorGrowthSimulator:
                 dynamics_function_with_source, self.nutrient_function
             )
             self.profiler.end_timer("rk4_integration")
+            print(f"RK4 integration completed")
             
             success = True
             dt_used = self.integrator.dt
@@ -248,17 +281,20 @@ class TumorGrowthSimulator:
             self.profiler.start_timer("physics_fields_update")
             self.field_manager.update_physics_fields(phi_hat_new, nutrient_field_new, self.cell_dynamics, source_terms)
             self.profiler.end_timer("physics_fields_update")
+            print(f"Physics fields updated")
             
             # Normalize volume fractions after each time step
             self.profiler.start_timer("volume_fraction_normalization")
             phi_hat_normalized = self.field_manager.normalize_volume_fractions(add_host_field=False)
             self.profiler.end_timer("volume_fraction_normalization")
+            print(f"Volume fraction normalization completed")
             
             # Update fields with normalized values (only if normalization was needed)
             if phi_hat_normalized is not None:
                 self.profiler.start_timer("field_update")
                 self.field_manager.set_cell_fields(phi_hat_normalized, nutrient_field_new)
                 self.profiler.end_timer("field_update")
+                print(f"Fields updated with normalized values")
         
         # Update time
         self.time += dt_used
@@ -269,6 +305,84 @@ class TumorGrowthSimulator:
         # Record statistics
         step_time = self.profiler.timings["total_step"][-1] if self.profiler.timings["total_step"] else 0
         self.step_times.append(step_time)
+        
+        # Get the final normalized fields for statistics
+        phi_hat_final, _ = self.field_manager.get_cell_fields()
+        total_cells = np.sum(phi_hat_final)
+        self.total_cells.append(total_cells)
+        
+        # Check volume fraction constraints and log if there are issues
+        is_valid, max_deviation, mean_deviation = self.field_manager.check_volume_fraction_constraints()
+        if not is_valid:  # Warn if there are negative values or overflow
+            print(f"Warning: Volume fraction constraint violation - Max deviation: {max_deviation:.6f}, Mean deviation: {mean_deviation:.6f}")
+        
+        # Print timing breakdown for this step
+        self.profiler.print_step_summary(step)
+        
+        print(f"=== Step {step} completed successfully ===\n")
+        
+        return success
+    
+    def step(self):
+        """
+        Perform one simulation step without any profiling or print statements.
+        
+        Returns:
+            success: Whether the step was successful
+        """
+        # Get current fields from field manager
+        phi_hat, nutrient_field = self.field_manager.get_cell_fields()
+        
+        # Compute source terms once per time step (not for each RK4 coefficient)
+        source_terms = self.cell_dynamics.compute_source_terms(phi_hat, nutrient_field)
+        
+        # Create a dynamics function that uses the pre-computed source terms
+        def dynamics_function_with_source(phi_hat, nutrient_field, dx):
+            return self.dynamics_function(phi_hat, nutrient_field, dx, source_terms)
+        
+        # Perform RK4 step with nutrient update
+        if isinstance(self.integrator, AdaptiveRK4Integrator):
+            phi_hat_new, dt_used, success = self.integrator.step_adaptive(
+                phi_hat, nutrient_field, self.field_manager.dx, dynamics_function_with_source
+            )
+            
+            if success:
+                nutrient_field_new = self.nutrient_function(
+                    phi_hat_new, nutrient_field, self.field_manager.dx
+                )
+        elif isinstance(self.integrator, AdaptiveGridRK4Integrator):
+            phi_hat_new, nutrient_field_new = self.integrator.step_with_nutrient_update(
+                phi_hat, nutrient_field, self.field_manager.dx,
+                dynamics_function_with_source, self.nutrient_function
+            )
+            
+            success = True
+            dt_used = self.integrator.dt
+        else:
+            phi_hat_new, nutrient_field_new = self.integrator.step_optimized(
+                phi_hat, nutrient_field, self.field_manager.dx,
+                dynamics_function_with_source, self.nutrient_function
+            )
+            
+            success = True
+            dt_used = self.integrator.dt
+        
+        if success:
+            # Update physics fields (this also updates the field manager's stored fields)
+            self.field_manager.update_physics_fields(phi_hat_new, nutrient_field_new, self.cell_dynamics, source_terms)
+            
+            # Normalize volume fractions after each time step
+            phi_hat_normalized = self.field_manager.normalize_volume_fractions(add_host_field=False)
+            
+            # Update fields with normalized values (only if normalization was needed)
+            if phi_hat_normalized is not None:
+                self.field_manager.set_cell_fields(phi_hat_normalized, nutrient_field_new)
+        
+        # Update time
+        self.time += dt_used
+        
+        # Record statistics (minimal)
+        self.step_times.append(0.0)  # No timing recorded
         
         # Get the final normalized fields for statistics
         phi_hat_final, _ = self.field_manager.get_cell_fields()
@@ -401,32 +515,35 @@ class TumorGrowthSimulator:
         # Initialize fields using field manager
         self.initialize_fields(initial_conditions)
         
-        # Main simulation loop
-        for step in range(1, self.steps + 1):
-            # Perform simulation step
-            success = self.step()
-            
-            if not success:
-                print(f"Warning: Step {step} failed, retrying with smaller time step")
-                continue
-            
-            # Save output
-            #self.save_output(step)
-            
-            # Save plots
-            #self.save_plots(step)
-            
-            # Print progress and profiling info
-            if step % 10 == 0:
+        # Main simulation loop with tqdm progress bar
+        with tqdm(total=self.steps, desc="Simulation Progress", unit="step") as pbar:
+            for step in range(1, self.steps + 1):
+                # Perform simulation step
+                if profile_interval > 0 and step % profile_interval == 0:
+                    success = self.step_debug(step)
+                else:
+                    success = self.step()
+                
+                if not success:
+                    print(f"Warning: Step {step} failed, retrying with smaller time step")
+                    continue
+                
+                # Save output
+                #self.save_output(step)
+                
+                # Save plots
+                #self.save_plots(step)
+                
+                # Update progress bar with current info
                 phi_hat, _ = self.field_manager.get_cell_fields()
                 total_cells = np.sum(phi_hat)
-                avg_step_time = np.mean(self.step_times[-10:])
-                print(f"Step {step}/{self.steps}, Time: {self.time:.3f}, "
-                      f"Total cells: {total_cells:.3f}, Avg step time: {avg_step_time:.3f}s")
-                
-                # Print detailed profiling breakdown
-                if profile_interval > 0 and step % profile_interval == 0:
-                    self.profiler.print_step_summary(step)
+                avg_step_time = np.mean(self.step_times[-10:]) if len(self.step_times) >= 10 else 0
+                pbar.set_postfix({
+                    'Time': f'{self.time:.3f}',
+                    'Cells': f'{total_cells:.3f}',
+                    'Avg Step': f'{avg_step_time:.3f}s'
+                })
+                pbar.update(1)
         
         print(f"Simulation completed!")
         print(f"Final time: {self.time:.3f}")
@@ -513,54 +630,56 @@ class TumorGrowthSimulator:
         
         print(f"Saved initial conditions (step 0, time 0.0)")
         
-        # Main simulation loop
-        for step in range(1, total_steps + 1):
-            # Perform simulation step
-            success = self.step()
-            
-            if not success:
-                print(f"Warning: Step {step} failed, retrying with smaller time step")
-                continue
-            
-            # Save data at specified intervals
-            if step % save_interval == 0:
-                # Get current fields
-                phi_hat, nutrient_field = self.field_manager.get_cell_fields()
+        # Main simulation loop with tqdm progress bar
+        with tqdm(total=total_steps, desc="Simulation Progress", unit="step") as pbar:
+            for step in range(1, total_steps + 1):
+                # Perform simulation step
+                if profile_interval > 0 and step % profile_interval == 0:
+                    success = self.step_debug(step)
+                else:
+                    success = self.step()
                 
-                # Store basic data
-                saved_steps.append(step)
-                saved_times.append(self.time)
-                saved_phi_hat.append(phi_hat.copy())
-                saved_nutrient_fields.append(nutrient_field.copy())
+                if not success:
+                    print(f"Warning: Step {step} failed, retrying with smaller time step")
+                    continue
                 
-                # Store physics data if requested
-                if save_physics_fields:
-                    physics_data = {
-                        "pressure": self.field_manager.pressure.copy(),
-                        "velocity": self.field_manager.velocity.copy(),
-                        "energy_derivative": self.field_manager.energy_derivative.copy(),
-                        "mass_flux": self.field_manager.mass_flux.copy(),
-                        "source_terms": self.field_manager.source_terms.copy()
-                    }
-                    saved_physics_data.append(physics_data)
+                # Save data at specified intervals
+                if step % save_interval == 0:
+                    # Get current fields
+                    phi_hat, nutrient_field = self.field_manager.get_cell_fields()
+                    
+                    # Store basic data
+                    saved_steps.append(step)
+                    saved_times.append(self.time)
+                    saved_phi_hat.append(phi_hat.copy())
+                    saved_nutrient_fields.append(nutrient_field.copy())
+                    
+                    # Store physics data if requested
+                    if save_physics_fields:
+                        physics_data = {
+                            "pressure": self.field_manager.pressure.copy(),
+                            "velocity": self.field_manager.velocity.copy(),
+                            "energy_derivative": self.field_manager.energy_derivative.copy(),
+                            "mass_flux": self.field_manager.mass_flux.copy(),
+                            "source_terms": self.field_manager.source_terms.copy()
+                        }
+                        saved_physics_data.append(physics_data)
+                    
+                    # Save plots if requested
+                    if save_plots:
+                        self.save_plots(step)
                 
-                # Save plots if requested
-                if save_plots:
-                    self.save_plots(step)
-                
-                print(f"Saved data for step {step}/{total_steps}, Time: {self.time:.3f}")
-            
-            # Print progress and profiling info
-            if step % 10 == 0:
+                # Update progress bar with current info
                 phi_hat, _ = self.field_manager.get_cell_fields()
                 total_cells = np.sum(phi_hat)
-                avg_step_time = np.mean(self.step_times[-10:])
-                print(f"Step {step}/{total_steps}, Time: {self.time:.3f}, "
-                      f"Total cells: {total_cells:.3f}, Avg step time: {avg_step_time:.3f}s")
-                
-                # Print detailed profiling breakdown
-                if profile_interval > 0 and step % profile_interval == 0:
-                    self.profiler.print_step_summary(step)
+                avg_step_time = np.mean(self.step_times[-10:]) if len(self.step_times) >= 10 else 0
+                pbar.set_postfix({
+                    'Time': f'{self.time:.3f}',
+                    'Cells': f'{total_cells:.3f}',
+                    'Avg Step': f'{avg_step_time:.3f}s',
+                    'Saved': len(saved_steps)
+                })
+                pbar.update(1)
         
         print(f"Simulation completed!")
         print(f"Final time: {self.time:.3f}")
@@ -569,6 +688,12 @@ class TumorGrowthSimulator:
         
         # Print final performance summary
         self.profiler.print_final_summary()
+        
+        # Print adaptive grid statistics if using adaptive grid integrator
+        if isinstance(self.integrator, AdaptiveGridRK4Integrator):
+            print("\n" + "="*50)
+            self.integrator.print_statistics()
+            print("="*50)
         
         # Prepare simulation data for return
         simulation_data = {
@@ -613,28 +738,53 @@ class TumorGrowthSimulator:
             simulation_data: Dictionary containing simulation data
             filepath: Path to save the data
         """
-        # Convert lists to arrays for efficient storage
-        save_dict = {
-            "metadata": simulation_data["metadata"],
-            "phi_hat": np.array(simulation_data["field_data"]["phi_hat"]),
-            "nutrient_fields": np.array(simulation_data["field_data"]["nutrient_fields"]),
-            "step_times": np.array(simulation_data["performance"]["step_times"]),
-            "total_cells": np.array(simulation_data["performance"]["total_cells"])
-        }
-        
-        # Add physics data if available
-        if "physics_data" in simulation_data:
-            physics_data = simulation_data["physics_data"]
-            save_dict.update({
-                "pressure": np.array([p["pressure"] for p in physics_data]),
-                "velocity": np.array([p["velocity"] for p in physics_data]),
-                "energy_derivative": np.array([p["energy_derivative"] for p in physics_data]),
-                "mass_flux": np.array([p["mass_flux"] for p in physics_data]),
-                "source_terms": np.array([p["source_terms"] for p in physics_data])
-            })
-        
-        # Save with compression
-        np.savez_compressed(filepath, **save_dict)
+        try:
+            # Convert lists to arrays for efficient storage
+            save_dict = {
+                "phi_hat": np.array(simulation_data["field_data"]["phi_hat"]),
+                "nutrient_fields": np.array(simulation_data["field_data"]["nutrient_fields"]),
+                "step_times": np.array(simulation_data["performance"]["step_times"]),
+                "total_cells": np.array(simulation_data["performance"]["total_cells"])
+            }
+            
+            # Save metadata separately as a pickle object
+            import pickle
+            metadata_bytes = pickle.dumps(simulation_data["metadata"])
+            save_dict["metadata"] = np.frombuffer(metadata_bytes, dtype=np.uint8)
+            
+            # Add physics data if available
+            if "physics_data" in simulation_data:
+                physics_data = simulation_data["physics_data"]
+                try:
+                    save_dict.update({
+                        "pressure": np.array([p["pressure"] for p in physics_data]),
+                        "velocity": np.array([p["velocity"] for p in physics_data]),
+                        "energy_derivative": np.array([p["energy_derivative"] for p in physics_data]),
+                        "mass_flux": np.array([p["mass_flux"] for p in physics_data]),
+                        "source_terms": np.array([p["source_terms"] for p in physics_data])
+                    })
+                except Exception as e:
+                    print(f"Warning: Could not save physics data: {e}")
+                    # Try to save without source_terms which might be the issue
+                    try:
+                        save_dict.update({
+                            "pressure": np.array([p["pressure"] for p in physics_data]),
+                            "velocity": np.array([p["velocity"] for p in physics_data]),
+                            "energy_derivative": np.array([p["energy_derivative"] for p in physics_data]),
+                            "mass_flux": np.array([p["mass_flux"] for p in physics_data])
+                        })
+                    except Exception as e2:
+                        print(f"Warning: Could not save any physics data: {e2}")
+            
+            # Save with compression
+            np.savez_compressed(filepath, **save_dict)
+            
+        except Exception as e:
+            print(f"Error saving simulation data: {e}")
+            print(f"Simulation data keys: {list(simulation_data.keys())}")
+            if "physics_data" in simulation_data:
+                print(f"Physics data keys: {list(simulation_data['physics_data'][0].keys()) if simulation_data['physics_data'] else 'Empty'}")
+            raise
     
     def load_simulation_data(self, filepath):
         """
@@ -651,9 +801,14 @@ class TumorGrowthSimulator:
         # Load data
         data = np.load(filepath, allow_pickle=True)
         
+        # Load metadata from pickle bytes
+        import pickle
+        metadata_bytes = data["metadata"].tobytes()
+        metadata = pickle.loads(metadata_bytes)
+        
         # Reconstruct simulation data structure
         simulation_data = {
-            "metadata": data["metadata"].item(),
+            "metadata": metadata,
             "field_data": {
                 "phi_hat": data["phi_hat"],
                 "nutrient_fields": data["nutrient_fields"]

@@ -12,7 +12,8 @@ class FieldManager:
         self.cfg = yaml.safe_load(Path(cfg_path).read_text())
 
         # --- domain ---------------------------------------------------------
-        self.grid = (self.cfg["domain"]["shape"], self.cfg["domain"]["shape"], self.cfg["domain"]["shape"])
+        shape = int(self.cfg["domain"]["shape"])  # Ensure shape is an integer
+        self.grid = (shape, shape, shape)
         self.dx    = self.cfg["domain"]["dx"]
         self.dt    = self.cfg["time"]["dt"]
         self.steps = self.cfg["time"]["steps"]
