@@ -137,11 +137,6 @@ class VectorizedSolidVelocity:
         ux = (grad_p_x + energy_deriv * grad_C_x)
         uy = (grad_p_y + energy_deriv * grad_C_y)
         uz = (grad_p_z + energy_deriv * grad_C_z)
-
-        ux = np.clip(ux, -1, 1)
-        uy = np.clip(uy, -1, 1)
-        uz = np.clip(uz, -1, 1)
-        
         # Store velocity in field manager if available
         if self.field_manager is not None:
             self.field_manager.velocity[0] = ux

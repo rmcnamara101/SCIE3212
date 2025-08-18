@@ -29,9 +29,6 @@ def compute_adhesion_energy_derivative_numba(phi, laplace_phi, m):
     Returns:
         Energy derivative field: δE/δφ
     """
-
-    phi = np.clip(phi, 0.0, 1.0)
-    laplace_phi = np.clip(laplace_phi, -1.0, 1.0)
     
     # Compute double-well potential derivative: f'(φ) = 0.5 * φ * (1 - φ) * (2φ - 1)
     f_prime = 0.5 * phi * (1 - phi) * (2 * phi - 1)
@@ -39,7 +36,6 @@ def compute_adhesion_energy_derivative_numba(phi, laplace_phi, m):
     # Compute energy derivative: δE/δφ = m * (f'(φ) - 0.01 * ∇²φ)
     energy_deriv = m * (f_prime - 0.01 * laplace_phi)
     
-    energy_deriv = np.clip(energy_deriv, -1.0, 1.0)
     
     return energy_deriv
 

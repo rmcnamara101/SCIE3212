@@ -889,6 +889,415 @@ class SimPlotter:
             'background_mean_nutrients': background_mean_nutrients
         }
     
+    def plot_source_field_evolution(self, output_dir=None, save_plot=False, show_plot=True,
+                                  figsize=(15, 10), z_slice=None, cmap="RdBu_r", 
+                                  add_tumor_contours=False, tumor_threshold=0.1,
+                                  max_plots=6, include_statistics=True, population_idx=0):
+        """
+        Plot source term field evolution over time.
+        
+        Args:
+            output_dir: Directory to save plot
+            save_plot: Whether to save the plot
+            show_plot: Whether to display the plot
+            figsize: Figure size
+            z_slice: Z-slice to plot (defaults to center)
+            cmap: Colormap for the source field (RdBu_r is good for positive/negative values)
+            add_tumor_contours: Whether to add tumor boundary contours
+            tumor_threshold: Density threshold for tumor boundary
+            max_plots: Maximum number of time points to plot
+            include_statistics: Whether to include statistics text on plots
+            population_idx: Index of population to plot (default 0)
+        """
+        print("Creating source field evolution plot...")
+        
+        # Check if source fields are available in physics data
+        if "physics_data" not in self.simulation_data:
+            print("Warning: No physics data found in simulation data.")
+            print("Available data keys:", list(self.simulation_data.keys()))
+            return
+        
+        # Check if source terms are available in physics data
+        physics_data = self.simulation_data["physics_data"]
+        if len(physics_data) == 0 or "source_terms" not in physics_data[0]:
+            print("Warning: No source terms found in physics data.")
+            print("Available physics data keys:", list(physics_data[0].keys()) if len(physics_data) > 0 else "No physics data")
+            return
+        
+        # Select time points to plot
+        if len(self.saved_steps) <= max_plots:
+            plot_indices = list(range(len(self.saved_steps)))
+        else:
+            # Select evenly spaced time points
+            plot_indices = np.linspace(0, len(self.saved_steps)-1, max_plots, dtype=int)
+        
+        # Calculate subplot layout
+        num_plots = len(plot_indices)
+        num_cols = min(3, num_plots)
+        num_rows = (num_plots + num_cols - 1) // num_cols
+        
+        fig, axes = plt.subplots(num_rows, num_cols, figsize=figsize)
+        if num_plots == 1:
+            axes_flat = [axes]
+        elif num_rows == 1:
+            axes_flat = axes.reshape(1, -1).flatten()
+        elif num_cols == 1:
+            axes_flat = axes.reshape(-1, 1).flatten()
+        else:
+            axes_flat = axes.flatten()
+        
+        # Set default z_slice if not provided
+        if z_slice is None:
+            z_slice = self.grid_size[2] // 2
+        
+        # Create coordinate grids
+        x = np.arange(self.grid_size[0]) * self.dx
+        y = np.arange(self.grid_size[1]) * self.dx
+        X, Y = np.meshgrid(x, y, indexing='ij')
+        
+        # Find global min/max for consistent color scaling
+        all_source_data = []
+        for step_idx in range(len(self.saved_steps)):
+            source_field = physics_data[step_idx]["source_terms"][population_idx]
+            source_slice = source_field[:, :, z_slice]
+            all_source_data.append(source_slice)
+        
+        vmin = np.min(all_source_data)
+        vmax = np.max(all_source_data)
+        
+        # Ensure symmetric color scaling around zero if source terms can be negative
+        if vmin < 0 and vmax > 0:
+            abs_max = max(abs(vmin), abs(vmax))
+            vmin = -abs_max
+            vmax = abs_max
+        
+        # Plot each time step
+        for i, step_idx in enumerate(plot_indices):
+            ax = axes_flat[i]
+            
+            # Get step information
+            step = self.saved_steps[step_idx]
+            time = self.saved_times[step_idx]
+            
+            # Get source field for this step
+            source_field = physics_data[step_idx]["source_terms"][population_idx]
+            source_slice = source_field[:, :, z_slice]
+            
+            # Create the plot with consistent color scaling
+            im = ax.imshow(source_slice, extent=[x[0], x[-1], y[0], y[-1]], 
+                          origin='lower', cmap=cmap, aspect='equal', vmin=vmin, vmax=vmax)
+            
+            # Add tumor boundary contours if requested
+            if add_tumor_contours:
+                # Get total tumor density for boundary detection
+                phi_hat = self.field_data["phi_hat"][step_idx]
+                total_density = np.sum(phi_hat, axis=0)
+                density_slice = total_density[:, :, z_slice]
+                
+                # Add tumor boundary contour
+                ax.contour(X, Y, density_slice, levels=[tumor_threshold], 
+                          colors='black', linewidths=2, alpha=0.8)
+            
+            # Add statistics text if requested
+            if include_statistics:
+                stats_text = f"Min: {np.min(source_slice):.3f}\nMax: {np.max(source_slice):.3f}\nMean: {np.mean(source_slice):.3f}"
+                ax.text(0.02, 0.98, stats_text, transform=ax.transAxes, verticalalignment='top',
+                       bbox=dict(boxstyle='round', facecolor='white', alpha=0.8))
+            
+            # Set title and labels
+            ax.set_title(f'Step {step} (t={time:.2f})')
+            ax.set_xlabel('X')
+            ax.set_ylabel('Y')
+            
+            # Add colorbar to the last plot
+            if i == num_plots - 1:
+                fig.colorbar(im, ax=ax, label='Source Term')
+        
+        # Hide unused subplots
+        for i in range(num_plots, len(axes_flat)):
+            axes_flat[i].set_visible(False)
+        
+        # Set overall title
+        fig.suptitle(f'Source Field Evolution (z={z_slice})', fontsize=16)
+        
+        plt.tight_layout()
+        
+        if save_plot and output_dir:
+            os.makedirs(output_dir, exist_ok=True)
+            filename = f'source_field_evolution_z{z_slice}.png'
+            plt.savefig(os.path.join(output_dir, filename), dpi=300, bbox_inches='tight')
+            print(f"Source field evolution plot saved to {output_dir}/{filename}")
+        
+        if show_plot:
+            plt.show()
+        else:
+            plt.close()
+    
+    def plot_source_statistics_evolution(self, output_dir=None, save_plot=False, show_plot=True,
+                                       figsize=(15, 10), z_slice=None, population_idx=0):
+        """
+        Plot source field statistics evolution over time.
+        
+        Args:
+            output_dir: Directory to save plot
+            save_plot: Whether to save the plot
+            show_plot: Whether to display the plot
+            figsize: Figure size
+            z_slice: Z-slice to analyze (defaults to center)
+            population_idx: Index of population to analyze (default 0)
+        """
+        print("Calculating source field statistics evolution...")
+        
+        # Check if source fields are available in physics data
+        if "physics_data" not in self.simulation_data:
+            print("Warning: No physics data found in simulation data.")
+            print("Available data keys:", list(self.simulation_data.keys()))
+            return
+        
+        # Check if source terms are available in physics data
+        physics_data = self.simulation_data["physics_data"]
+        if len(physics_data) == 0 or "source_terms" not in physics_data[0]:
+            print("Warning: No source terms found in physics data.")
+            print("Available physics data keys:", list(physics_data[0].keys()) if len(physics_data) > 0 else "No physics data")
+            return
+        
+        # Set default z_slice if not provided
+        if z_slice is None:
+            z_slice = self.grid_size[2] // 2
+        
+        # Calculate statistics for each time step
+        min_sources = []
+        max_sources = []
+        mean_sources = []
+        total_sources = []
+        positive_sources = []
+        negative_sources = []
+        
+        for step_idx in range(len(self.saved_steps)):
+            source_field = physics_data[step_idx]["source_terms"][population_idx]
+            source_slice = source_field[:, :, z_slice]
+            
+            min_sources.append(np.min(source_slice))
+            max_sources.append(np.max(source_slice))
+            mean_sources.append(np.mean(source_slice))
+            total_sources.append(np.sum(source_slice))
+            
+            # Calculate positive and negative contributions
+            positive_mask = source_slice > 0
+            negative_mask = source_slice < 0
+            positive_sources.append(np.sum(source_slice[positive_mask]))
+            negative_sources.append(np.sum(source_slice[negative_mask]))
+        
+        # Create subplots
+        fig, axes = plt.subplots(2, 3, figsize=figsize)
+        
+        # Plot 1: Min source
+        ax = axes[0, 0]
+        ax.plot(self.saved_times, min_sources, 'b-', linewidth=2, marker='o', markersize=4)
+        ax.set_xlabel('Time')
+        ax.set_ylabel('Min Source')
+        ax.set_title('Minimum Source Term')
+        ax.grid(True, alpha=0.3)
+        
+        # Plot 2: Max source
+        ax = axes[0, 1]
+        ax.plot(self.saved_times, max_sources, 'r-', linewidth=2, marker='o', markersize=4)
+        ax.set_xlabel('Time')
+        ax.set_ylabel('Max Source')
+        ax.set_title('Maximum Source Term')
+        ax.grid(True, alpha=0.3)
+        
+        # Plot 3: Mean source
+        ax = axes[0, 2]
+        ax.plot(self.saved_times, mean_sources, 'g-', linewidth=2, marker='o', markersize=4)
+        ax.set_xlabel('Time')
+        ax.set_ylabel('Mean Source')
+        ax.set_title('Mean Source Term')
+        ax.grid(True, alpha=0.3)
+        
+        # Plot 4: Total source
+        ax = axes[1, 0]
+        ax.plot(self.saved_times, total_sources, 'm-', linewidth=2, marker='o', markersize=4)
+        ax.set_xlabel('Time')
+        ax.set_ylabel('Total Source')
+        ax.set_title('Total Source Term')
+        ax.grid(True, alpha=0.3)
+        
+        # Plot 5: Positive vs Negative contributions
+        ax = axes[1, 1]
+        ax.plot(self.saved_times, positive_sources, 'g-', linewidth=2, marker='o', markersize=4, label='Positive')
+        ax.plot(self.saved_times, negative_sources, 'r-', linewidth=2, marker='s', markersize=4, label='Negative')
+        ax.set_xlabel('Time')
+        ax.set_ylabel('Source Contribution')
+        ax.set_title('Positive vs Negative Sources')
+        ax.legend()
+        ax.grid(True, alpha=0.3)
+        
+        # Plot 6: Net source (positive + negative)
+        ax = axes[1, 2]
+        net_sources = np.array(positive_sources) + np.array(negative_sources)
+        ax.plot(self.saved_times, net_sources, 'k-', linewidth=2, marker='o', markersize=4)
+        ax.set_xlabel('Time')
+        ax.set_ylabel('Net Source')
+        ax.set_title('Net Source Term')
+        ax.grid(True, alpha=0.3)
+        ax.axhline(y=0, color='k', linestyle='--', alpha=0.5)
+        
+        plt.tight_layout()
+        
+        if save_plot and output_dir:
+            os.makedirs(output_dir, exist_ok=True)
+            filename = f'source_statistics_evolution_z{z_slice}.png'
+            plt.savefig(os.path.join(output_dir, filename), dpi=300, bbox_inches='tight')
+            print(f"Source statistics evolution plot saved to {output_dir}/{filename}")
+        
+        if show_plot:
+            plt.show()
+        else:
+            plt.close()
+        
+        return {
+            'times': self.saved_times,
+            'min_sources': min_sources,
+            'max_sources': max_sources,
+            'mean_sources': mean_sources,
+            'total_sources': total_sources,
+            'positive_sources': positive_sources,
+            'negative_sources': negative_sources
+        }
+    
+    def plot_source_tumor_correlation(self, output_dir=None, save_plot=False, show_plot=True,
+                                    figsize=(15, 10), z_slice=None, tumor_threshold=0.1, population_idx=0):
+        """
+        Plot correlation between source field and tumor density.
+        
+        Args:
+            output_dir: Directory to save plot
+            save_plot: Whether to save the plot
+            show_plot: Whether to display the plot
+            figsize: Figure size
+            z_slice: Z-slice to analyze (defaults to center)
+            tumor_threshold: Density threshold for tumor region
+            population_idx: Index of population to analyze (default 0)
+        """
+        print("Analyzing source-tumor correlation...")
+        
+        # Check if source fields are available in physics data
+        if "physics_data" not in self.simulation_data:
+            print("Warning: No physics data found in simulation data.")
+            print("Available data keys:", list(self.simulation_data.keys()))
+            return
+        
+        # Check if source terms are available in physics data
+        physics_data = self.simulation_data["physics_data"]
+        if len(physics_data) == 0 or "source_terms" not in physics_data[0]:
+            print("Warning: No source terms found in physics data.")
+            print("Available physics data keys:", list(physics_data[0].keys()) if len(physics_data) > 0 else "No physics data")
+            return
+        
+        # Set default z_slice if not provided
+        if z_slice is None:
+            z_slice = self.grid_size[2] // 2
+        
+        # Calculate correlation metrics for each time step
+        correlations = []
+        tumor_mean_sources = []
+        background_mean_sources = []
+        
+        for step_idx in range(len(self.saved_steps)):
+            # Get source field
+            source_field = physics_data[step_idx]["source_terms"][population_idx]
+            source_slice = source_field[:, :, z_slice]
+            
+            # Get tumor density
+            phi_hat = self.field_data["phi_hat"][step_idx]
+            total_density = np.sum(phi_hat, axis=0)
+            density_slice = total_density[:, :, z_slice]
+            
+            # Create tumor mask
+            tumor_mask = density_slice > tumor_threshold
+            background_mask = ~tumor_mask
+            
+            # Calculate correlation
+            if np.any(tumor_mask) and np.any(background_mask):
+                correlation = np.corrcoef(density_slice.flatten(), source_slice.flatten())[0, 1]
+                correlations.append(correlation if not np.isnan(correlation) else 0.0)
+                
+                # Calculate mean source levels
+                tumor_mean_sources.append(np.mean(source_slice[tumor_mask]))
+                background_mean_sources.append(np.mean(source_slice[background_mask]))
+            else:
+                correlations.append(0.0)
+                tumor_mean_sources.append(0.0)
+                background_mean_sources.append(np.mean(source_slice))
+        
+        # Create subplots
+        fig, axes = plt.subplots(2, 2, figsize=figsize)
+        
+        # Plot 1: Correlation over time
+        ax = axes[0, 0]
+        ax.plot(self.saved_times, correlations, 'b-', linewidth=2, marker='o', markersize=4)
+        ax.set_xlabel('Time')
+        ax.set_ylabel('Correlation Coefficient')
+        ax.set_title('Source-Tumor Correlation')
+        ax.grid(True, alpha=0.3)
+        ax.axhline(y=0, color='k', linestyle='--', alpha=0.5)
+        
+        # Plot 2: Mean source in tumor vs background
+        ax = axes[0, 1]
+        ax.plot(self.saved_times, tumor_mean_sources, 'r-', linewidth=2, marker='o', markersize=4, label='Tumor Region')
+        ax.plot(self.saved_times, background_mean_sources, 'g-', linewidth=2, marker='s', markersize=4, label='Background')
+        ax.set_xlabel('Time')
+        ax.set_ylabel('Mean Source Term')
+        ax.set_title('Mean Source Levels')
+        ax.legend()
+        ax.grid(True, alpha=0.3)
+        
+        # Plot 3: Source difference (tumor - background)
+        ax = axes[1, 0]
+        source_diff = np.array(tumor_mean_sources) - np.array(background_mean_sources)
+        ax.plot(self.saved_times, source_diff, 'm-', linewidth=2, marker='o', markersize=4)
+        ax.set_xlabel('Time')
+        ax.set_ylabel('Source Difference')
+        ax.set_title('Tumor - Background Source Difference')
+        ax.grid(True, alpha=0.3)
+        ax.axhline(y=0, color='k', linestyle='--', alpha=0.5)
+        
+        # Plot 4: Scatter plot for last time step
+        ax = axes[1, 1]
+        last_source = physics_data[-1]["source_terms"][population_idx][:, :, z_slice]
+        last_density = np.sum(self.field_data["phi_hat"][-1], axis=0)[:, :, z_slice]
+        
+        # Sample points for scatter plot (every 4th point to avoid overcrowding)
+        sample_mask = np.zeros_like(last_density, dtype=bool)
+        sample_mask[::4, ::4] = True
+        
+        ax.scatter(last_density[sample_mask], last_source[sample_mask], alpha=0.6, s=10)
+        ax.set_xlabel('Tumor Density')
+        ax.set_ylabel('Source Term')
+        ax.set_title(f'Source vs Density (t={self.saved_times[-1]:.2f})')
+        ax.grid(True, alpha=0.3)
+        
+        plt.tight_layout()
+        
+        if save_plot and output_dir:
+            os.makedirs(output_dir, exist_ok=True)
+            filename = f'source_tumor_correlation_z{z_slice}.png'
+            plt.savefig(os.path.join(output_dir, filename), dpi=300, bbox_inches='tight')
+            print(f"Source-tumor correlation plot saved to {output_dir}/{filename}")
+        
+        if show_plot:
+            plt.show()
+        else:
+            plt.close()
+        
+        return {
+            'times': self.saved_times,
+            'correlations': correlations,
+            'tumor_mean_sources': tumor_mean_sources,
+            'background_mean_sources': background_mean_sources
+        }
+    
     def export_observables_data(self, output_dir, filename='observables_data.csv'):
         """
         Export all observables data to CSV files.
@@ -943,6 +1352,20 @@ class SimPlotter:
             data['Nutrient_Max'] = nutrient_stats['max_concentrations']
             data['Nutrient_Mean'] = nutrient_stats['mean_concentrations']
             data['Nutrient_Total'] = nutrient_stats['total_concentrations']
+        
+        # Add source data if available
+        if "physics_data" in self.simulation_data:
+            physics_data = self.simulation_data["physics_data"]
+            if len(physics_data) > 0 and "source_terms" in physics_data[0]:
+                source_stats = self.plot_source_statistics_evolution(
+                    output_dir=None, save_plot=False, show_plot=False
+                )
+                data['Source_Min'] = source_stats['min_sources']
+                data['Source_Max'] = source_stats['max_sources']
+                data['Source_Mean'] = source_stats['mean_sources']
+                data['Source_Total'] = source_stats['total_sources']
+                data['Source_Positive'] = source_stats['positive_sources']
+                data['Source_Negative'] = source_stats['negative_sources']
         
         # Create DataFrame and save
         df = pd.DataFrame(data)
