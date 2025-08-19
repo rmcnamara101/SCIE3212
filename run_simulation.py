@@ -1,5 +1,6 @@
 from pathlib import Path
 import sys
+import yaml
 
 if sys.platform == "darwin":
     # Point to the actual project root that contains 'src'

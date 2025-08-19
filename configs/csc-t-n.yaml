@@ -5,7 +5,7 @@ simulation:
   seed: 1209
 
 domain:
-  shape: 120 # integer defining the number of grid points in each dimension
+  shape: 80 # integer defining the number of grid points in each dimension
   dx: 100 # float defining the spacing of the grid
 
 time:
@@ -18,11 +18,11 @@ populations:
     color: Green
     dynamics:
       lambda: 20 # float
-      mu: 10 # float
+      mu: 5 # float
       mobility: 0.5 # float
-      nutrient_threshold: 0.3 # float
-      nutrient_consumption: 0.07 # float
-      nutrient_production: 0.02 # float
+      nutrient_threshold: 0.5 # float
+      nutrient_consumption: 0.14 # float
+      nutrient_production: 0.01 # float
       transfer: 
         to: Tumour
         rate: 0.9 # float defining proportion of cells that transfer 
@@ -32,11 +32,11 @@ populations:
     color: Green
     dynamics:
       lambda: 20 # float
-      mu: 10 # float
+      mu: 5 # float
       mobility: 0.5 # float
-      nutrient_threshold: 0.3 # float
-      nutrient_consumption: 0.07 # float
-      nutrient_production: 0.05 # float
+      nutrient_threshold: 0.5 # float
+      nutrient_consumption: 0.14 # float
+      nutrient_production: 0.01 # float
     
     
   Necrotic:
@@ -56,9 +56,9 @@ nutrient:
   label: General nutrient
   color: Orange
   dynamics:
-    diffusion: 100 # float
+    diffusion: 1000 # float
     boundary_value: 1.0 # float defining the value of the nutrient at the boundary
-    k: 100 # float defining the steepness of the nutrient switch
+    k: 0.07 # float defining the steepness of the nutrient switch
 
 physics:
   adhesion_energy:
@@ -67,8 +67,8 @@ physics:
 initial_conditions:
   type: gaussian_random_blob # Options: "spherical", "gaussian_random_blob", "multiple_spheres", "uniform", "custom"
   
-  center: [60, 60, 60] # Center coordinates (optional, defaults to domain center)
-  radius: 20 # Radius of the sphere (optional, defaults to domain_size/4)
+  center: [40, 40, 40] # Center coordinates (optional, defaults to domain center)
+  radius: 10 # Radius of the sphere (optional, defaults to domain_size/4)
   
   deformation_strength: 0.3 # How much to deform (0.0=sphere, 0.5=very deformed, optional, defaults to 0.3)
   
