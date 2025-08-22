@@ -282,10 +282,8 @@ def compute_nutrient_update_numba(nutrient_field, phi_hat, dx,
                 for m in range(M):
                     production += production_rate[m] * phi_hat[m, i, j, k]
 
-                medium_exchange = 0.1 / (1 + np.exp((-phi_T[i, j, k] - cutoff) / penetration_depth)) * (1 - nutrient_field[i, j, k])
-
                 # Update nutrient field 
-                nutrient_field_new[i, j, k] = nutrient_field[i, j, k] + diffusion - consumption + production + medium_exchange
+                nutrient_field_new[i, j, k] = nutrient_field[i, j, k] + diffusion - consumption + production
                 
                 # Ensure non-negative nutrient concentration
                 nutrient_field_new[i, j, k] = max(0.0, nutrient_field_new[i, j, k])
