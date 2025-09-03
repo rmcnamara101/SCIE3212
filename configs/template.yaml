@@ -60,8 +60,8 @@ populations:
       nutrient_consumption: <nutrient uptake rate> # float
       nutrient_production: <nutrient production rate> # float
     transfer: 
-        to: <name of the population> # string matching another population name
-        rate: <transfer rate> # float defining proportion of cells that transfer 
+      to: <name of the population> # string matching another population name
+      rate: <transfer rate> # float defining proportion of cells that transfer 
 
 nutrient:
   name: <name of the nutrient>

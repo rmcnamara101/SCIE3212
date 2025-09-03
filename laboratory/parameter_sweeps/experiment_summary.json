@@ -1,0 +1,15 @@
+{
+  "execution_summary": {
+    "total_experiments": 1,
+    "completed_experiments": 1,
+    "failed_experiments": 0,
+    "success_rate": 1.0
+  },
+  "timing_summary": {
+    "total_execution_time": 42.37524700164795,
+    "average_execution_time": 42.37524700164795,
+    "min_execution_time": 42.37524700164795,
+    "max_execution_time": 42.37524700164795
+  },
+  "failed_experiments": []
+}

@@ -164,6 +164,9 @@ class TumorGrowthSimulator:
         self.save_physics_fields = self.cfg.get("output", {}).get("save_physics_fields", True)
         self.save_plots = self.cfg.get("output", {}).get("save_plots", True)
         
+        # Set default output directory
+        self.output_dir = Path("./simulation_output")
+        
         # Statistics
         self.step_times = []
         self.total_cells = []
@@ -585,12 +588,12 @@ class TumorGrowthSimulator:
             simulation_data: Dictionary containing simulation results and metadata
         """
         if output_dir is None:
-            output_dir = self.output_dir
+            # Skip all file operations for experiments
+            output_dir = None
         else:
             output_dir = Path(output_dir)
-        
-        # Create output directory
-        os.makedirs(output_dir, exist_ok=True)
+            # Create output directory only if we're actually saving files
+            os.makedirs(output_dir, exist_ok=True)
         
         print(f"Starting tumor growth simulation with save/load functionality...")
         print(f"Grid size: {self.field_manager.grid}")
@@ -598,7 +601,10 @@ class TumorGrowthSimulator:
         print(f"Total time steps: {total_steps}")
         print(f"Save interval: {save_interval}")
         print(f"Time step size: {self.integrator.dt}")
-        print(f"Output directory: {output_dir}")
+        if output_dir is not None:
+            print(f"Output directory: {output_dir}")
+        else:
+            print("Output directory: None (experiment mode - no files saved)")
         if profile_interval > 0:
             print(f"Profiling enabled - detailed breakdown every {profile_interval} steps")
         
@@ -666,7 +672,7 @@ class TumorGrowthSimulator:
                         saved_physics_data.append(physics_data)
                     
                     # Save plots if requested
-                    if save_plots:
+                    if save_plots and output_dir is not None:
                         self.save_plots(step)
                 
                 # Update progress bar with current info
@@ -723,12 +729,13 @@ class TumorGrowthSimulator:
         if save_physics_fields and saved_physics_data:
             simulation_data["physics_data"] = saved_physics_data
         
-        # Save complete simulation data to file
-        simulation_file = output_dir / "simulation_data.npz"
-        self._save_simulation_data(simulation_data, simulation_file)
-        print(f"Complete simulation data saved to {simulation_file}")
+        # Save complete simulation data to file only if output_dir is specified
+        if output_dir is not None:
+            simulation_file = output_dir / "simulation_data.npz"
+            self._save_simulation_data(simulation_data, simulation_file)
+            print(f"Complete simulation data saved to {simulation_file}")
         
-        return #simulation_data
+        return simulation_data
     
     def _save_simulation_data(self, simulation_data, filepath):
         """

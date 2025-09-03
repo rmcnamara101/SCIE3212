@@ -17,26 +17,26 @@ populations:
     label: Stem Cells
     color: Green
     dynamics:
-      lambda: 20 # float
-      mu: 5 # float
-      mobility: 0.5 # float
+      lambda: 70 # float
+      mu: 10 # float
+      mobility: 1 # float
       nutrient_threshold: 0.5 # float
-      nutrient_consumption: 0.14 # float
-      nutrient_production: 0.01 # float
-      transfer: 
-        to: Tumour
-        rate: 0.9 # float defining proportion of cells that transfer 
+      nutrient_consumption: 0.1 # float
+      nutrient_production: 0.05 # float
+    transfer: 
+      to: Tumour
+      rate: 0.05 # float defining proportion of cells that transfer 
   
   Tumour:
     label: Tumour Cells
     color: Green
     dynamics:
-      lambda: 20 # float
-      mu: 5 # float
-      mobility: 0.5 # float
+      lambda: 50 # float
+      mu: 10 # float
+      mobility: 1 # float
       nutrient_threshold: 0.5 # float
-      nutrient_consumption: 0.14 # float
-      nutrient_production: 0.01 # float
+      nutrient_consumption: 0.1 # float
+      nutrient_production: 0.05 # float
     
     
   Necrotic:
@@ -44,7 +44,7 @@ populations:
     color: Black
     dynamics:
       lambda: 0.0 # float
-      mu: 0.2 # float
+      mu: 5 # float
       mobility: 0.0 # float
       nutrient_threshold: 0.0 # float
       nutrient_consumption: 0.0 # float
@@ -56,9 +56,9 @@ nutrient:
   label: General nutrient
   color: Orange
   dynamics:
-    diffusion: 1000 # float
+    diffusion: 700 # float
     boundary_value: 1.0 # float defining the value of the nutrient at the boundary
-    k: 0.07 # float defining the steepness of the nutrient switch
+    k: 0.05 # float defining the steepness of the nutrient switch
 
 physics:
   adhesion_energy:
@@ -68,7 +68,7 @@ initial_conditions:
   type: gaussian_random_blob # Options: "spherical", "gaussian_random_blob", "multiple_spheres", "uniform", "custom"
   
   center: [40, 40, 40] # Center coordinates (optional, defaults to domain center)
-  radius: 10 # Radius of the sphere (optional, defaults to domain_size/4)
+  radius: 5 # Radius of the sphere (optional, defaults to domain_size/4)
   
   deformation_strength: 0.3 # How much to deform (0.0=sphere, 0.5=very deformed, optional, defaults to 0.3)
   

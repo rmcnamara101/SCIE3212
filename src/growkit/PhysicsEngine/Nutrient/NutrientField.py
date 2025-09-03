@@ -275,12 +275,12 @@ def compute_nutrient_update_numba(nutrient_field, phi_hat, dx,
                 for m in range(M):
                     # Each population consumes nutrient based on its density and consumption rate
                     # Use a simple linear consumption model
-                    consumption += consumption_rates[m] * phi_hat[m, i, j, k] * (nutrient_field[i, j, k] ** 2 / (nutrient_field[i, j, k] ** 2 + nutrient_threshold[m] ** 2))
+                    consumption += consumption_rates[m] * phi_hat[m, i, j, k]
 
                 # Compute production term
                 production = 0.0
                 for m in range(M):
-                    production += production_rate[m] * phi_hat[m, i, j, k]
+                    production += production_rate[m] * (1 - phi_T[i, j, k]) * (1 - nutrient_field[i, j, k])
 
                 # Update nutrient field 
                 nutrient_field_new[i, j, k] = nutrient_field[i, j, k] + diffusion - consumption + production
