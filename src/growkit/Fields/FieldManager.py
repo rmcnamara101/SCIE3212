@@ -26,6 +26,7 @@ class FieldManager:
         # --- cell fields ----------------------------------------------------
         self.phi_hat = None  # Cell fraction fields (M, nx, ny, nz)
         self.nutrient_field = None  # Nutrient concentration field (nx, ny, nz)
+        self.host_field = None  # Host field representing remaining space (nx, ny, nz)
         
         # --- physics fields -------------------------------------------------
         self.pressure = np.zeros(self.grid, dtype=np.float32)  # Pressure field
@@ -54,6 +55,23 @@ class FieldManager:
                 # Initialize nutrient field using the new system
                 ic_manager = InitialConditions(self.cfg)
                 _, self.nutrient_field = ic_manager.initialize_cell_fields()
+        
+        # Initialize host field to fill remaining space
+        self._initialize_host_field()
+
+    def _initialize_host_field(self):
+        """
+        Initialize the host field to ensure total volume fraction equals 1 everywhere.
+        """
+        if self.phi_hat is not None:
+            # Calculate total cell fraction at each spatial point
+            phi_T = np.sum(self.phi_hat, axis=0)  # Shape: (nx, ny, nz)
+            
+            # Host field fills the remaining space (1 - total_cell_fraction)
+            self.host_field = np.clip(1.0 - phi_T, 0.0, 1.0)
+        else:
+            # If no cell fields, host field fills entire space
+            self.host_field = np.ones(self.grid, dtype=np.float32)
 
     def update_physics_fields(self, phi_hat, nutrient_field, cell_dynamics=None, source_terms=None):
         """
@@ -69,12 +87,15 @@ class FieldManager:
         self.phi_hat = phi_hat
         self.nutrient_field = nutrient_field
         
+        # Update host field to maintain total volume fraction = 1
+        self._update_host_field()
+        
         # Use provided cell_dynamics or create new one
         if cell_dynamics is None:
             cell_dynamics = VectorizedCellDynamics(self.cfg, self.cfg["populations"], self)
         
-        # Compute energy derivative
-        phi_T = np.sum(phi_hat, axis=0)
+        # Compute energy derivative using total volume fraction (including host)
+        phi_T = np.sum(phi_hat, axis=0) + self.host_field
         self.energy_derivative = cell_dynamics.compute_energy_derivative(phi_T, self.dx)
         
         # Compute solid velocity (this will update pressure and velocity in field_manager)
@@ -87,6 +108,17 @@ class FieldManager:
         if source_terms is not None:
             self.source_terms = source_terms
 
+    def _update_host_field(self):
+        """
+        Update the host field to ensure total volume fraction equals 1 everywhere.
+        """
+        if self.phi_hat is not None:
+            # Calculate total cell fraction at each spatial point
+            phi_T = np.sum(self.phi_hat, axis=0)  # Shape: (nx, ny, nz)
+            
+            # Host field fills the remaining space (1 - total_cell_fraction)
+            self.host_field = np.clip(1.0 - phi_T, 0.0, 1.0)
+
     def get_cell_fields(self):
         """
         Get current cell fields.
@@ -94,12 +126,13 @@ class FieldManager:
         Returns:
             phi_hat: Cell fraction fields
             nutrient_field: Nutrient field
+            host_field: Host field
         """
-        return self.phi_hat, self.nutrient_field
+        return self.phi_hat, self.nutrient_field, self.host_field
 
     def set_cell_fields(self, phi_hat, nutrient_field):
         """
-        Set cell fields.
+        Set cell fields and update host field accordingly.
         
         Args:
             phi_hat: Cell fraction fields
@@ -107,14 +140,27 @@ class FieldManager:
         """
         self.phi_hat = phi_hat
         self.nutrient_field = nutrient_field
+        self._update_host_field()
 
-    def normalize_volume_fractions(self, add_host_field=False):
+    def get_total_volume_fraction(self):
+        """
+        Get the total volume fraction (cells + host) at each spatial point.
+        
+        Returns:
+            total_volume: Total volume fraction field (nx, ny, nz)
+        """
+        if self.phi_hat is None:
+            return self.host_field if self.host_field is not None else np.ones(self.grid, dtype=np.float32)
+        
+        return np.sum(self.phi_hat, axis=0) + self.host_field
+
+    def normalize_volume_fractions(self, add_host_field=True):
         """
         Normalize volume fractions to ensure they are bounded by 1 at each spatial point.
-        Only normalizes regions where there are actually cells (total density > 0).
+        The host field automatically fills the remaining space to ensure total = 1 everywhere.
         
         Args:
-            add_host_field: Whether to add a host field (currently not implemented)
+            add_host_field: Whether to maintain the host field (default: True)
             
         Returns:
             phi_hat_normalized: Normalized cell fraction fields
@@ -128,18 +174,13 @@ class FieldManager:
         # Calculate total cell fraction at each spatial point
         phi_T = np.sum(phi_hat, axis=0)  # Shape: (nx, ny, nz)
         
-        # Only normalize regions where there are actually cells (total density > 0)
-        # and where the total density significantly exceeds 1 (to prevent over-saturation)
-        cell_mask = phi_T > 0  # Regions with cells
-        overflow_mask = phi_T > 1.01  # Regions where total density significantly exceeds 1 (1% tolerance)
+        # Find regions where total cell density exceeds 1
+        overflow_mask = phi_T > 1.0
         
-        # Combine masks: only normalize where there are cells AND they overflow
-        normalize_mask = cell_mask & overflow_mask
-        
-        if np.any(normalize_mask):
-            # Create scaling factor to normalize to sum = 1 only where needed
+        if np.any(overflow_mask):
+            # Create scaling factor to normalize to sum = 1 where needed
             scaling = np.ones_like(phi_T)
-            scaling[normalize_mask] = 1.0 / phi_T[normalize_mask]
+            scaling[overflow_mask] = 1.0 / phi_T[overflow_mask]
             
             # Apply scaling to all cell types
             phi_hat_normalized = phi_hat * scaling[None, :, :, :]
@@ -149,44 +190,77 @@ class FieldManager:
         # Update the stored fields
         self.phi_hat = phi_hat_normalized
         
+        # Update host field to maintain total volume fraction = 1
+        if add_host_field:
+            self._update_host_field()
+        
         return phi_hat_normalized
 
     def check_volume_fraction_constraints(self, tolerance=1e-6):
         """
         Check if volume fraction constraints are satisfied.
+        With host field, total volume fraction should equal 1 everywhere.
         
         Args:
-            tolerance: Tolerance for checking if sum is bounded by 1
+            tolerance: Tolerance for checking if sum equals 1
             
         Returns:
             is_valid: Boolean indicating if constraints are satisfied
-            max_deviation: Maximum deviation from sum = 1 (only for regions with cells)
-            mean_deviation: Mean deviation from sum = 1 (only for regions with cells)
+            max_deviation: Maximum deviation from sum = 1
+            mean_deviation: Mean deviation from sum = 1
         """
         if self.phi_hat is None:
             return False, 0.0, 0.0
         
-        phi_T = np.sum(self.phi_hat, axis=0)
+        # Get total volume fraction including host field
+        total_volume = self.get_total_volume_fraction()
         
         # Check if any values are negative
-        has_negative = np.any(self.phi_hat < 0)
+        has_negative = np.any(self.phi_hat < 0) or (self.host_field is not None and np.any(self.host_field < 0))
         
-        # Check deviations from sum = 1 only in regions where there are cells
-        cell_mask = phi_T > 0
-        if np.any(cell_mask):
-            deviations = np.abs(phi_T[cell_mask] - 1.0)
-            max_deviation = np.max(deviations)
-            mean_deviation = np.mean(deviations)
-        else:
-            max_deviation = 0.0
-            mean_deviation = 0.0
+        # Check deviations from sum = 1 (should be exactly 1 everywhere with host field)
+        deviations = np.abs(total_volume - 1.0)
+        max_deviation = np.max(deviations)
+        mean_deviation = np.mean(deviations)
         
-        # Check if any regions significantly exceed 1 (overflow)
-        has_overflow = np.any(phi_T > 1.01 + tolerance)
+        # Check if any regions significantly deviate from 1
+        has_deviation = np.any(deviations > tolerance)
         
-        is_valid = not has_negative and not has_overflow
+        is_valid = not has_negative and not has_deviation
         
         return is_valid, max_deviation, mean_deviation
+
+    def get_cell_and_host_fields(self):
+        """
+        Get all fields including host field as a single array.
+        
+        Returns:
+            all_fields: Array containing cell fields and host field (M+1, nx, ny, nz)
+        """
+        if self.phi_hat is None:
+            return None
+        
+        # Stack cell fields and host field
+        all_fields = np.vstack([self.phi_hat, self.host_field[None, :, :, :]])
+        return all_fields
+
+    def set_cell_and_host_fields(self, all_fields):
+        """
+        Set all fields from a single array that includes cell fields and host field.
+        
+        Args:
+            all_fields: Array containing cell fields and host field (M+1, nx, ny, nz)
+        """
+        if all_fields is None:
+            return
+        
+        # Extract cell fields (first M components)
+        self.phi_hat = all_fields[:self.M, :, :, :]
+        
+        # Extract host field (last component)
+        self.host_field = all_fields[self.M, :, :, :]
+        
+        # Update nutrient field if needed (this method doesn't handle nutrient field)
 
 
 

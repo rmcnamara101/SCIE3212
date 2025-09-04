@@ -9,52 +9,68 @@ else:
     proj = "C:/Users/riley.mcnamara/Documents/code/silicokit/"
     sys.path.insert(0, proj)
 
-from src.growkit.ExperimentEngine.ExperimentRunner import ExperimentRunner
-from src.growkit.Simulator import TumorGrowthSimulator
-
-# Create simulator to get the config
-simulator = TumorGrowthSimulator(proj + "/configs/csc-t-n.yaml")
+from src.growkit.ExperimentEngine.SimpleExperimentRunner import SimpleExperimentRunner
 
 # Create experiment runner with the config file path directly
-experiment_runner = ExperimentRunner(proj + "/configs/csc-t-n.yaml", proj + "/laboratory/parameter_sweeps")
+experiment_runner = SimpleExperimentRunner(proj + "/configs/csc-t-n.yaml", proj + "/laboratory/parameter_sweeps")
 
-# Define a much smaller parameter sweep for testing
-# This will generate only 2 * 3 * 2 = 12 experiments instead of 10^13
-param_sweep = {
-    "populations.Stem.dynamics.lambda": {"type": "range", "min": 60, "max": 80, "steps": 2},
-    "populations.Stem.dynamics.mu": {"type": "range", "min": 8, "max": 12, "steps": 3},
-    "populations.Stem.transfer.rate": {"type": "range", "min": 0.03, "max": 0.07, "steps": 2}
+# Define parameter bounds for random sampling
+# This is much simpler - just define the bounds for each parameter you want to vary
+num_experiments = 2
+param_bounds = {
+    # Population dynamics parameters - Stem cells
+    "populations.Stem.dynamics.lambda": {"min": 40, "max": 100},
+    "populations.Stem.dynamics.mu": {"min": 5, "max": 20},
+    "populations.Stem.dynamics.mobility": {"min": 0.1, "max": 5.0},
+    "populations.Stem.dynamics.nutrient_threshold": {"min": 0.1, "max": 0.9},
+    "populations.Stem.dynamics.nutrient_production": {"min": 0.01, "max": 0.2},
+    
+    # Population dynamics parameters - Tumour cells
+    "populations.Tumour.dynamics.lambda": {"min": 30, "max": 80},
+    "populations.Tumour.dynamics.mu": {"min": 5, "max": 20},
+    "populations.Tumour.dynamics.mobility": {"min": 0.1, "max": 5.0},
+    "populations.Tumour.dynamics.nutrient_threshold": {"min": 0.1, "max": 0.9},
+    "populations.Tumour.dynamics.nutrient_production": {"min": 0.01, "max": 0.2},
+    
+    # Population dynamics parameters - Necrotic cells
+    "populations.Necrotic.dynamics.lambda": {"min": 0.0, "max": 0.1},   
+    "populations.Necrotic.dynamics.mu": {"min": 1, "max": 10},
+    "populations.Necrotic.dynamics.mobility": {"min": 0.0, "max": 0.5},
+    "populations.Necrotic.dynamics.nutrient_threshold": {"min": 0.0, "max": 0.1},
+    "populations.Necrotic.dynamics.nutrient_production": {"min": 0.0, "max": 0.01},
+    
+    # Nutrient dynamics
+    "nutrient.dynamics.diffusion": {"min": 300, "max": 1200},
+    
+    # Physics parameters
+    "physics.adhesion_energy.m": {"min": -2, "max": 2}
 }
 
-print("Parameter sweep defined:")
-print(f"Total experiments: {2 * 3 * 2}")
+print("Simple parameter sweep for cost function landscape exploration:")
+print(f"Number of experiments: {num_experiments}")
+print(f"Parameters being randomly sampled: {len(param_bounds)}")
+print("\nParameter bounds:")
+for param_path, bounds in param_bounds.items():
+    print(f"  {param_path}: {bounds['min']:.3g} to {bounds['max']:.3g}")
 
-# Add the parameter sweep
-experiment_runner.add_parameter_sweep(param_sweep)
+# Set up the experiment runner with parameter bounds
+experiment_runner.setup_parameter_sweep(param_bounds, num_experiments)
 
-# Run just ONE experiment for testing
-print("\nRunning single experiment to test...")
-experiment_runner.run_all_experiments(
-    start_index=0, 
-    end_index=1,  # Only run 1 experiment
-    save_progress=True,
-    progress_interval=1
-)
+# Run all experiments
+print(f"\nRunning {num_experiments} experiments...")
+experiment_runner.run_all_experiments()
 
 # Print status
 experiment_runner.print_status()
 
 print(f"\nResults saved to Excel: {experiment_runner.excel_file}")
-print("Note: You can stop the experiment at any time and your data will be saved!")
+print("Each row contains:")
+print("- ALL simulation parameters (including non-sampled ones)")
+print("- Time series data for each cell population radius and total cells")
+print("- Final state statistics for cost function analysis")
 
-# Check if any NPZ files were created
-output_dir = Path(proj + "/laboratory/parameter_sweeps")
-npz_files = list(output_dir.glob("**/*.npz"))
-if npz_files:
-    print(f"\nWARNING: NPZ files were still created: {len(npz_files)} files")
-    for npz_file in npz_files[:5]:  # Show first 5
-        print(f"  {npz_file}")
-    if len(npz_files) > 5:
-        print(f"  ... and {len(npz_files) - 5} more")
-else:
-    print("\nSUCCESS: No NPZ files were created - only Excel output!")
+print("\nTo run more experiments:")
+print("1. Increase 'num_experiments'")
+print("2. Add more parameters to 'param_bounds'")
+print("3. Each experiment will be one row in the Excel file")
+print("4. Use the time series data to compare with experimental data")

@@ -14,9 +14,9 @@ initial_conditions:
     type: natural
   radius: 5
   seeding_densities:
-    Necrotic Cells: 0.0
-    Stem Cells: 0.2
-    Tumour Cells: 0.8
+    Necrotic: 0.0
+    Stem: 0.2
+    Tumour: 0.8
   type: gaussian_random_blob
 integrator:
   min_sub_grid_size: 10
@@ -57,7 +57,7 @@ populations:
       nutrient_threshold: 0.5
     label: Stem Cells
     transfer:
-      rate: 0.05
+      rate: 0.45
       to: Tumour
   Tumour:
     color: Green
@@ -73,5 +73,5 @@ simulation:
   name: CSC-T-N Model
   seed: 1209
 time:
-  dt: 0.05
+  dt: 0.03
   steps: 10

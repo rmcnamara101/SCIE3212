@@ -28,6 +28,7 @@ class InitialConditions:
         self.populations = cfg["populations"]
         self.M = len(self.populations)
         self.labels = [p["label"] for p in self.populations.values()]
+        self.names = list(self.populations.keys())  # Population names (keys)
         
     def initialize_cell_fields(self) -> Tuple[np.ndarray, np.ndarray]:
         """
@@ -74,8 +75,8 @@ class InitialConditions:
         
         # Default seeding densities if not specified
         if not seeding_densities:
-            seeding_densities = {label: 0.8 if i == 0 else 0.1 / (self.M - 1) 
-                               for i, label in enumerate(self.labels)}
+            seeding_densities = {name: 0.8 if i == 0 else 0.1 / (self.M - 1) 
+                               for i, name in enumerate(self.names)}
         
         # Get noise scale from config or use default
         noise_scale = self.ic_config.get("seeding_noise_scale", 0.2)
@@ -90,9 +91,13 @@ class InitialConditions:
                         base_mask[i, j, k] = 1.0
         
         # Add noise to each population's seeding
-        for m, label in enumerate(self.labels):
-            base_density = base_mask * seeding_densities.get(label, 0.0)
-            noisy_density = self._add_seeding_noise(base_density, noise_scale)
+        for m, name in enumerate(self.names):
+            base_density = base_mask * seeding_densities.get(name, 0.0)
+            # Only add noise if the base density is non-zero to avoid creating cells where none should exist
+            if np.sum(base_density) > 0:
+                noisy_density = self._add_seeding_noise(base_density, noise_scale)
+            else:
+                noisy_density = base_density  # Keep zero density populations at zero
             phi_hat[m, :, :, :] = noisy_density
         
         return phi_hat
@@ -210,10 +215,14 @@ class InitialConditions:
         noise_scale = self.ic_config.get("seeding_noise_scale", 0.2)
         
         # Distribute density among populations with noise
-        for m, label in enumerate(self.labels):
-            density_fraction = seeding_densities.get(label, 1.0 / self.M)
+        for m, name in enumerate(self.names):
+            density_fraction = seeding_densities.get(name, 1.0 / self.M)
             base_density = total_density * density_fraction
-            noisy_density = self._add_seeding_noise(base_density, noise_scale)
+            # Only add noise if the base density is non-zero to avoid creating cells where none should exist
+            if np.sum(base_density) > 0:
+                noisy_density = self._add_seeding_noise(base_density, noise_scale)
+            else:
+                noisy_density = base_density  # Keep zero density populations at zero
             phi_hat[m, :, :, :] = noisy_density
         
         return phi_hat
@@ -264,17 +273,20 @@ class InitialConditions:
         
         seeding_densities = self.ic_config.get("seeding_densities", {})
         if not seeding_densities:
-            seeding_densities = {label: 0.1 for label in self.labels}
+            seeding_densities = {name: 0.1 for name in self.names}
         
         # Get noise scale from config or use default
         noise_scale = self.ic_config.get("seeding_noise_scale", 0.2)
         
-        for m, label in enumerate(self.labels):
-            density = seeding_densities.get(label, 0.1)
+        for m, name in enumerate(self.names):
+            density = seeding_densities.get(name, 0.1)
             # Create uniform base density
             base_density = np.full((nx, ny, nz), density, dtype=np.float32)
-            # Add noise to create spatial variation
-            noisy_density = self._add_seeding_noise(base_density, noise_scale)
+            # Only add noise if the base density is non-zero to avoid creating cells where none should exist
+            if density > 0:
+                noisy_density = self._add_seeding_noise(base_density, noise_scale)
+            else:
+                noisy_density = base_density  # Keep zero density populations at zero
             phi_hat[m, :, :, :] = noisy_density
         
         return phi_hat

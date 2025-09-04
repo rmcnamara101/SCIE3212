@@ -253,59 +253,142 @@ class ExperimentRunner:
         phi_hat_data = field_data.get('phi_hat', [])
         nutrient_data = field_data.get('nutrient_fields', [])
         
-        # Get population names from the base config
-        population_names = list(self.base_config.get('populations', {}).keys())
+        # Get population information from simulation metadata (preferred) or base config (fallback)
+        metadata = simulation_data.get('metadata', {})
+        population_names = metadata.get('population_names', [])
+        population_labels = metadata.get('population_labels', [])
         
-        # Create data rows for each time step
-        data_rows = []
+        # Fallback to base config if metadata doesn't have population info
+        if not population_names:
+            population_config = self.base_config.get('populations', {})
+            population_names = list(population_config.keys())
+            population_labels = [p.get('label', name) for name, p in population_config.items()]
         
-        for step, (phi_hat, nutrient_field) in enumerate(zip(phi_hat_data, nutrient_data)):
-            row = {
-                'experiment_index': experiment_index,
-                'experiment_name': experiment_name,
-                'time_step': step,
-                'execution_time': execution_time
-            }
+        # Debug: Print population information
+        print(f"DEBUG: Population names from metadata: {population_names}")
+        print(f"DEBUG: Population labels from metadata: {population_labels}")
+        print(f"DEBUG: phi_hat_data shape: {[phi.shape for phi in phi_hat_data] if phi_hat_data else 'None'}")
+        print(f"DEBUG: First phi_hat shape: {phi_hat_data[0].shape if phi_hat_data else 'None'}")
+        print(f"DEBUG: Number of populations: {len(population_names)}")
+        
+        # Create ONE data row per simulation (not per time step)
+        row = {
+            'experiment_index': experiment_index,
+            'experiment_name': experiment_name,
+            'execution_time': execution_time,
+            'total_time_steps': len(phi_hat_data)
+        }
+        
+        # Add ONLY the key numerical parameters (not labels, descriptions, etc.)
+        key_params = self._get_key_simulation_parameters()
+        for param_path, param_value in key_params.items():
+            param_short_name = param_path.split('.')[-1]
+            row[f'param_{param_short_name}'] = param_value
+        
+        # Add observables for each population using index-based approach (like SimPlotter)
+        # Use the FINAL time step for final state analysis
+        if phi_hat_data:
+            final_phi_hat = phi_hat_data[-1]  # Last time step
             
-            # Add ALL simulation parameters (not just the changing ones)
-            # This ensures consistent analysis when adding more simulations with different values
-            for param_path, param_value in self._get_all_simulation_parameters().items():
-                param_short_name = param_path.split('.')[-1]
-                row[f'param_{param_short_name}'] = param_value
-            
-            # Add observables for each population using their actual names
-            for i, pop_name in enumerate(population_names):
-                if i < phi_hat.shape[0]:
-                    # Population statistics
-                    row[f'cells_{pop_name}_total'] = np.sum(phi_hat[i])
-                    row[f'cells_{pop_name}_mean'] = np.mean(phi_hat[i])
-                    row[f'cells_{pop_name}_std'] = np.std(phi_hat[i])
+            # Use index-based iteration to match phi_hat array indexing
+            for i in range(final_phi_hat.shape[0]):
+                if i < len(population_names):
+                    pop_name = population_names[i]
+                else:
+                    pop_name = f'Population_{i}'
+                
+                print(f"DEBUG: Processing population {i}: {pop_name}")
+                if i < final_phi_hat.shape[0]:
+                    print(f"DEBUG: Population {pop_name} has data, shape: {final_phi_hat[i].shape}")
+                    # Population statistics at final time step
+                    row[f'final_cells_{pop_name}_total'] = np.sum(final_phi_hat[i])
+                    row[f'final_cells_{pop_name}_mean'] = np.mean(final_phi_hat[i])
+                    row[f'final_cells_{pop_name}_std'] = np.std(final_phi_hat[i])
                     
-                    # Calculate radius for this population
-                    radius = self._calculate_population_radius(phi_hat[i])
-                    row[f'cells_{pop_name}_radius'] = radius
+                    # Calculate radius for this population at final time
+                    radius = self._calculate_population_radius(final_phi_hat[i])
+                    row[f'final_cells_{pop_name}_radius'] = radius
                     
-                    # Calculate center of mass for this population
-                    center_x, center_y, center_z = self._calculate_population_center(phi_hat[i])
-                    row[f'cells_{pop_name}_center_x'] = center_x
-                    row[f'cells_{pop_name}_center_y'] = center_y
-                    row[f'cells_{pop_name}_center_z'] = center_z
-            
-            # Add nutrient field statistics
-            if nutrient_field is not None:
-                row['nutrient_total'] = np.sum(nutrient_field)
-                row['nutrient_mean'] = np.mean(nutrient_field)
-                row['nutrient_std'] = np.std(nutrient_field)
-                row['nutrient_min'] = np.min(nutrient_field)
-                row['nutrient_max'] = np.max(nutrient_field)
-            
-            data_rows.append(row)
+                    # Calculate center of mass for this population at final time
+                    center_x, center_y, center_z = self._calculate_population_center(final_phi_hat[i])
+                    row[f'final_cells_{pop_name}_center_x'] = center_x
+                    row[f'final_cells_{pop_name}_center_y'] = center_y
+                    row[f'final_cells_{pop_name}_center_z'] = center_z
+                    
+                    # Add growth metrics (if we have multiple time steps)
+                    if len(phi_hat_data) > 1:
+                        initial_phi_hat = phi_hat_data[0]  # First time step
+                        if i < initial_phi_hat.shape[0]:
+                            initial_total = np.sum(initial_phi_hat[i])
+                            final_total = np.sum(final_phi_hat[i])
+                            if initial_total > 0:
+                                growth_factor = final_total / initial_total
+                                row[f'growth_factor_{pop_name}'] = growth_factor
+                            else:
+                                row[f'growth_factor_{pop_name}'] = 0.0
+                    
+                    # Add time-series data as arrays (for analysis over time)
+                    if len(phi_hat_data) > 1:
+                        time_series_totals = []
+                        for phi_hat in phi_hat_data:
+                            if i < phi_hat.shape[0]:
+                                time_series_totals.append(float(np.sum(phi_hat[i])))
+                            else:
+                                time_series_totals.append(0.0)
+                        # Convert to string array for Excel compatibility
+                        row[f'time_series_{pop_name}_totals'] = str(time_series_totals)
+                else:
+                    print(f"DEBUG: Population {pop_name} index {i} out of bounds for phi_hat shape {final_phi_hat.shape}")
+                    # Handle case where population index is out of bounds
+                    row[f'final_cells_{pop_name}_total'] = 0.0
+                    row[f'final_cells_{pop_name}_mean'] = 0.0
+                    row[f'final_cells_{pop_name}_std'] = 0.0
+                    row[f'final_cells_{pop_name}_radius'] = 0.0
+                    row[f'final_cells_{pop_name}_center_x'] = 0.0
+                    row[f'final_cells_{pop_name}_center_y'] = 0.0
+                    row[f'final_cells_{pop_name}_center_z'] = 0.0
+                    row[f'growth_factor_{pop_name}'] = 0.0
+                    row[f'time_series_{pop_name}_totals'] = str([0.0] * len(phi_hat_data))
+        
+        # Add nutrient field statistics at final time step
+        if nutrient_data and len(nutrient_data) > 0:
+            final_nutrient = nutrient_data[-1]  # Last time step
+            if final_nutrient is not None:
+                row['final_nutrient_total'] = np.sum(final_nutrient)
+                row['final_nutrient_mean'] = np.mean(final_nutrient)
+                row['final_nutrient_std'] = np.std(final_nutrient)
+                row['final_nutrient_min'] = np.min(final_nutrient)
+                row['final_nutrient_max'] = np.max(final_nutrient)
+                
+                # Add nutrient time-series data
+                if len(nutrient_data) > 1:
+                    nutrient_time_series = []
+                    for nutrient_field in nutrient_data:
+                        if nutrient_field is not None:
+                            nutrient_time_series.append(float(np.sum(nutrient_field)))
+                        else:
+                            nutrient_time_series.append(0.0)
+                    row['time_series_nutrient_totals'] = str(nutrient_time_series)
+            else:
+                row['final_nutrient_total'] = 0.0
+                row['final_nutrient_mean'] = 0.0
+                row['final_nutrient_std'] = 0.0
+                row['final_nutrient_min'] = 0.0
+                row['final_nutrient_max'] = 0.0
+                row['time_series_nutrient_totals'] = str([0.0] * len(nutrient_data))
+        else:
+            row['final_nutrient_total'] = 0.0
+            row['final_nutrient_mean'] = 0.0
+            row['final_nutrient_std'] = 0.0
+            row['final_nutrient_min'] = 0.0
+            row['final_nutrient_max'] = 0.0
+            row['time_series_nutrient_totals'] = str([0.0] * len(phi_hat_data))
         
         return {
             'experiment_index': experiment_index,
             'experiment_name': experiment_name,
             'parameters': parameters,
-            'data_rows': data_rows,
+            'data_row': row,  # Single row per experiment
             'execution_time': execution_time,
             'status': 'completed'
         }
@@ -334,6 +417,33 @@ class ExperimentRunner:
         
         extract_params(self.base_config)
         return all_params
+    
+    def _get_key_simulation_parameters(self) -> Dict[str, Any]:
+        """
+        Extract ONLY the key numerical parameters from the base config for consistent analysis.
+        
+        Returns:
+            Dictionary mapping parameter paths to values
+        """
+        key_params = {}
+        
+        def extract_key_params(obj, prefix=""):
+            """Recursively extract key numerical parameters from nested dictionary."""
+            if isinstance(obj, dict):
+                for key, value in obj.items():
+                    current_path = f"{prefix}.{key}" if prefix else key
+                    if isinstance(value, (int, float)):
+                        key_params[current_path] = value
+                    elif isinstance(value, list):
+                        # If it's a list of numbers, add each number
+                        for i, item in enumerate(value):
+                            if isinstance(item, (int, float)):
+                                key_params[f"{current_path}.item_{i}"] = item
+                    else:
+                        extract_key_params(value, current_path)
+        
+        extract_key_params(self.base_config)
+        return key_params
     
     def _calculate_population_radius(self, population_field: np.ndarray) -> float:
         """
@@ -482,8 +592,8 @@ class ExperimentRunner:
         # Prepare data for Excel
         all_rows = []
         for result in self.results:
-            if 'data_rows' in result:
-                all_rows.extend(result['data_rows'])
+            if 'data_row' in result:
+                all_rows.append(result['data_row'])
         
         if all_rows:
             # Convert to DataFrame
@@ -506,6 +616,56 @@ class ExperimentRunner:
                 if param_summary:
                     param_df = pd.DataFrame(param_summary)
                     param_df.to_excel(writer, sheet_name='Parameters', index=False)
+                
+                # Create summary statistics sheet
+                if all_rows:
+                    summary_stats = []
+                    
+                    # Population summaries
+                    population_names = list(self.base_config.get('populations', {}).keys())
+                    for pop_name in population_names:
+                        # Find columns for this population
+                        total_cols = [col for col in df.columns if f'final_cells_{pop_name}_total' in col]
+                        if total_cols:
+                            total_col = total_cols[0]
+                            summary_stats.append({
+                                'metric': f'{pop_name}_total_cells',
+                                'mean': df[total_col].mean(),
+                                'std': df[total_col].std(),
+                                'min': df[total_col].min(),
+                                'max': df[total_col].max(),
+                                'median': df[total_col].median()
+                            })
+                    
+                    # Nutrient summaries
+                    nutrient_cols = [col for col in df.columns if 'final_nutrient_' in col]
+                    for col in nutrient_cols:
+                        metric_name = col.replace('final_nutrient_', 'nutrient_')
+                        summary_stats.append({
+                            'metric': metric_name,
+                            'mean': df[col].mean(),
+                            'std': df[col].std(),
+                            'min': df[col].min(),
+                            'max': df[col].max(),
+                            'median': df[col].median()
+                        })
+                    
+                    if summary_stats:
+                        summary_df = pd.DataFrame(summary_stats)
+                        summary_df.to_excel(writer, sheet_name='Summary_Statistics', index=False)
+                
+                # Create data format guide sheet
+                format_guide = [
+                    {'column_type': 'Basic Info', 'columns': 'experiment_index, experiment_name, execution_time, total_time_steps'},
+                    {'column_type': 'Parameters', 'columns': 'param_dx, param_dt, param_lambda, param_mu, etc.'},
+                    {'column_type': 'Final State', 'columns': 'final_cells_{population}_total, final_cells_{population}_mean, etc.'},
+                    {'column_type': 'Growth Metrics', 'columns': 'growth_factor_{population}'},
+                    {'column_type': 'Time Series Data', 'columns': 'time_series_{population}_totals, time_series_nutrient_totals'},
+                    {'column_type': 'Time Series Format', 'columns': 'String arrays like "[1.0, 2.5, 3.2]" - use eval() or ast.literal_eval() to convert back to lists'}
+                ]
+                
+                format_df = pd.DataFrame(format_guide)
+                format_df.to_excel(writer, sheet_name='Data_Format_Guide', index=False)
             
             print(f"Excel results updated: {self.excel_file}")
     

@@ -34,10 +34,11 @@ class ParameterSweep:
             parameter_bounds: Dictionary defining parameter bounds for sweeping
                 Format: {
                     'param_path': {
-                        'type': 'range' | 'log_range' | 'list' | 'random' | 'latin_hypercube',
+                        'type': 'range' | 'log_range' | 'list' | 'random' | 'latin_hypercube' | 'random_combinations',
                         'min': float, 'max': float, 'steps': int,  # for range/log_range/random
                         'values': [val1, val2, ...]  # for list
-                        'seed': int  # for random/latin_hypercube (optional)
+                        'seed': int  # for random/latin_hypercube/random_combinations (optional)
+                        'num_combinations': int  # for random_combinations (required)
                     }
                 }
         """
@@ -77,11 +78,77 @@ class ParameterSweep:
             elif param_type == 'latin_hypercube':
                 if not all(key in param_config for key in ['min', 'max', 'steps']):
                     raise ValueError(f"Latin hypercube parameter '{param_name}' missing min/max/steps")
+            elif param_type == 'random_combinations':
+                if not all(key in param_config for key in ['min', 'max', 'num_combinations']):
+                    raise ValueError(f"Random combinations parameter '{param_name}' missing min/max/num_combinations")
             else:
                 raise ValueError(f"Unknown parameter type '{param_type}' for parameter '{param_name}'")
     
     def _generate_combinations(self):
         """Generate all parameter combinations for the sweep."""
+        # Check if this is a random combinations sweep
+        if any(param_config['type'] == 'random_combinations' for param_config in self.parameter_bounds.values()):
+            self._generate_random_combinations()
+        else:
+            self._generate_systematic_combinations()
+    
+    def _generate_random_combinations(self):
+        """Generate random combinations of parameters for cost function landscape exploration."""
+        # Get the number of combinations from the first random_combinations parameter
+        num_combinations = None
+        for param_config in self.parameter_bounds.values():
+            if param_config['type'] == 'random_combinations':
+                num_combinations = param_config['num_combinations']
+                break
+        
+        if num_combinations is None:
+            raise ValueError("No random_combinations parameter found")
+        
+        # Set seed for reproducibility
+        seed = next((param_config.get('seed', 42) for param_config in self.parameter_bounds.values() 
+                    if param_config['type'] == 'random_combinations'), 42)
+        np.random.seed(seed)
+        
+        # Generate random combinations
+        self.parameter_combinations = []
+        self.experiment_names = []
+        
+        for i in range(num_combinations):
+            # Generate random values for each parameter
+            param_dict = {}
+            for param_name, param_config in self.parameter_bounds.items():
+                param_type = param_config['type']
+                
+                if param_type == 'random_combinations':
+                    min_val = param_config['min']
+                    max_val = param_config['max']
+                    param_dict[param_name] = np.random.uniform(min_val, max_val)
+                elif param_type == 'list':
+                    param_dict[param_name] = np.random.choice(param_config['values'])
+                elif param_type == 'range':
+                    # For range parameters, use the min value (they're not being swept in random mode)
+                    param_dict[param_name] = param_config['min']
+                elif param_type == 'log_range':
+                    # For log_range parameters, use the min value
+                    param_dict[param_name] = param_config['min']
+                elif param_type == 'random':
+                    # For random parameters, use the min value
+                    param_dict[param_name] = param_config['min']
+                elif param_type == 'latin_hypercube':
+                    # For latin_hypercube parameters, use the min value
+                    param_dict[param_name] = param_config['min']
+            
+            # Generate experiment name
+            experiment_name = self._generate_experiment_name(param_dict, i)
+            
+            self.parameter_combinations.append(param_dict)
+            self.experiment_names.append(experiment_name)
+        
+        # Reset seed
+        np.random.seed()
+    
+    def _generate_systematic_combinations(self):
+        """Generate systematic parameter combinations (original method)."""
         # Generate parameter values for each parameter
         param_values = {}
         for param_name, param_config in self.parameter_bounds.items():
@@ -252,6 +319,14 @@ class ParameterSweep:
                     'steps': param_config['steps'],
                     'seed': param_config.get('seed', 42)
                 }
+            elif param_type == 'random_combinations':
+                summary['parameters'][param_path] = {
+                    'type': 'random_combinations',
+                    'min': param_config['min'],
+                    'max': param_config['max'],
+                    'num_combinations': param_config['num_combinations'],
+                    'seed': param_config.get('seed', 42)
+                }
         
         return summary
     
@@ -277,6 +352,9 @@ class ParameterSweep:
             elif param_type == 'latin_hypercube':
                 seed_info = f", seed={param_info['seed']}" if 'seed' in param_info else ""
                 print(f"  {param_path}: latin_hypercube({param_info['min']:.3g}, {param_info['max']:.3g}, {param_info['steps']} samples{seed_info})")
+            elif param_type == 'random_combinations':
+                seed_info = f", seed={param_info['seed']}" if 'seed' in param_info else ""
+                print(f"  {param_path}: random_combinations({param_info['min']:.3g}, {param_info['max']:.3g}, {param_info['num_combinations']} samples{seed_info})")
         
         print(f"\nFirst few experiment names:")
         for i in range(min(5, len(self.experiment_names))):

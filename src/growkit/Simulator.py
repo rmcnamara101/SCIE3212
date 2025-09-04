@@ -226,7 +226,7 @@ class TumorGrowthSimulator:
         
         # Get current fields from field manager
         self.profiler.start_timer("field_retrieval")
-        phi_hat, nutrient_field = self.field_manager.get_cell_fields()
+        phi_hat, nutrient_field, host_field = self.field_manager.get_cell_fields()
         self.profiler.end_timer("field_retrieval")
         print(f"Field retrieval completed")
         
@@ -310,7 +310,7 @@ class TumorGrowthSimulator:
         self.step_times.append(step_time)
         
         # Get the final normalized fields for statistics
-        phi_hat_final, _ = self.field_manager.get_cell_fields()
+        phi_hat_final, _, _ = self.field_manager.get_cell_fields()
         total_cells = np.sum(phi_hat_final)
         self.total_cells.append(total_cells)
         
@@ -334,7 +334,7 @@ class TumorGrowthSimulator:
             success: Whether the step was successful
         """
         # Get current fields from field manager
-        phi_hat, nutrient_field = self.field_manager.get_cell_fields()
+        phi_hat, nutrient_field, host_field = self.field_manager.get_cell_fields()
         
         # Compute source terms once per time step (not for each RK4 coefficient)
         source_terms = self.cell_dynamics.compute_source_terms(phi_hat, nutrient_field)
@@ -375,7 +375,7 @@ class TumorGrowthSimulator:
             self.field_manager.update_physics_fields(phi_hat_new, nutrient_field_new, self.cell_dynamics, source_terms)
             
             # Normalize volume fractions after each time step
-            phi_hat_normalized = self.field_manager.normalize_volume_fractions(add_host_field=False)
+            phi_hat_normalized = self.field_manager.normalize_volume_fractions(add_host_field=True)
             
             # Update fields with normalized values (only if normalization was needed)
             if phi_hat_normalized is not None:
@@ -388,7 +388,7 @@ class TumorGrowthSimulator:
         self.step_times.append(0.0)  # No timing recorded
         
         # Get the final normalized fields for statistics
-        phi_hat_final, _ = self.field_manager.get_cell_fields()
+        phi_hat_final, _, _ = self.field_manager.get_cell_fields()
         total_cells = np.sum(phi_hat_final)
         self.total_cells.append(total_cells)
         
@@ -456,7 +456,7 @@ class TumorGrowthSimulator:
             return
         
         plots_dir = self.output_dir / "plots"
-        phi_hat, _ = self.field_manager.get_cell_fields()
+        phi_hat, _, _ = self.field_manager.get_cell_fields()
         self.field_manager.plot_physics_fields(phi_hat, str(plots_dir), step)
     
     def save_output(self, step):
@@ -474,7 +474,7 @@ class TumorGrowthSimulator:
         filepath = self.output_dir / filename
         
         # Get current fields from field manager
-        phi_hat, nutrient_field = self.field_manager.get_cell_fields()
+        phi_hat, nutrient_field, host_field = self.field_manager.get_cell_fields()
         
         # Prepare data for saving
         save_data = {
@@ -538,7 +538,7 @@ class TumorGrowthSimulator:
                 #self.save_plots(step)
                 
                 # Update progress bar with current info
-                phi_hat, _ = self.field_manager.get_cell_fields()
+                phi_hat, _, _ = self.field_manager.get_cell_fields()
                 total_cells = np.sum(phi_hat)
                 avg_step_time = np.mean(self.step_times[-10:]) if len(self.step_times) >= 10 else 0
                 pbar.set_postfix({
@@ -556,11 +556,12 @@ class TumorGrowthSimulator:
         self.profiler.print_final_summary()
         
         # Return simulation data
-        phi_hat, nutrient_field = self.field_manager.get_cell_fields()
+        phi_hat, nutrient_field, host_field = self.field_manager.get_cell_fields()
         simulation_data = {
             "time": self.time,
             "phi_hat": phi_hat,
             "nutrient_field": nutrient_field,
+            "host_field": host_field,
             "field_manager": self.field_manager,
             "step_times": self.step_times,
             "total_cells": self.total_cells,
@@ -612,13 +613,14 @@ class TumorGrowthSimulator:
         self.initialize_fields(initial_conditions)
         
         # Save initial conditions (step 0, time 0.0)
-        phi_hat_initial, nutrient_field_initial = self.field_manager.get_cell_fields()
+        phi_hat_initial, nutrient_field_initial, host_field_initial = self.field_manager.get_cell_fields()
         
         # Initialize storage for saved data
         saved_steps = [0]  # Start with step 0
         saved_times = [0.0]  # Start with time 0.0
         saved_phi_hat = [phi_hat_initial.copy()]  # Save initial conditions
         saved_nutrient_fields = [nutrient_field_initial.copy()]  # Save initial nutrient field
+        saved_host_fields = [host_field_initial.copy()]  # Save initial host field
         saved_physics_data = []
         
         # Save initial physics data if requested
@@ -652,13 +654,14 @@ class TumorGrowthSimulator:
                 # Save data at specified intervals
                 if step % save_interval == 0:
                     # Get current fields
-                    phi_hat, nutrient_field = self.field_manager.get_cell_fields()
+                    phi_hat, nutrient_field, host_field = self.field_manager.get_cell_fields()
                     
                     # Store basic data
                     saved_steps.append(step)
                     saved_times.append(self.time)
                     saved_phi_hat.append(phi_hat.copy())
                     saved_nutrient_fields.append(nutrient_field.copy())
+                    saved_host_fields.append(host_field.copy())
                     
                     # Store physics data if requested
                     if save_physics_fields:
@@ -676,7 +679,7 @@ class TumorGrowthSimulator:
                         self.save_plots(step)
                 
                 # Update progress bar with current info
-                phi_hat, _ = self.field_manager.get_cell_fields()
+                phi_hat, _, _ = self.field_manager.get_cell_fields()
                 total_cells = np.sum(phi_hat)
                 avg_step_time = np.mean(self.step_times[-10:]) if len(self.step_times) >= 10 else 0
                 pbar.set_postfix({
@@ -709,14 +712,18 @@ class TumorGrowthSimulator:
                 "final_time": self.time,
                 "grid_size": self.field_manager.grid,
                 "num_populations": self.field_manager.M,
+                "population_labels": self.field_manager.labels,  # Add population labels
+                "population_names": list(self.cfg["populations"].keys()),  # Add population names (keys)
                 "time_step": self.integrator.dt,
                 "output_dir": str(output_dir),
                 "saved_steps": saved_steps,
-                "saved_times": saved_times
+                "saved_times": saved_times,
+                "config": self.cfg  # Include full config for reference
             },
             "field_data": {
                 "phi_hat": saved_phi_hat,
-                "nutrient_fields": saved_nutrient_fields
+                "nutrient_fields": saved_nutrient_fields,
+                "host_fields": saved_host_fields
             },
             "performance": {
                 "step_times": self.step_times,
@@ -750,6 +757,7 @@ class TumorGrowthSimulator:
             save_dict = {
                 "phi_hat": np.array(simulation_data["field_data"]["phi_hat"]),
                 "nutrient_fields": np.array(simulation_data["field_data"]["nutrient_fields"]),
+                "host_fields": np.array(simulation_data["field_data"]["host_fields"]),
                 "step_times": np.array(simulation_data["performance"]["step_times"]),
                 "total_cells": np.array(simulation_data["performance"]["total_cells"])
             }
@@ -818,7 +826,8 @@ class TumorGrowthSimulator:
             "metadata": metadata,
             "field_data": {
                 "phi_hat": data["phi_hat"],
-                "nutrient_fields": data["nutrient_fields"]
+                "nutrient_fields": data["nutrient_fields"],
+                "host_fields": data["host_fields"]
             },
             "performance": {
                 "step_times": data["step_times"],
