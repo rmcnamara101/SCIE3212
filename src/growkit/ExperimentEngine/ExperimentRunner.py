@@ -175,7 +175,8 @@ class ExperimentRunner:
             with tempfile.NamedTemporaryFile(mode='w', suffix='.yaml', delete=False) as temp_file:
                 # Convert numpy types before saving
                 clean_config = self._convert_numpy_types(config)
-                yaml.dump(clean_config, temp_file, default_flow_style=False, indent=2)
+                # Use yaml.dump with sort_keys=False to preserve dictionary order
+                yaml.dump(clean_config, temp_file, default_flow_style=False, indent=2, sort_keys=False)
                 temp_config_path = temp_file.name
             
             try:

@@ -295,7 +295,7 @@ class SimpleExperimentRunner:
         
         return center_x, center_y, center_z
     
-    def run_experiment(self, experiment_index: int) -> Dict[str, Any]:
+    def run_experiment(self, experiment_index: int, start_index: int = 0) -> Dict[str, Any]:
         """Run a single experiment with random parameters."""
         try:
             # Generate random parameters for this experiment
@@ -309,7 +309,8 @@ class SimpleExperimentRunner:
             import tempfile
             with tempfile.NamedTemporaryFile(mode='w', suffix='.yaml', delete=False) as temp_file:
                 clean_config = self._convert_numpy_types(experiment_config)
-                yaml.dump(clean_config, temp_file, default_flow_style=False, indent=2)
+                # Use yaml.dump with sort_keys=False to preserve dictionary order
+                yaml.dump(clean_config, temp_file, default_flow_style=False, indent=2, sort_keys=False)
                 temp_config_path = temp_file.name
             
             try:
@@ -337,7 +338,7 @@ class SimpleExperimentRunner:
                 
                 # Create result row
                 result_row = {
-                    'experiment_index': experiment_index,
+                    'experiment_index': start_index + experiment_index,
                     'execution_time': end_time - start_time,
                     'total_time_steps': len(simulation_data.get('field_data', {}).get('phi_hat', []))
                 }
@@ -378,24 +379,40 @@ class SimpleExperimentRunner:
             
             return error_info
     
-    def run_all_experiments(self):
+    def run_all_experiments(self, append_mode=False):
         """Run all experiments."""
         if not self.param_bounds:
             raise ValueError("No parameter sweep configured. Call setup_parameter_sweep() first.")
         
+        # Check if we're appending to existing file
+        if append_mode and self.excel_file.exists():
+            try:
+                existing_df = pd.read_excel(self.excel_file, sheet_name='Results')
+                start_index = len(existing_df)
+                print(f"Appending to existing file with {start_index} experiments...")
+            except Exception as e:
+                print(f"Warning: Could not read existing file ({e}). Starting fresh.")
+                start_index = 0
+        else:
+            start_index = 0
+        
         print(f"\nStarting {self.num_experiments} experiments...")
         print(f"Output directory: {self.output_dir}")
         print(f"Results will be saved to: {self.excel_file}")
+        if append_mode:
+            print("Mode: APPEND (will add to existing data)")
+        else:
+            print("Mode: NEW FILE (will create new file)")
         
         # Set random seed for reproducibility
         np.random.seed(42)
         
         # Run experiments
         for i in tqdm(range(self.num_experiments), desc="Running experiments"):
-            self.run_experiment(i)
+            self.run_experiment(i, start_index=start_index)
             
             # Save to Excel after each experiment
-            self._save_excel_results()
+            self._save_excel_results(append_mode=append_mode)
         
         # Reset random seed
         np.random.seed()
@@ -405,7 +422,7 @@ class SimpleExperimentRunner:
         print(f"  Failed: {len(self.failed_experiments)}")
         print(f"  Results saved to: {self.excel_file}")
     
-    def _save_excel_results(self):
+    def _save_excel_results(self, append_mode=False):
         """Save all results to Excel file."""
         if not self.results:
             return
@@ -413,52 +430,35 @@ class SimpleExperimentRunner:
         # Convert to DataFrame
         df = pd.DataFrame(self.results)
         
-        # Save to Excel with multiple sheets
+        # Check if we should append to existing file
+        if append_mode and self.excel_file.exists():
+            try:
+                # Load existing data
+                existing_df = pd.read_excel(self.excel_file, sheet_name='Results')
+                
+                # Append new results
+                combined_df = pd.concat([existing_df, df], ignore_index=True)
+                
+                # Save combined data
+                with pd.ExcelWriter(self.excel_file, engine='openpyxl') as writer:
+                    combined_df.to_excel(writer, sheet_name='Results', index=False)
+                    
+                    # Update parameter summary with combined data
+                    self._create_parameter_summary_sheet(writer, combined_df)
+                    
+                print(f"Appended {len(df)} new experiments to existing Excel file")
+                return
+                
+            except Exception as e:
+                print(f"Warning: Could not append to existing file ({e}). Creating new file instead.")
+        
+        # Save to Excel with multiple sheets (new file or fallback)
         with pd.ExcelWriter(self.excel_file, engine='openpyxl') as writer:
             # Main results sheet
             df.to_excel(writer, sheet_name='Results', index=False)
             
             # Create parameter summary sheet
-            param_columns = [col for col in df.columns if col.startswith('param_')]
-            if param_columns:
-                param_summary = []
-                for col in param_columns:
-                    param_name = col.replace('param_', '')
-                    
-                    # Check if the column contains numeric data
-                    try:
-                        # Try to convert to numeric, coercing errors to NaN
-                        numeric_series = pd.to_numeric(df[col], errors='coerce')
-                        
-                        # If all values are NaN, it's not numeric
-                        if numeric_series.isna().all():
-                            param_summary.append({
-                                'parameter': param_name,
-                                'type': 'non_numeric',
-                                'unique_values': df[col].nunique(),
-                                'sample_values': str(df[col].unique()[:3].tolist())
-                            })
-                        else:
-                            # It's numeric, calculate statistics
-                            param_summary.append({
-                                'parameter': param_name,
-                                'type': 'numeric',
-                                'mean': numeric_series.mean(),
-                                'std': numeric_series.std(),
-                                'min': numeric_series.min(),
-                                'max': numeric_series.max(),
-                                'median': numeric_series.median()
-                            })
-                    except Exception as e:
-                        # Fallback for any other issues
-                        param_summary.append({
-                            'parameter': param_name,
-                            'type': 'error',
-                            'error': str(e)
-                        })
-                
-                param_df = pd.DataFrame(param_summary)
-                param_df.to_excel(writer, sheet_name='Parameter_Summary', index=False)
+            self._create_parameter_summary_sheet(writer, df)
             
             # Create time series data guide
             time_series_columns = [col for col in df.columns if col.startswith('time_series_')]
@@ -541,3 +541,46 @@ class SimpleExperimentRunner:
                 }
         
         return stats
+    
+    def _create_parameter_summary_sheet(self, writer, df):
+        """Create parameter summary sheet for Excel file."""
+        param_columns = [col for col in df.columns if col.startswith('param_')]
+        if param_columns:
+            param_summary = []
+            for col in param_columns:
+                param_name = col.replace('param_', '')
+                
+                # Check if the column contains numeric data
+                try:
+                    # Try to convert to numeric, coercing errors to NaN
+                    numeric_series = pd.to_numeric(df[col], errors='coerce')
+                    
+                    # If all values are NaN, it's not numeric
+                    if numeric_series.isna().all():
+                        param_summary.append({
+                            'parameter': param_name,
+                            'type': 'non_numeric',
+                            'unique_values': df[col].nunique(),
+                            'sample_values': str(df[col].unique()[:3].tolist())
+                        })
+                    else:
+                        # It's numeric, calculate statistics
+                        param_summary.append({
+                            'parameter': param_name,
+                            'type': 'numeric',
+                            'mean': numeric_series.mean(),
+                            'std': numeric_series.std(),
+                            'min': numeric_series.min(),
+                            'max': numeric_series.max(),
+                            'median': numeric_series.median()
+                        })
+                except Exception as e:
+                    # Fallback for any other issues
+                    param_summary.append({
+                        'parameter': param_name,
+                        'type': 'error',
+                        'error': str(e)
+                    })
+            
+            param_df = pd.DataFrame(param_summary)
+            param_df.to_excel(writer, sheet_name='Parameter_Summary', index=False)

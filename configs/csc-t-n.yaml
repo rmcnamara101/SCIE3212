@@ -62,20 +62,20 @@ nutrient:
 
 physics:
   adhesion_energy:
-    m: 0
+    m: 10
 
 initial_conditions:
   type: gaussian_random_blob # Options: "spherical", "gaussian_random_blob", "multiple_spheres", "uniform", "custom"
   
   center: [40, 40, 40] # Center coordinates (optional, defaults to domain center)
-  radius: 5 # Radius of the sphere (optional, defaults to domain_size/4)
+  radius: 10 # Radius of the sphere (optional, defaults to domain_size/4)
   
-  deformation_strength: 0.3 # How much to deform (0.0=sphere, 0.5=very deformed, optional, defaults to 0.3)
+  deformation_strength: 0.6 # How much to deform (0.0=sphere, 0.5=very deformed, optional, defaults to 0.3)
   
   seeding_densities:
-    Tumour: 0.8 # Density for specific population
+    Tumour: 0.7 # Density for specific population
     Stem: 0.2 # Density for specific population
-    Necrotic: 0.0 # Density for specific population
+    Necrotic: 0.1 # Density for specific population
   
   nutrient:
     type: natural # Options: "uniform", "gradient" (optional, uses default nutrient manager if not specified)

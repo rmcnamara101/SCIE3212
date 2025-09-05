@@ -24,6 +24,8 @@ param_bounds = {
     "populations.Stem.dynamics.mobility": {"min": 0.1, "max": 5.0},
     "populations.Stem.dynamics.nutrient_threshold": {"min": 0.1, "max": 0.9},
     "populations.Stem.dynamics.nutrient_production": {"min": 0.01, "max": 0.2},
+    "populations.Stem.dynamics.transfer.rate": {"min": 0.0, "max": 1.0},
+    "populations.Stem.dynamics.nutrient_consumption": {"min": 0.01, "max": 0.2},
     
     # Population dynamics parameters - Tumour cells
     "populations.Tumour.dynamics.lambda": {"min": 30, "max": 80},
@@ -31,6 +33,7 @@ param_bounds = {
     "populations.Tumour.dynamics.mobility": {"min": 0.1, "max": 5.0},
     "populations.Tumour.dynamics.nutrient_threshold": {"min": 0.1, "max": 0.9},
     "populations.Tumour.dynamics.nutrient_production": {"min": 0.01, "max": 0.2},
+    "populations.Tumour.dynamics.nutrient_consumption": {"min": 0.01, "max": 0.2},
     
     # Population dynamics parameters - Necrotic cells
     "populations.Necrotic.dynamics.lambda": {"min": 0.0, "max": 0.1},   
@@ -58,7 +61,7 @@ experiment_runner.setup_parameter_sweep(param_bounds, num_experiments)
 
 # Run all experiments
 print(f"\nRunning {num_experiments} experiments...")
-experiment_runner.run_all_experiments()
+experiment_runner.run_all_experiments(append_mode=True)
 
 # Print status
 experiment_runner.print_status()
@@ -74,3 +77,8 @@ print("1. Increase 'num_experiments'")
 print("2. Add more parameters to 'param_bounds'")
 print("3. Each experiment will be one row in the Excel file")
 print("4. Use the time series data to compare with experimental data")
+print("\nAPPEND MODE ENABLED:")
+print("- New experiments will be added to existing Excel file")
+print("- You can stop and restart without losing data")
+print("- Experiment indices will continue from where you left off")
+print("- To start fresh, delete the Excel file first")
