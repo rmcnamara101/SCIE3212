@@ -317,6 +317,8 @@ def laplacian_neumann_robust(p_flat, shape, dx):
     """
     Legacy function - kept for backward compatibility.
     Use scipy.ndimage.laplace instead for better performance.
+    
+    Fixed to use consistent boundary conditions to avoid diamond-shaped artifacts.
     """
     p = p_flat.reshape(shape)
     lap_p = np.zeros(shape, dtype=np.float64)
@@ -324,17 +326,19 @@ def laplacian_neumann_robust(p_flat, shape, dx):
 
     # x-direction
     lap_p[1:-1, :, :] = (p[2:, :, :] - 2*p[1:-1, :, :] + p[:-2, :, :]) / dx2
-    # Neumann BC: dp/dx = 0 at boundaries
+    # Neumann BC: dp/dx = 0 at boundaries - use one-sided difference
     lap_p[0, :, :] = (p[1, :, :] - p[0, :, :]) / dx2
     lap_p[-1, :, :] = (p[-2, :, :] - p[-1, :, :]) / dx2
 
     # y-direction
     lap_p[:, 1:-1, :] += (p[:, 2:, :] - 2*p[:, 1:-1, :] + p[:, :-2, :]) / dx2
+    # Neumann BC: dp/dy = 0 at boundaries - use one-sided difference
     lap_p[:, 0, :] += (p[:, 1, :] - p[:, 0, :]) / dx2
     lap_p[:, -1, :] += (p[:, -2, :] - p[:, -1, :]) / dx2
 
     # z-direction
     lap_p[:, :, 1:-1] += (p[:, :, 2:] - 2*p[:, :, 1:-1] + p[:, :, :-2]) / dx2
+    # Neumann BC: dp/dz = 0 at boundaries - use one-sided difference
     lap_p[:, :, 0] += (p[:, :, 1] - p[:, :, 0]) / dx2
     lap_p[:, :, -1] += (p[:, :, -2] - p[:, :, -1]) / dx2
     

@@ -24,7 +24,7 @@ param_bounds = {
     "populations.Stem.dynamics.mobility": {"min": 0.1, "max": 5.0},
     "populations.Stem.dynamics.nutrient_threshold": {"min": 0.1, "max": 0.9},
     "populations.Stem.dynamics.nutrient_production": {"min": 0.01, "max": 0.2},
-    "populations.Stem.dynamics.transfer.rate": {"min": 0.0, "max": 1.0},
+    "populations.Stem.transfer.rate": {"min": 0.0, "max": 1.0},
     "populations.Stem.dynamics.nutrient_consumption": {"min": 0.01, "max": 0.2},
     
     # Population dynamics parameters - Tumour cells

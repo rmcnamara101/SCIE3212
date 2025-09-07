@@ -1,0 +1,201 @@
+============================================================
+PARAMETER SWEEP ANALYSIS REPORT
+============================================================
+
+BASIC STATISTICS:
+  Total experiments: 3
+  Parameters varied: 55
+  Populations analyzed: 4
+  Time series length: 11
+
+PARAMETER SUMMARY:
+  simulation_name: Non-numeric parameter
+  simulation_seed:
+    Range: 1.21e+03 to 1.21e+03
+    Mean: 1.21e+03
+    Std: 0
+  domain_shape:
+    Range: 80 to 80
+    Mean: 80
+    Std: 0
+  domain_dx:
+    Range: 100 to 100
+    Mean: 100
+    Std: 0
+  time_steps:
+    Range: 10 to 10
+    Mean: 10
+    Std: 0
+  time_dt:
+    Range: 0.03 to 0.03
+    Mean: 0.03
+    Std: 0
+  populations_Stem_label: Non-numeric parameter
+  populations_Stem_color: Non-numeric parameter
+  populations_Stem_dynamics_lambda:
+    Range: 78 to 90
+    Mean: 82
+    Std: 6.93
+  populations_Stem_dynamics_mu:
+    Range: 8 to 11
+    Mean: 9
+    Std: 1.73
+  populations_Stem_dynamics_mobility:
+    Range: 4.57 to 4.76
+    Mean: 4.69
+    Std: 0.111
+  populations_Stem_dynamics_nutrient_threshold:
+    Range: 0.2 to 0.686
+    Mean: 0.524
+    Std: 0.28
+  populations_Stem_dynamics_nutrient_consumption:
+    Range: 0.0396 to 0.188
+    Mean: 0.0891
+    Std: 0.0856
+  populations_Stem_dynamics_nutrient_production:
+    Range: 0.0991 to 0.124
+    Mean: 0.116
+    Std: 0.0143
+  populations_Stem_transfer_to: Non-numeric parameter
+  populations_Stem_transfer_rate:
+    Range: 0.156 to 0.86
+    Mean: 0.391
+    Std: 0.406
+  populations_Tumour_label: Non-numeric parameter
+  populations_Tumour_color: Non-numeric parameter
+  populations_Tumour_dynamics_lambda:
+    Range: 40 to 63
+    Mean: 47.7
+    Std: 13.3
+  populations_Tumour_dynamics_mu:
+    Range: 9 to 15
+    Mean: 13
+    Std: 3.46
+  populations_Tumour_dynamics_mobility:
+    Range: 1.34 to 4.34
+    Mean: 3.34
+    Std: 1.73
+  populations_Tumour_dynamics_nutrient_threshold:
+    Range: 0.581 to 0.666
+    Mean: 0.609
+    Std: 0.049
+  populations_Tumour_dynamics_nutrient_consumption:
+    Range: 0.0139 to 0.12
+    Mean: 0.0491
+    Std: 0.061
+  populations_Tumour_dynamics_nutrient_production:
+    Range: 0.0756 to 0.145
+    Mean: 0.122
+    Std: 0.0398
+  populations_Necrotic_label: Non-numeric parameter
+  populations_Necrotic_color: Non-numeric parameter
+  populations_Necrotic_dynamics_lambda:
+    Range: 0.0747 to 0.097
+    Mean: 0.0896
+    Std: 0.0128
+  populations_Necrotic_dynamics_mu:
+    Range: 3 to 6
+    Mean: 5
+    Std: 1.73
+  populations_Necrotic_dynamics_mobility:
+    Range: 0.000389 to 0.423
+    Mean: 0.141
+    Std: 0.244
+  populations_Necrotic_dynamics_nutrient_threshold:
+    Range: 0.0507 to 0.0992
+    Mean: 0.083
+    Std: 0.028
+  populations_Necrotic_dynamics_nutrient_consumption:
+    Range: 0 to 0
+    Mean: 0
+    Std: 0
+  populations_Necrotic_dynamics_nutrient_production:
+    Range: 0.00142 to 0.00617
+    Mean: 0.00459
+    Std: 0.00274
+  populations_Necrotic_dynamics_beta_N:
+    Range: 1e-05 to 1e-05
+    Mean: 1e-05
+    Std: 0
+  nutrient_name: Non-numeric parameter
+  nutrient_label: Non-numeric parameter
+  nutrient_color: Non-numeric parameter
+  nutrient_dynamics_diffusion:
+    Range: 479 to 613
+    Mean: 568
+    Std: 77.4
+  nutrient_dynamics_boundary_value:
+    Range: 1 to 1
+    Mean: 1
+    Std: 0
+  nutrient_dynamics_k:
+    Range: 0.05 to 0.05
+    Mean: 0.05
+    Std: 8.5e-18
+  physics_adhesion_energy_m:
+    Range: -1 to 2
+    Mean: 1
+    Std: 1.73
+  initial_conditions_type: Non-numeric parameter
+  initial_conditions_center: Non-numeric parameter
+  initial_conditions_radius:
+    Range: 10 to 10
+    Mean: 10
+    Std: 0
+  initial_conditions_deformation_strength:
+    Range: 0.6 to 0.6
+    Mean: 0.6
+    Std: 0
+  initial_conditions_seeding_densities_Tumour:
+    Range: 0.7 to 0.7
+    Mean: 0.7
+    Std: 1.36e-16
+  initial_conditions_seeding_densities_Stem:
+    Range: 0.2 to 0.2
+    Mean: 0.2
+    Std: 3.4e-17
+  initial_conditions_seeding_densities_Necrotic:
+    Range: 0.1 to 0.1
+    Mean: 0.1
+    Std: 1.7e-17
+  initial_conditions_nutrient_type: Non-numeric parameter
+  initial_conditions_nutrient_concentration:
+    Range: 1 to 1
+    Mean: 1
+    Std: 0
+  initial_conditions_nutrient_concentration_max:
+    Range: 1 to 1
+    Mean: 1
+    Std: 0
+  initial_conditions_nutrient_concentration_min:
+    Range: 0 to 0
+    Mean: 0
+    Std: 0
+  integrator_type: Non-numeric parameter
+  integrator_padding:
+    Range: 10 to 10
+    Mean: 10
+    Std: 0
+  integrator_threshold:
+    Range: 1e-06 to 1e-06
+    Mean: 1e-06
+    Std: 0
+  integrator_min_sub_grid_size:
+    Range: 10 to 10
+    Mean: 10
+    Std: 0
+
+POPULATION SUMMARY:
+  Necrotic Cells:
+    Final total cells: 4.78e+03 ± 464
+    Final radius: 25.5 ± 0.0677
+  Stem Cells:
+    Final total cells: 5.11e+03 ± 3.56e+03
+    Final radius: 25.5 ± 0.0449
+  Tumour Cells:
+    Final total cells: 6.69e+03 ± 2.92e+03
+    Final radius: 25.6 ± 0.101
+  total:
+    Final radius: 25.6 ± 0.0963
+
+============================================================

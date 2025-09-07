@@ -6,17 +6,17 @@ initial_conditions:
   - 40
   - 40
   - 40
-  deformation_strength: 0.3
+  deformation_strength: 0.6
   nutrient:
     concentration: 1.0
     concentration_max: 1.0
     concentration_min: 0.0
     type: natural
-  radius: 5
+  radius: 10
   seeding_densities:
-    Necrotic: 0.0
+    Necrotic: 0.1
     Stem: 0.2
-    Tumour: 0.8
+    Tumour: 0.7
   type: gaussian_random_blob
 integrator:
   min_sub_grid_size: 10
@@ -33,7 +33,7 @@ nutrient:
   name: General
 physics:
   adhesion_energy:
-    m: 0
+    m: 10
 populations:
   Necrotic:
     color: Black

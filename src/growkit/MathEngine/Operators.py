@@ -16,7 +16,10 @@ from numba import njit
 @njit
 def _gradient_neumann(field, dx, axis):
     """
-    Compute the gradient of a field with Neumann boundary conditions.
+    Compute the gradient of a field with Neumann boundary conditions using 4th-order accuracy.
+    
+    Uses 4th-order central differences in the interior and 3rd-order one-sided differences
+    at boundaries to reduce diamond-shaped artifacts.
     
     Args:
         field: The field to compute the gradient of
@@ -29,17 +32,40 @@ def _gradient_neumann(field, dx, axis):
     grad = np.zeros_like(field)
     
     if axis == 0:  # x-direction
-        grad[1:-1, :, :] = (field[2:, :, :] - field[:-2, :, :]) / (2*dx)
-        grad[0, :, :] = 0  # Neumann at x=0: ∂φ/∂x = 0
-        grad[-1, :, :] = 0  # Neumann at x=L: ∂φ/∂x = 0
+        # 4th-order central differences in interior
+        grad[2:-2, :, :] = (-field[4:, :, :] + 8*field[3:-1, :, :] - 8*field[1:-3, :, :] + field[:-4, :, :]) / (12*dx)
+        
+        # 3rd-order one-sided differences near boundaries
+        grad[1, :, :] = (-11*field[0, :, :] + 18*field[1, :, :] - 9*field[2, :, :] + 2*field[3, :, :]) / (6*dx)
+        grad[-2, :, :] = (11*field[-1, :, :] - 18*field[-2, :, :] + 9*field[-3, :, :] - 2*field[-4, :, :]) / (6*dx)
+        
+        # Neumann BC at boundaries: ∂φ/∂x = 0
+        grad[0, :, :] = 0
+        grad[-1, :, :] = 0
+        
     elif axis == 1:  # y-direction
-        grad[:, 1:-1, :] = (field[:, 2:, :] - field[:, :-2, :]) / (2*dx)
-        grad[:, 0, :] = 0  # Neumann at y=0: ∂φ/∂y = 0
-        grad[:, -1, :] = 0  # Neumann at y=L: ∂φ/∂y = 0
+        # 4th-order central differences in interior
+        grad[:, 2:-2, :] = (-field[:, 4:, :] + 8*field[:, 3:-1, :] - 8*field[:, 1:-3, :] + field[:, :-4, :]) / (12*dx)
+        
+        # 3rd-order one-sided differences near boundaries
+        grad[:, 1, :] = (-11*field[:, 0, :] + 18*field[:, 1, :] - 9*field[:, 2, :] + 2*field[:, 3, :]) / (6*dx)
+        grad[:, -2, :] = (11*field[:, -1, :] - 18*field[:, -2, :] + 9*field[:, -3, :] - 2*field[:, -4, :]) / (6*dx)
+        
+        # Neumann BC at boundaries: ∂φ/∂y = 0
+        grad[:, 0, :] = 0
+        grad[:, -1, :] = 0
+        
     elif axis == 2:  # z-direction
-        grad[:, :, 1:-1] = (field[:, :, 2:] - field[:, :, :-2]) / (2*dx)
-        grad[:, :, 0] = 0  # Neumann at z=0: ∂φ/∂z = 0
-        grad[:, :, -1] = 0  # Neumann at z=L: ∂φ/∂z = 0
+        # 4th-order central differences in interior
+        grad[:, :, 2:-2] = (-field[:, :, 4:] + 8*field[:, :, 3:-1] - 8*field[:, :, 1:-3] + field[:, :, :-4]) / (12*dx)
+        
+        # 3rd-order one-sided differences near boundaries
+        grad[:, :, 1] = (-11*field[:, :, 0] + 18*field[:, :, 1] - 9*field[:, :, 2] + 2*field[:, :, 3]) / (6*dx)
+        grad[:, :, -2] = (11*field[:, :, -1] - 18*field[:, :, -2] + 9*field[:, :, -3] - 2*field[:, :, -4]) / (6*dx)
+        
+        # Neumann BC at boundaries: ∂φ/∂z = 0
+        grad[:, :, 0] = 0
+        grad[:, :, -1] = 0
     
     return grad
 
@@ -82,8 +108,11 @@ def divergence(ux, uy, uz, dx):
 @njit
 def laplacian(field, dx):
     """
-    Compute the Laplacian of a field with Neumann boundary conditions.
+    Compute the Laplacian of a field with Neumann boundary conditions using 4th-order accuracy.
     ∇²φ = ∂²φ/∂x² + ∂²φ/∂y² + ∂²φ/∂z²
+    
+    Uses 4th-order central differences in the interior and 2nd-order one-sided differences
+    at boundaries to reduce diamond-shaped artifacts.
     
     Args:
         field: The field to compute the Laplacian of
@@ -94,28 +123,53 @@ def laplacian(field, dx):
     """
     # Initialize Laplacian array
     lap = np.zeros_like(field)
+    dx2 = dx**2
     
     # x-direction
-    lap[1:-1, :, :] = (field[2:, :, :] - 2*field[1:-1, :, :] + field[:-2, :, :]) / dx**2
-    lap[0, :, :] = 2*(field[1, :, :] - field[0, :, :]) / dx**2  # Neumann at x=0
-    lap[-1, :, :] = 2*(field[-2, :, :] - field[-1, :, :]) / dx**2  # Neumann at x=L
+    # 4th-order central differences in interior
+    lap[2:-2, :, :] = (-field[4:, :, :] + 16*field[3:-1, :, :] - 30*field[2:-2, :, :] + 16*field[1:-3, :, :] - field[:-4, :, :]) / (12*dx2)
+    
+    # 2nd-order one-sided differences near boundaries
+    lap[1, :, :] = (2*field[0, :, :] - 5*field[1, :, :] + 4*field[2, :, :] - field[3, :, :]) / dx2
+    lap[-2, :, :] = (2*field[-1, :, :] - 5*field[-2, :, :] + 4*field[-3, :, :] - field[-4, :, :]) / dx2
+    
+    # Neumann BC at boundaries: ∂φ/∂x = 0, so use one-sided difference
+    lap[0, :, :] = (field[1, :, :] - field[0, :, :]) / dx2
+    lap[-1, :, :] = (field[-2, :, :] - field[-1, :, :]) / dx2
     
     # y-direction
-    lap[:, 1:-1, :] += (field[:, 2:, :] - 2*field[:, 1:-1, :] + field[:, :-2, :]) / dx**2
-    lap[:, 0, :] += 2*(field[:, 1, :] - field[:, 0, :]) / dx**2  # Neumann at y=0
-    lap[:, -1, :] += 2*(field[:, -2, :] - field[:, -1, :]) / dx**2  # Neumann at y=L
+    # 4th-order central differences in interior
+    lap[:, 2:-2, :] += (-field[:, 4:, :] + 16*field[:, 3:-1, :] - 30*field[:, 2:-2, :] + 16*field[:, 1:-3, :] - field[:, :-4, :]) / (12*dx2)
+    
+    # 2nd-order one-sided differences near boundaries
+    lap[:, 1, :] += (2*field[:, 0, :] - 5*field[:, 1, :] + 4*field[:, 2, :] - field[:, 3, :]) / dx2
+    lap[:, -2, :] += (2*field[:, -1, :] - 5*field[:, -2, :] + 4*field[:, -3, :] - field[:, -4, :]) / dx2
+    
+    # Neumann BC at boundaries: ∂φ/∂y = 0, so use one-sided difference
+    lap[:, 0, :] += (field[:, 1, :] - field[:, 0, :]) / dx2
+    lap[:, -1, :] += (field[:, -2, :] - field[:, -1, :]) / dx2
     
     # z-direction
-    lap[:, :, 1:-1] += (field[:, :, 2:] - 2*field[:, :, 1:-1] + field[:, :, :-2]) / dx**2
-    lap[:, :, 0] += 2*(field[:, :, 1] - field[:, :, 0]) / dx**2  # Neumann at z=0
-    lap[:, :, -1] += 2*(field[:, :, -2] - field[:, :, -1]) / dx**2  # Neumann at z=L
+    # 4th-order central differences in interior
+    lap[:, :, 2:-2] += (-field[:, :, 4:] + 16*field[:, :, 3:-1] - 30*field[:, :, 2:-2] + 16*field[:, :, 1:-3] - field[:, :, :-4]) / (12*dx2)
+    
+    # 2nd-order one-sided differences near boundaries
+    lap[:, :, 1] += (2*field[:, :, 0] - 5*field[:, :, 1] + 4*field[:, :, 2] - field[:, :, 3]) / dx2
+    lap[:, :, -2] += (2*field[:, :, -1] - 5*field[:, :, -2] + 4*field[:, :, -3] - field[:, :, -4]) / dx2
+    
+    # Neumann BC at boundaries: ∂φ/∂z = 0, so use one-sided difference
+    lap[:, :, 0] += (field[:, :, 1] - field[:, :, 0]) / dx2
+    lap[:, :, -1] += (field[:, :, -2] - field[:, :, -1]) / dx2
     
     return lap
 
 
 def laplacian_neumann(p_flat, shape, dx):
     """
-    Compute the 3D Laplacian with Neumann boundary conditions for flattened arrays.
+    Compute the 3D Laplacian with Neumann boundary conditions for flattened arrays using 4th-order accuracy.
+    
+    Uses 4th-order central differences in the interior and 2nd-order one-sided differences
+    at boundaries to reduce diamond-shaped artifacts.
     
     Args:
         p_flat: Flattened pressure array
@@ -128,18 +182,44 @@ def laplacian_neumann(p_flat, shape, dx):
     p = p_flat.reshape(shape)
     # Explicitly use float64 for lap_p to avoid dtype mismatch
     lap_p = np.zeros(shape, dtype=np.float64)
+    dx2 = dx**2
+    
     # x-direction
-    lap_p[1:-1, :, :] = (p[2:, :, :] - 2*p[1:-1, :, :] + p[:-2, :, :]) / dx**2
-    lap_p[0, :, :] = 2*(p[1, :, :] - p[0, :, :]) / dx**2
-    lap_p[-1, :, :] = 2*(p[-2, :, :] - p[-1, :, :]) / dx**2
+    # 4th-order central differences in interior
+    lap_p[2:-2, :, :] = (-p[4:, :, :] + 16*p[3:-1, :, :] - 30*p[2:-2, :, :] + 16*p[1:-3, :, :] - p[:-4, :, :]) / (12*dx2)
+    
+    # 2nd-order one-sided differences near boundaries
+    lap_p[1, :, :] = (2*p[0, :, :] - 5*p[1, :, :] + 4*p[2, :, :] - p[3, :, :]) / dx2
+    lap_p[-2, :, :] = (2*p[-1, :, :] - 5*p[-2, :, :] + 4*p[-3, :, :] - p[-4, :, :]) / dx2
+    
+    # Neumann BC at boundaries: ∂φ/∂x = 0, so use one-sided difference
+    lap_p[0, :, :] = (p[1, :, :] - p[0, :, :]) / dx2
+    lap_p[-1, :, :] = (p[-2, :, :] - p[-1, :, :]) / dx2
+    
     # y-direction
-    lap_p[:, 1:-1, :] += (p[:, 2:, :] - 2*p[:, 1:-1, :] + p[:, :-2, :]) / dx**2
-    lap_p[:, 0, :] += 2*(p[:, 1, :] - p[:, 0, :]) / dx**2
-    lap_p[:, -1, :] += 2*(p[:, -2, :] - p[:, -1, :]) / dx**2
+    # 4th-order central differences in interior
+    lap_p[:, 2:-2, :] += (-p[:, 4:, :] + 16*p[:, 3:-1, :] - 30*p[:, 2:-2, :] + 16*p[:, 1:-3, :] - p[:, :-4, :]) / (12*dx2)
+    
+    # 2nd-order one-sided differences near boundaries
+    lap_p[:, 1, :] += (2*p[:, 0, :] - 5*p[:, 1, :] + 4*p[:, 2, :] - p[:, 3, :]) / dx2
+    lap_p[:, -2, :] += (2*p[:, -1, :] - 5*p[:, -2, :] + 4*p[:, -3, :] - p[:, -4, :]) / dx2
+    
+    # Neumann BC at boundaries: ∂φ/∂y = 0, so use one-sided difference
+    lap_p[:, 0, :] += (p[:, 1, :] - p[:, 0, :]) / dx2
+    lap_p[:, -1, :] += (p[:, -2, :] - p[:, -1, :]) / dx2
+    
     # z-direction
-    lap_p[:, :, 1:-1] += (p[:, :, 2:] - 2*p[:, :, 1:-1] + p[:, :, :-2]) / dx**2
-    lap_p[:, :, 0] += 2*(p[:, :, 1] - p[:, :, 0]) / dx**2
-    lap_p[:, :, -1] += 2*(p[:, :, -2] - p[:, :, -1]) / dx**2
+    # 4th-order central differences in interior
+    lap_p[:, :, 2:-2] += (-p[:, :, 4:] + 16*p[:, :, 3:-1] - 30*p[:, :, 2:-2] + 16*p[:, :, 1:-3] - p[:, :, :-4]) / (12*dx2)
+    
+    # 2nd-order one-sided differences near boundaries
+    lap_p[:, :, 1] += (2*p[:, :, 0] - 5*p[:, :, 1] + 4*p[:, :, 2] - p[:, :, 3]) / dx2
+    lap_p[:, :, -2] += (2*p[:, :, -1] - 5*p[:, :, -2] + 4*p[:, :, -3] - p[:, :, -4]) / dx2
+    
+    # Neumann BC at boundaries: ∂φ/∂z = 0, so use one-sided difference
+    lap_p[:, :, 0] += (p[:, :, 1] - p[:, :, 0]) / dx2
+    lap_p[:, :, -1] += (p[:, :, -2] - p[:, :, -1]) / dx2
+    
     return lap_p.flatten()
 
 

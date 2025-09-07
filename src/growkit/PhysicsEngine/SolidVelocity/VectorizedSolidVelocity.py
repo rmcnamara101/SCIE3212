@@ -134,9 +134,11 @@ class VectorizedSolidVelocity:
         grad_C_x, grad_C_y, grad_C_z = gradient(phi_T, dx)
         
         # Compute velocity: u = -(∇p + (δE/δφ_T) ∇φ_T)
-        ux = (grad_p_x + energy_deriv * grad_C_x)
-        uy = (grad_p_y + energy_deriv * grad_C_y)
-        uz = (grad_p_z + energy_deriv * grad_C_z)
+        # Note: pressure returned by solver is -p, so grad_p_* = -∂p/∂*
+        # Therefore u = grad_p_* - energy_deriv * grad_C_*
+        ux = (grad_p_x - energy_deriv * grad_C_x)
+        uy = (grad_p_y - energy_deriv * grad_C_y)
+        uz = (grad_p_z - energy_deriv * grad_C_z)
         # Store velocity in field manager if available
         if self.field_manager is not None:
             self.field_manager.velocity[0] = ux

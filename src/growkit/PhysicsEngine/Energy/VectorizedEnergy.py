@@ -14,6 +14,7 @@ Date: 2025-02-19
 
 import numpy as np
 from numba import njit
+from scipy.ndimage import gaussian_filter
 from src.growkit.MathEngine.Operators import laplacian
 
 
@@ -78,7 +79,10 @@ class VectorizedEnergy:
         Returns:
             energy_deriv: Energy derivative field
         """
-        laplace_phi = laplacian(phi_T, dx)
+        # Apply slight isotropic smoothing to reduce grid-aligned artifacts in curvature
+        phi_T_smooth = gaussian_filter(phi_T, sigma=0.6)
+        laplace_phi = laplacian(phi_T_smooth, dx)
+        # Use original phi_T for double-well derivative, smoothed field for curvature term
         energy_deriv = compute_adhesion_energy_derivative_numba(phi_T, laplace_phi, self.m)
     
         

@@ -183,6 +183,73 @@ class VectorizedCellDynamics:
 
 
 @njit
+def _upwind_divergence(ux, uy, uz, phi, dx):
+    """
+    Compute conservative upwind divergence of u * phi.
+    Reduces grid-aligned artifacts vs. central differencing.
+    """
+    nx, ny, nz = phi.shape
+    div = np.zeros_like(phi, dtype=np.float32)
+
+    # X-direction fluxes at faces (i+1/2, j, k)
+    # Right faces for i = 0..nx-2
+    Fx_right = np.zeros((nx - 1, ny, nz), dtype=np.float32)
+    for i in range(nx - 1):
+        for j in range(ny):
+            for k in range(nz):
+                u_face = 0.5 * (ux[i, j, k] + ux[i + 1, j, k])
+                if u_face > 0.0:
+                    phi_up = phi[i, j, k]
+                else:
+                    phi_up = phi[i + 1, j, k]
+                Fx_right[i, j, k] = u_face * phi_up
+
+    # Y-direction fluxes at faces (i, j+1/2, k)
+    Fy_right = np.zeros((nx, ny - 1, nz), dtype=np.float32)
+    for i in range(nx):
+        for j in range(ny - 1):
+            for k in range(nz):
+                v_face = 0.5 * (uy[i, j, k] + uy[i, j + 1, k])
+                if v_face > 0.0:
+                    phi_up = phi[i, j, k]
+                else:
+                    phi_up = phi[i, j + 1, k]
+                Fy_right[i, j, k] = v_face * phi_up
+
+    # Z-direction fluxes at faces (i, j, k+1/2)
+    Fz_right = np.zeros((nx, ny, nz - 1), dtype=np.float32)
+    for i in range(nx):
+        for j in range(ny):
+            for k in range(nz - 1):
+                w_face = 0.5 * (uz[i, j, k] + uz[i, j, k + 1])
+                if w_face > 0.0:
+                    phi_up = phi[i, j, k]
+                else:
+                    phi_up = phi[i, j, k + 1]
+                Fz_right[i, j, k] = w_face * phi_up
+
+    # Divergence from face flux differences
+    inv_dx = 1.0 / dx
+    for i in range(nx):
+        for j in range(ny):
+            for k in range(nz):
+                # X contribution
+                fx_r = Fx_right[i, j, k] if i < nx - 1 else 0.0
+                fx_l = Fx_right[i - 1, j, k] if i > 0 else 0.0
+                # Y contribution
+                fy_r = Fy_right[i, j, k] if j < ny - 1 else 0.0
+                fy_l = Fy_right[i, j - 1, k] if j > 0 else 0.0
+                # Z contribution
+                fz_r = Fz_right[i, j, k] if k < nz - 1 else 0.0
+                fz_l = Fz_right[i, j, k - 1] if k > 0 else 0.0
+
+                div[i, j, k] = (fx_r - fx_l + fy_r - fy_l + fz_r - fz_l) * inv_dx
+
+    # Return -∇·(u φ)
+    return -div
+
+
+@njit
 def compute_cell_dynamics_numba(phi_hat, ux, uy, uz, J_hat, A_hat, dx):
     """
     Compute cell dynamics derivatives using Numba optimization.
@@ -202,13 +269,8 @@ def compute_cell_dynamics_numba(phi_hat, ux, uy, uz, J_hat, A_hat, dx):
     
     # Compute dynamics for each population
     for i in range(M):
-        # Advection term: -∇·(u φ_i)
-        adv_x = -ux * phi_hat[i]
-        adv_y = -uy * phi_hat[i]
-        adv_z = -uz * phi_hat[i]
-        advection = (_gradient_neumann(adv_x, dx, 0) + 
-                      _gradient_neumann(adv_y, dx, 1) + 
-                      _gradient_neumann(adv_z, dx, 2))
+        # Advection term: conservative upwind divergence for -∇·(u φ_i)
+        advection = _upwind_divergence(ux, uy, uz, phi_hat[i], dx)
         
         # Mass flux term: -∇·J_i
         Jx = J_hat[i, 0]
