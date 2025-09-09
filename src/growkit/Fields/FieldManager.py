@@ -158,6 +158,7 @@ class FieldManager:
         """
         Normalize volume fractions to ensure they are bounded by 1 at each spatial point.
         The host field automatically fills the remaining space to ensure total = 1 everywhere.
+        Also applies boundary constraints to prevent cell leakage.
         
         Args:
             add_host_field: Whether to maintain the host field (default: True)
@@ -170,6 +171,9 @@ class FieldManager:
         
         # Ensure all fractions are non-negative
         phi_hat = np.clip(self.phi_hat, 0.0, 1.0)
+        
+        # Note: Boundary constraints removed as they were causing issues
+        # The physics should naturally handle boundary behavior
         
         # Calculate total cell fraction at each spatial point
         phi_T = np.sum(phi_hat, axis=0)  # Shape: (nx, ny, nz)

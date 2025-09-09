@@ -79,8 +79,19 @@ class VectorizedEnergy:
         Returns:
             energy_deriv: Energy derivative field
         """
-        # Apply slight isotropic smoothing to reduce grid-aligned artifacts in curvature
-        phi_T_smooth = gaussian_filter(phi_T, sigma=0.6)
+        # Adaptive smoothing based on adhesion energy parameter
+        # For small m values, use less smoothing to prevent over-diffusion
+        if self.m <= 2.0:
+            # Light smoothing for weak adhesion to prevent cell leakage
+            sigma = 0.3
+        elif self.m <= 5.0:
+            # Moderate smoothing
+            sigma = 0.6
+        else:
+            # Strong smoothing for strong adhesion (original diamond fix)
+            sigma = 1.2
+            
+        phi_T_smooth = gaussian_filter(phi_T, sigma=sigma)
         laplace_phi = laplacian(phi_T_smooth, dx)
         # Use original phi_T for double-well derivative, smoothed field for curvature term
         energy_deriv = compute_adhesion_energy_derivative_numba(phi_T, laplace_phi, self.m)

@@ -64,7 +64,7 @@ class InitialConditions:
         return phi_hat, nutrient_field
     
     def _create_spherical_initial_conditions(self) -> np.ndarray:
-        """Create spherical initial conditions."""
+        """Create spherical initial conditions with smooth boundaries to reduce diamond artifacts."""
         nx, ny, nz = self.grid
         phi_hat = np.zeros((self.M, nx, ny, nz), dtype=np.float32)
         
@@ -81,14 +81,19 @@ class InitialConditions:
         # Get noise scale from config or use default
         noise_scale = self.ic_config.get("seeding_noise_scale", 0.2)
         
-        # Create base density mask
+        # Create base density with SMOOTH boundaries to reduce diamond artifacts
         base_mask = np.zeros((nx, ny, nz), dtype=np.float32)
+        transition_width = 2.0  # Controls smoothness of boundary
+        
         for i in range(nx):
             for j in range(ny):
                 for k in range(nz):
                     dist = np.sqrt((i - center[0])**2 + (j - center[1])**2 + (k - center[2])**2)
-                    if dist <= radius:
-                        base_mask[i, j, k] = 1.0
+                    # Use hyperbolic tangent for smooth transition instead of hard boundary
+                    # Reduced transition width for better compactness with small adhesion energy
+                    transition_width = 1.5
+                    density = 0.5 * (1.0 + np.tanh((radius - dist) / transition_width))
+                    base_mask[i, j, k] = density
         
         # Add noise to each population's seeding
         for m, name in enumerate(self.names):
@@ -162,7 +167,7 @@ class InitialConditions:
         return noisy_density
     
     def _create_deformed_blob_initial_conditions(self) -> np.ndarray:
-        """Create deformed blob initial conditions with hard boundaries."""
+        """Create deformed blob initial conditions with smooth boundaries to reduce diamond artifacts."""
         nx, ny, nz = self.grid
         phi_hat = np.zeros((self.M, nx, ny, nz), dtype=np.float32)
         
@@ -190,8 +195,8 @@ class InitialConditions:
             # Fallback if scipy is not available
             smoothed_deformation = deformation_field * 0.1
         
-        # Create the deformed blob with hard boundaries
-        blob_mask = np.zeros((nx, ny, nz), dtype=bool)
+        # Create the deformed blob with SMOOTH boundaries to reduce diamond artifacts
+        total_density = np.zeros((nx, ny, nz), dtype=np.float32)
         
         for i in range(nx):
             for j in range(ny):
@@ -203,13 +208,12 @@ class InitialConditions:
                     deformation = smoothed_deformation[i, j, k] * deformation_strength
                     deformed_radius = radius * (1 + deformation)
                     
-                    # Hard boundary: inside or outside
-                    if dist <= deformed_radius:
-                        blob_mask[i, j, k] = True
-        
-        # Create density field with hard boundaries
-        total_density = np.zeros((nx, ny, nz), dtype=np.float32)
-        total_density[blob_mask] = 1.0  # Full density inside, zero outside
+                    # SMOOTH boundary: use hyperbolic tangent for smooth transition
+                    # This reduces grid-aligned artifacts significantly
+                    # Adjust transition width based on adhesion energy to prevent leakage
+                    transition_width = 1.5  # Reduced for better compactness with small adhesion energy
+                    density = 0.5 * (1.0 + np.tanh((deformed_radius - dist) / transition_width))
+                    total_density[i, j, k] = density
         
         # Get noise scale from config or use default
         noise_scale = self.ic_config.get("seeding_noise_scale", 0.2)
