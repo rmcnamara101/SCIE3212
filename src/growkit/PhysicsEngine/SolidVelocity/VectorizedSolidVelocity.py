@@ -132,6 +132,7 @@ class VectorizedSolidVelocity:
         
         # Compute gradients of total cell density
         grad_C_x, grad_C_y, grad_C_z = gradient(phi_T, dx)
+
         
         # Compute velocity: u = -(∇p + (δE/δφ_T) ∇φ_T)
         # Note: pressure returned by solver is -p, so grad_p_* = -∂p/∂*
@@ -144,7 +145,7 @@ class VectorizedSolidVelocity:
             self.field_manager.velocity[0] = ux
             self.field_manager.velocity[1] = uy
             self.field_manager.velocity[2] = uz
-        
+
         return ux, uy, uz
     
     def _create_pressure_solver(self, cfg):

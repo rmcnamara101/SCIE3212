@@ -79,6 +79,14 @@ class VectorizedEnergy:
         Returns:
             energy_deriv: Energy derivative field
         """
+        # If m = 0, return zero energy derivative to avoid unnecessary computation
+        if self.m == 0.0:
+            energy_deriv = np.zeros_like(phi_T)
+            # Store zero energy derivative in field manager if available
+            if self.field_manager is not None:
+                self.field_manager.energy_derivative = energy_deriv
+            return energy_deriv
+        
         # Adaptive smoothing based on adhesion energy parameter
         # For small m values, use less smoothing to prevent over-diffusion
         if self.m <= 2.0:
