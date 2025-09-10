@@ -22,7 +22,7 @@ from scipy.sparse.linalg import cg, LinearOperator
 from scipy.sparse import diags, csr_matrix
 from scipy.ndimage import laplace
 from functools import lru_cache
-from src.growkit.MathEngine.Operators import gradient, laplacian
+from src.growkit.MathEngine.Operators import gradient, laplacian, isotropic_gradient_components, isotropic_laplacian
 from src.growkit.ProductionEngine.SourceConstructor import SourceConstructor
 
 
@@ -163,10 +163,10 @@ def solve_pressure_poisson_optimized(phi_T, S_T, energy_deriv, dx, shape, rtol=1
     S_T = np.nan_to_num(S_T, nan=0.0, posinf=0.0, neginf=0.0)
     energy_deriv = np.nan_to_num(energy_deriv, nan=0.0, posinf=0.0, neginf=0.0)
     
-    # Compute the divergence term using vectorized operations
-    grad_C_x, grad_C_y, grad_C_z = gradient(phi_T, dx)
-    grad_energy_x, grad_energy_y, grad_energy_z = gradient(energy_deriv, dx)
-    laplace_phi = laplacian(phi_T, dx)
+    # Compute the divergence term using isotropic operators
+    grad_C_x, grad_C_y, grad_C_z = isotropic_gradient_components(phi_T, dx)
+    grad_energy_x, grad_energy_y, grad_energy_z = isotropic_gradient_components(energy_deriv, dx)
+    laplace_phi = isotropic_laplacian(phi_T, dx)
     
     divergence_term = (grad_energy_x * grad_C_x +
                        grad_energy_y * grad_C_y +
@@ -269,7 +269,7 @@ class PressureSolver:
         # Compute energy derivative if not provided
         if energy_deriv is None:
             from src.growkit.PhysicsEngine.VectorizedCellDynamics import compute_adhesion_energy_derivative_numba
-            laplace_phi = laplacian(phi_T, dx)
+            laplace_phi = isotropic_laplacian(phi_T, dx)
             energy_deriv = compute_adhesion_energy_derivative_numba(phi_T, laplace_phi, self.m)
         
         # Compute total source term
@@ -289,9 +289,9 @@ class PressureSolver:
     
     def compute_pressure_gradient(self, pressure, dx):
         """
-        Computes the pressure gradient.
+        Computes the pressure gradient using isotropic operators.
         """
-        return gradient(pressure, dx)
+        return isotropic_gradient_components(pressure, dx)
 
     def _get_eps_bucket(self, eps):
         # bucket to nearest power-of-10 in [1e-8, 1e-4]

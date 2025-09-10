@@ -15,7 +15,7 @@ Date: 2025-02-19
 import numpy as np
 from numba import njit
 from scipy.ndimage import gaussian_filter
-from src.growkit.MathEngine.Operators import laplacian
+from src.growkit.MathEngine.Operators import laplacian, isotropic_laplacian
 
 
 def compute_adhesion_energy_derivative_numba(phi, laplace_phi, m):
@@ -79,14 +79,6 @@ class VectorizedEnergy:
         Returns:
             energy_deriv: Energy derivative field
         """
-        # If m = 0, return zero energy derivative to avoid unnecessary computation
-        if self.m == 0.0:
-            energy_deriv = np.zeros_like(phi_T)
-            # Store zero energy derivative in field manager if available
-            if self.field_manager is not None:
-                self.field_manager.energy_derivative = energy_deriv
-            return energy_deriv
-        
         # Adaptive smoothing based on adhesion energy parameter
         # For small m values, use less smoothing to prevent over-diffusion
         if self.m <= 2.0:
@@ -100,7 +92,7 @@ class VectorizedEnergy:
             sigma = 1.2
             
         phi_T_smooth = gaussian_filter(phi_T, sigma=sigma)
-        laplace_phi = laplacian(phi_T_smooth, dx)
+        laplace_phi = isotropic_laplacian(phi_T_smooth, dx)
         # Use original phi_T for double-well derivative, smoothed field for curvature term
         energy_deriv = compute_adhesion_energy_derivative_numba(phi_T, laplace_phi, self.m)
     

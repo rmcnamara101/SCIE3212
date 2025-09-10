@@ -89,10 +89,12 @@ class InitialConditions:
             for j in range(ny):
                 for k in range(nz):
                     dist = np.sqrt((i - center[0])**2 + (j - center[1])**2 + (k - center[2])**2)
-                    # Use hyperbolic tangent for smooth transition instead of hard boundary
-                    # Reduced transition width for better compactness with small adhesion energy
-                    transition_width = 1.5
-                    density = 0.5 * (1.0 + np.tanh((radius - dist) / transition_width))
+                    # Use hard boundary (step function) instead of smooth transition
+                    # This eliminates the hyperbolic tangent that may be causing circular artifacts
+                    if dist <= radius:
+                        density = 1.0
+                    else:
+                        density = 0.0
                     base_mask[i, j, k] = density
         
         # Add noise to each population's seeding
@@ -208,11 +210,12 @@ class InitialConditions:
                     deformation = smoothed_deformation[i, j, k] * deformation_strength
                     deformed_radius = radius * (1 + deformation)
                     
-                    # SMOOTH boundary: use hyperbolic tangent for smooth transition
-                    # This reduces grid-aligned artifacts significantly
-                    # Adjust transition width based on adhesion energy to prevent leakage
-                    transition_width = 1.5  # Reduced for better compactness with small adhesion energy
-                    density = 0.5 * (1.0 + np.tanh((deformed_radius - dist) / transition_width))
+                    # Use hard boundary (step function) instead of smooth transition
+                    # This eliminates the hyperbolic tangent that may be causing circular artifacts
+                    if dist <= deformed_radius:
+                        density = 1.0
+                    else:
+                        density = 0.0
                     total_density[i, j, k] = density
         
         # Get noise scale from config or use default

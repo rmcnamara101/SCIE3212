@@ -15,7 +15,7 @@ Date: 2025-02-19
 
 import numpy as np
 from numba import njit
-from src.growkit.MathEngine.Operators import _gradient_neumann
+from src.growkit.MathEngine.Operators import _gradient_neumann, isotropic_gradient_components
 
 
 def compute_mass_fluxes_numba(phi_hat, phi_T, dx, energy_deriv, M_matrix):
@@ -35,10 +35,8 @@ def compute_mass_fluxes_numba(phi_hat, phi_T, dx, energy_deriv, M_matrix):
     M, nx, ny, nz = phi_hat.shape
     J_hat = np.zeros((M, 3, nx, ny, nz), dtype=np.float32)
     
-    # Compute gradients of energy derivative
-    grad_energy_x = _gradient_neumann(energy_deriv, dx, 0)
-    grad_energy_y = _gradient_neumann(energy_deriv, dx, 1)
-    grad_energy_z = _gradient_neumann(energy_deriv, dx, 2)
+    # Compute gradients of energy derivative using isotropic operators
+    grad_energy_x, grad_energy_y, grad_energy_z = isotropic_gradient_components(energy_deriv, dx)
     
     # Compute mass fluxes for each population
     for i in range(M):

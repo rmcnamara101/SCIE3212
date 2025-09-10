@@ -17,7 +17,7 @@ Date: 2025-02-19
 
 import numpy as np
 from functools import lru_cache
-from src.growkit.MathEngine.Operators import gradient
+from src.growkit.MathEngine.Operators import gradient, isotropic_gradient, isotropic_gradient_components
 from src.growkit.Integrator.PressureSolver import PressureSolver
 
 
@@ -127,11 +127,11 @@ class VectorizedSolidVelocity:
         if self.field_manager is not None:
             self.field_manager.pressure = pressure
         
-        # Compute pressure gradient
-        grad_p_x, grad_p_y, grad_p_z = gradient(pressure, dx)
+        # Compute pressure gradient using isotropic scheme
+        grad_p_x, grad_p_y, grad_p_z = isotropic_gradient_components(pressure, dx)
         
-        # Compute gradients of total cell density
-        grad_C_x, grad_C_y, grad_C_z = gradient(phi_T, dx)
+        # Compute gradients of total cell density using isotropic scheme
+        grad_C_x, grad_C_y, grad_C_z = isotropic_gradient_components(phi_T, dx)
 
         
         # Compute velocity: u = -(∇p + (δE/δφ_T) ∇φ_T)
