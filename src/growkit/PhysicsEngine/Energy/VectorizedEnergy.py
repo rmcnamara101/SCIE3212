@@ -92,7 +92,7 @@ class VectorizedEnergy:
             sigma = 1.2
             
         phi_T_smooth = gaussian_filter(phi_T, sigma=sigma)
-        laplace_phi = isotropic_laplacian(phi_T_smooth, dx)
+        laplace_phi = laplacian(phi_T_smooth, dx)
         # Use original phi_T for double-well derivative, smoothed field for curvature term
         energy_deriv = compute_adhesion_energy_derivative_numba(phi_T, laplace_phi, self.m)
     

@@ -163,10 +163,10 @@ def solve_pressure_poisson_optimized(phi_T, S_T, energy_deriv, dx, shape, rtol=1
     S_T = np.nan_to_num(S_T, nan=0.0, posinf=0.0, neginf=0.0)
     energy_deriv = np.nan_to_num(energy_deriv, nan=0.0, posinf=0.0, neginf=0.0)
     
-    # Compute the divergence term using isotropic operators
-    grad_C_x, grad_C_y, grad_C_z = isotropic_gradient_components(phi_T, dx)
-    grad_energy_x, grad_energy_y, grad_energy_z = isotropic_gradient_components(energy_deriv, dx)
-    laplace_phi = isotropic_laplacian(phi_T, dx)
+    # Compute the divergence term using regular operators
+    grad_C_x, grad_C_y, grad_C_z = gradient(phi_T, dx)
+    grad_energy_x, grad_energy_y, grad_energy_z = gradient(energy_deriv, dx)
+    laplace_phi = laplacian(phi_T, dx)
     
     divergence_term = (grad_energy_x * grad_C_x +
                        grad_energy_y * grad_C_y +
@@ -269,7 +269,7 @@ class PressureSolver:
         # Compute energy derivative if not provided
         if energy_deriv is None:
             from src.growkit.PhysicsEngine.VectorizedCellDynamics import compute_adhesion_energy_derivative_numba
-            laplace_phi = isotropic_laplacian(phi_T, dx)
+            laplace_phi = laplacian(phi_T, dx)
             energy_deriv = compute_adhesion_energy_derivative_numba(phi_T, laplace_phi, self.m)
         
         # Compute total source term

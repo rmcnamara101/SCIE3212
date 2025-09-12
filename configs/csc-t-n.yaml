@@ -84,7 +84,7 @@ initial_conditions:
     concentration_min: 0.0 # For gradient nutrient field (optional, defaults to 0.0)
 
 integrator:
-  type: adaptive_grid
-  padding: 10
-  threshold: 1e-6
+  type: rk4
+  padding: 16
+  threshold: 1e-9
   min_sub_grid_size: 10

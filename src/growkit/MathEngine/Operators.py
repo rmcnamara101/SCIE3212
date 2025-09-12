@@ -1,487 +1,277 @@
 """
-Operators Module
+Operators Module (isotropy-focused, API-compatible)
 
-This module contains all the differential operators (gradient, divergence, Laplacian)
-used throughout the physics engine. This centralizes the numerical methods and
-ensures consistency across all components.
+Kept function names:
+- _gradient_neumann(field, dx, axis)
+- gradient(field, dx) -> (gx, gy, gz)
+- divergence(ux, uy, uz, dx) -> div
+- laplacian(field, dx) -> lap
+- laplacian_neumann(p_flat, shape, dx) -> lap_flat
+- curl(ux, uy, uz, dx) -> (cx, cy, cz)
+- vector_laplacian(ux, uy, uz, dx) -> (lx, ly, lz)
+- isotropic_gradient(field, dx) -> |∇φ|
+- isotropic_gradient_components(field, dx) -> (gix, giy, giz)
 
-Author: Riley Jae McNamara
-Date: 2025-02-19
+New (optional, non-breaking):
+- isotropic_laplacian(field, dx) -> ∇·(isotropic ∇φ)
+
+All operators use Neumann (zero-normal-derivative) boundary behavior.
 """
 
+from __future__ import annotations
 import numpy as np
 from numba import njit
 
+__all__ = [
+    "_gradient_neumann",
+    "gradient",
+    "divergence",
+    "laplacian",
+    "laplacian_neumann",
+    "curl",
+    "vector_laplacian",
+    "isotropic_gradient",
+    "isotropic_gradient_components",
+    "isotropic_laplacian",
+]
 
-@njit
-def _gradient_neumann(field, dx, axis):
+# ----------------------------
+# Axis-aligned core primitives
+# ----------------------------
+
+@njit(cache=True, fastmath=True)
+def _gradient_neumann(field: np.ndarray, dx: float, axis: int) -> np.ndarray:
     """
-    Compute the gradient of a field with Neumann boundary conditions using 4th-order accuracy.
-    
-    Uses 4th-order central differences in the interior and 3rd-order one-sided differences
-    at boundaries to reduce diamond-shaped artifacts.
-    
-    Args:
-        field: The field to compute the gradient of
-        dx: Grid spacing
-        axis: Axis along which to compute the gradient (0, 1, or 2)
-        
-    Returns:
-        Gradient array
+    Axis-aligned central-difference gradient with Neumann (zero-flux) BCs.
+    2nd-order centered interior; zero normal derivative at domain faces.
     """
     grad = np.zeros_like(field)
-    
-    if axis == 0:  # x-direction
-        # 2nd-order central differences in interior (consistent with Laplacian)
-        grad[1:-1, :, :] = (field[2:, :, :] - field[:-2, :, :]) / (2*dx)
-        
-        # Neumann BC at boundaries: ∂φ/∂x = 0
-        grad[0, :, :] = 0
-        grad[-1, :, :] = 0
-        
-    elif axis == 1:  # y-direction
-        # 2nd-order central differences in interior (consistent with Laplacian)
-        grad[:, 1:-1, :] = (field[:, 2:, :] - field[:, :-2, :]) / (2*dx)
-        
-        # Neumann BC at boundaries: ∂φ/∂y = 0
-        grad[:, 0, :] = 0
-        grad[:, -1, :] = 0
-        
-    elif axis == 2:  # z-direction
-        # 2nd-order central differences in interior (consistent with Laplacian)
-        grad[:, :, 1:-1] = (field[:, :, 2:] - field[:, :, :-2]) / (2*dx)
-        
-        # Neumann BC at boundaries: ∂φ/∂z = 0
-        grad[:, :, 0] = 0
-        grad[:, :, -1] = 0
-    
+    if axis == 0:
+        grad[1:-1, :, :] = (field[2:, :, :] - field[:-2, :, :]) / (2.0 * dx)
+        grad[0, :, :] = 0.0
+        grad[-1, :, :] = 0.0
+    elif axis == 1:
+        grad[:, 1:-1, :] = (field[:, 2:, :] - field[:, :-2, :]) / (2.0 * dx)
+        grad[:, 0, :] = 0.0
+        grad[:, -1, :] = 0.0
+    else:
+        grad[:, :, 1:-1] = (field[:, :, 2:] - field[:, :, :-2]) / (2.0 * dx)
+        grad[:, :, 0] = 0.0
+        grad[:, :, -1] = 0.0
     return grad
 
 
-def gradient(field, dx):
-    """
-    Compute the full gradient vector of a field.
-    
-    Args:
-        field: The field to compute the gradient of
-        dx: Grid spacing
-        
-    Returns:
-        grad_x, grad_y, grad_z: Gradient components
-    """
-    grad_x = _gradient_neumann(field, dx, 0)
-    grad_y = _gradient_neumann(field, dx, 1)
-    grad_z = _gradient_neumann(field, dx, 2)
-    
-    return grad_x, grad_y, grad_z
+def gradient(field: np.ndarray, dx: float):
+    """Axis-aligned ∇φ with Neumann BCs (kept for API compatibility)."""
+    gx = _gradient_neumann(field, dx, 0)
+    gy = _gradient_neumann(field, dx, 1)
+    gz = _gradient_neumann(field, dx, 2)
+    return gx, gy, gz
 
 
-def divergence(ux, uy, uz, dx):
-    """
-    Compute the divergence of a vector field with Neumann boundary conditions.
-    ∇·u = ∂ux/∂x + ∂uy/∂y + ∂uz/∂z
-    
-    Args:
-        ux, uy, uz: Vector field components
-        dx: Grid spacing
-        
-    Returns:
-        Divergence field
-    """
-    return (_gradient_neumann(ux, dx, 0) + 
-            _gradient_neumann(uy, dx, 1) + 
-            _gradient_neumann(uz, dx, 2))
+def divergence(ux: np.ndarray, uy: np.ndarray, uz: np.ndarray, dx: float) -> np.ndarray:
+    """Axis-aligned ∇·u with Neumann BCs on each component."""
+    return (
+        _gradient_neumann(ux, dx, 0)
+        + _gradient_neumann(uy, dx, 1)
+        + _gradient_neumann(uz, dx, 2)
+    )
 
 
-@njit
-def laplacian(field, dx):
+@njit(cache=True, fastmath=True)
+def laplacian(field: np.ndarray, dx: float) -> np.ndarray:
     """
-    Compute the Laplacian of a field with Neumann boundary conditions using 4th-order accuracy.
-    ∇²φ = ∂²φ/∂x² + ∂²φ/∂y² + ∂²φ/∂z²
-    
-    Uses 4th-order central differences in the interior and 2nd-order one-sided differences
-    at boundaries to reduce diamond-shaped artifacts.
-    
-    Args:
-        field: The field to compute the Laplacian of
-        dx: Grid spacing
-        
-    Returns:
-        Laplacian field
+    Axis-aligned ∇²φ with Neumann BCs (classic 6-point stencil, 2nd-order).
+    Kept for compatibility/benchmarks.
     """
-    # Initialize Laplacian array
     lap = np.zeros_like(field)
-    dx2 = dx**2
-    
-    # x-direction - use consistent 2nd-order accuracy to avoid artifacts
-    # 2nd-order central differences in interior
-    lap[1:-1, :, :] = (field[2:, :, :] - 2*field[1:-1, :, :] + field[:-2, :, :]) / dx2
-    
-    # Neumann BC at boundaries: ∂φ/∂x = 0
-    # Use ghost point extrapolation: φ[-1] = φ[0] and φ[nx] = φ[nx-1]
-    # This gives ∂²φ/∂x² = (φ[1] - 2*φ[0] + φ[-1])/dx² = (φ[1] - φ[0])/dx²
-    lap[0, :, :] = (field[1, :, :] - field[0, :, :]) / dx2
-    lap[-1, :, :] = (field[-2, :, :] - field[-1, :, :]) / dx2
-    
-    # y-direction - use consistent 2nd-order accuracy
-    # 2nd-order central differences in interior
-    lap[:, 1:-1, :] += (field[:, 2:, :] - 2*field[:, 1:-1, :] + field[:, :-2, :]) / dx2
-    
-    # Neumann BC at boundaries: ∂φ/∂y = 0
-    # Use ghost point extrapolation: φ[-1] = φ[0] and φ[ny] = φ[ny-1]
-    lap[:, 0, :] += (field[:, 1, :] - field[:, 0, :]) / dx2
-    lap[:, -1, :] += (field[:, -2, :] - field[:, -1, :]) / dx2
-    
-    # z-direction - use consistent 2nd-order accuracy
-    # 2nd-order central differences in interior
-    lap[:, :, 1:-1] += (field[:, :, 2:] - 2*field[:, :, 1:-1] + field[:, :, :-2]) / dx2
-    
-    # Neumann BC at boundaries: ∂φ/∂z = 0
-    # Use ghost point extrapolation: φ[-1] = φ[0] and φ[nz] = φ[nz-1]
-    lap[:, :, 0] += (field[:, :, 1] - field[:, :, 0]) / dx2
-    lap[:, :, -1] += (field[:, :, -2] - field[:, :, -1]) / dx2
-    
+    inv_dx2 = 1.0 / (dx * dx)
+
+    # x
+    lap[1:-1, :, :] += (field[2:, :, :] - 2.0 * field[1:-1, :, :] + field[:-2, :, :]) * inv_dx2
+    lap[0, :, :]     += (field[1, :, :] - field[0, :, :]) * inv_dx2
+    lap[-1, :, :]    += (field[-2, :, :] - field[-1, :, :]) * inv_dx2
+
+    # y
+    lap[:, 1:-1, :] += (field[:, 2:, :] - 2.0 * field[:, 1:-1, :] + field[:, :-2, :]) * inv_dx2
+    lap[:, 0, :]    += (field[:, 1, :] - field[:, 0, :]) * inv_dx2
+    lap[:, -1, :]   += (field[:, -2, :] - field[:, -1, :]) * inv_dx2
+
+    # z
+    lap[:, :, 1:-1] += (field[:, :, 2:] - 2.0 * field[:, :, 1:-1] + field[:, :, :-2]) * inv_dx2
+    lap[:, :, 0]    += (field[:, :, 1] - field[:, :, 0]) * inv_dx2
+    lap[:, :, -1]   += (field[:, :, -2] - field[:, :, -1]) * inv_dx2
+
     return lap
 
 
-def laplacian_neumann(p_flat, shape, dx):
+def laplacian_neumann(p_flat: np.ndarray, shape: tuple[int, int, int], dx: float) -> np.ndarray:
     """
-    Compute the 3D Laplacian with Neumann boundary conditions for flattened arrays using 4th-order accuracy.
-    
-    Uses 4th-order central differences in the interior and 2nd-order one-sided differences
-    at boundaries to reduce diamond-shaped artifacts.
-    
-    Args:
-        p_flat: Flattened pressure array
-        shape: Tuple (nx, ny, nz) of the grid shape
-        dx: Grid spacing
-        
-    Returns:
-        Flattened Laplacian array (float64)
+    Axis-aligned ∇²φ with Neumann BCs for flattened arrays (pressure solver path).
+    Returns float64 flattened array to match solver expectations.
     """
     p = p_flat.reshape(shape)
-    # Explicitly use float64 for lap_p to avoid dtype mismatch
-    lap_p = np.zeros(shape, dtype=np.float64)
-    dx2 = dx**2
-    
-    # x-direction - use consistent 2nd-order accuracy
-    # 2nd-order central differences in interior
-    lap_p[1:-1, :, :] = (p[2:, :, :] - 2*p[1:-1, :, :] + p[:-2, :, :]) / dx2
-    
-    # Neumann BC at boundaries: ∂φ/∂x = 0
-    # Use ghost point extrapolation: φ[-1] = φ[0] and φ[nx] = φ[nx-1]
-    lap_p[0, :, :] = (p[1, :, :] - p[0, :, :]) / dx2
-    lap_p[-1, :, :] = (p[-2, :, :] - p[-1, :, :]) / dx2
-    
-    # y-direction - use consistent 2nd-order accuracy
-    # 2nd-order central differences in interior
-    lap_p[:, 1:-1, :] += (p[:, 2:, :] - 2*p[:, 1:-1, :] + p[:, :-2, :]) / dx2
-    
-    # Neumann BC at boundaries: ∂φ/∂y = 0
-    # Use ghost point extrapolation: φ[-1] = φ[0] and φ[ny] = φ[ny-1]
-    lap_p[:, 0, :] += (p[:, 1, :] - p[:, 0, :]) / dx2
-    lap_p[:, -1, :] += (p[:, -2, :] - p[:, -1, :]) / dx2
-    
-    # z-direction - use consistent 2nd-order accuracy
-    # 2nd-order central differences in interior
-    lap_p[:, :, 1:-1] += (p[:, :, 2:] - 2*p[:, :, 1:-1] + p[:, :, :-2]) / dx2
-    
-    # Neumann BC at boundaries: ∂φ/∂z = 0
-    # Use ghost point extrapolation: φ[-1] = φ[0] and φ[nz] = φ[nz-1]
-    lap_p[:, :, 0] += (p[:, :, 1] - p[:, :, 0]) / dx2
-    lap_p[:, :, -1] += (p[:, :, -2] - p[:, :, -1]) / dx2
-    
-    return lap_p.flatten()
+    lap_p = laplacian(p, dx).astype(np.float64, copy=False)
+    return lap_p.ravel()
 
 
-@njit
-def curl(ux, uy, uz, dx):
+@njit(cache=True, fastmath=True)
+def curl(ux: np.ndarray, uy: np.ndarray, uz: np.ndarray, dx: float):
+    """Axis-aligned curl with Neumann BCs on partials."""
+    cx = _gradient_neumann(uz, dx, 1) - _gradient_neumann(uy, dx, 2)
+    cy = _gradient_neumann(ux, dx, 2) - _gradient_neumann(uz, dx, 0)
+    cz = _gradient_neumann(uy, dx, 0) - _gradient_neumann(ux, dx, 1)
+    return cx, cy, cz
+
+
+def vector_laplacian(ux: np.ndarray, uy: np.ndarray, uz: np.ndarray, dx: float):
+    """Axis-aligned vector Laplacian, componentwise."""
+    return laplacian(ux, dx), laplacian(uy, dx), laplacian(uz, dx)
+
+# ---------------------------------------
+# Isotropic operators (recommended)
+# ---------------------------------------
+
+@njit(cache=True, fastmath=True)
+def _zero_face_gradients(gx: np.ndarray, gy: np.ndarray, gz: np.ndarray):
+    """Enforce Neumann BCs (zero normal derivative) for gradient components at faces."""
+    gx[0, :, :] = 0.0
+    gx[-1, :, :] = 0.0
+    gy[:, 0, :] = 0.0
+    gy[:, -1, :] = 0.0
+    gz[:, :, 0] = 0.0
+    gz[:, :, -1] = 0.0
+
+
+@njit(cache=True, fastmath=True)
+def isotropic_gradient_components(field: np.ndarray, dx: float):
     """
-    Compute the curl of a vector field.
-    ∇×u = (∂uz/∂y - ∂uy/∂z, ∂ux/∂z - ∂uz/∂x, ∂uy/∂x - ∂ux/∂y)
-    
-    Args:
-        ux, uy, uz: Vector field components
-        dx: Grid spacing
-        
-    Returns:
-        curl_x, curl_y, curl_z: Curl components
-    """
-    # ∂uz/∂y - ∂uy/∂z
-    curl_x = _gradient_neumann(uz, dx, 1) - _gradient_neumann(uy, dx, 2)
-    
-    # ∂ux/∂z - ∂uz/∂x
-    curl_y = _gradient_neumann(ux, dx, 2) - _gradient_neumann(uz, dx, 0)
-    
-    # ∂uy/∂x - ∂ux/∂y
-    curl_z = _gradient_neumann(uy, dx, 0) - _gradient_neumann(ux, dx, 1)
-    
-    return curl_x, curl_y, curl_z
-
-
-@njit
-def vector_laplacian(ux, uy, uz, dx):
-    """
-    Compute the vector Laplacian of a vector field.
-    ∇²u = (∇²ux, ∇²uy, ∇²uz)
-    
-    Args:
-        ux, uy, uz: Vector field components
-        dx: Grid spacing
-        
-    Returns:
-        lap_x, lap_y, lap_z: Vector Laplacian components
-    """
-    lap_x = laplacian(ux, dx)
-    lap_y = laplacian(uy, dx)
-    lap_z = laplacian(uz, dx)
-    
-    return lap_x, lap_y, lap_z
-
-
-@njit
-def isotropic_gradient(field, dx):
-    """
-    Compute the isotropic gradient magnitude using a more isotropic finite difference scheme.
-    
-    This function computes the gradient magnitude in a way that treats all directions
-    more equally, reducing diamond-shaped artifacts that arise from Cartesian finite differences.
-    
-    Args:
-        field: The field to compute the gradient of
-        dx: Grid spacing
-        
-    Returns:
-        Gradient magnitude array
+    Isotropic gradient components using a 3×3×3 blended stencil:
+      - centered axis diffs + small diagonal blends (xy, xz, yz planes).
+    Using the same stencil for ∇ and its divergence reduces grid-aligned artifacts.
     """
     nx, ny, nz = field.shape
-    grad_mag = np.zeros_like(field)
-    
-    # Use a more isotropic stencil that considers all neighboring points
-    # This reduces the bias toward grid-aligned directions
-    
-    for i in range(1, nx-1):
-        for j in range(1, ny-1):
-            for k in range(1, nz-1):
-                # Compute gradients in all three directions
-                grad_x = (field[i+1, j, k] - field[i-1, j, k]) / (2*dx)
-                grad_y = (field[i, j+1, k] - field[i, j-1, k]) / (2*dx)
-                grad_z = (field[i, j, k+1] - field[i, j, k-1]) / (2*dx)
-                
-                # Also consider diagonal neighbors for more isotropy
-                # This helps reduce grid-aligned artifacts
-                grad_xy = (field[i+1, j+1, k] - field[i-1, j-1, k]) / (2*np.sqrt(2)*dx)
-                grad_xz = (field[i+1, j, k+1] - field[i-1, j, k-1]) / (2*np.sqrt(2)*dx)
-                grad_yz = (field[i, j+1, k+1] - field[i, j-1, k-1]) / (2*np.sqrt(2)*dx)
-                
-                # Combine all gradient components with weights
-                # The diagonal components help reduce anisotropy
-                grad_mag[i, j, k] = np.sqrt(
-                    0.5 * (grad_x**2 + grad_y**2 + grad_z**2) +
-                    0.1 * (grad_xy**2 + grad_xz**2 + grad_yz**2)
-                )
-    
-    # Handle boundaries with simpler stencils
-    # X boundaries
-    for j in range(ny):
-        for k in range(nz):
-            # Left boundary
-            if nx > 1:
-                grad_mag[0, j, k] = abs(field[1, j, k] - field[0, j, k]) / dx
-            # Right boundary  
-            if nx > 1:
-                grad_mag[-1, j, k] = abs(field[-1, j, k] - field[-2, j, k]) / dx
-    
-    # Y boundaries
-    for i in range(nx):
-        for k in range(nz):
-            # Front boundary
-            if ny > 1:
-                grad_mag[i, 0, k] = abs(field[i, 1, k] - field[i, 0, k]) / dx
-            # Back boundary
-            if ny > 1:
-                grad_mag[i, -1, k] = abs(field[i, -1, k] - field[i, -2, k]) / dx
-    
-    # Z boundaries
-    for i in range(nx):
-        for j in range(ny):
-            # Bottom boundary
-            if nz > 1:
-                grad_mag[i, j, 0] = abs(field[i, j, 1] - field[i, j, 0]) / dx
-            # Top boundary
-            if nz > 1:
-                grad_mag[i, j, -1] = abs(field[i, j, -1] - field[i, j, -2]) / dx
-    
-    return grad_mag
+    gx = np.zeros_like(field)
+    gy = np.zeros_like(field)
+    gz = np.zeros_like(field)
+
+    inv_2dx = 1.0 / (2.0 * dx)
+    inv_2sqrt2dx = 1.0 / (2.0 * np.sqrt(2.0) * dx)
+    w_axis = 1.0
+    w_diag = 0.10  # diagonal blend weight
+
+    # axis-centered interior
+    gx[1:-1, 1:-1, 1:-1] = (field[2:, 1:-1, 1:-1] - field[:-2, 1:-1, 1:-1]) * inv_2dx
+    gy[1:-1, 1:-1, 1:-1] = (field[1:-1, 2:, 1:-1] - field[1:-1, :-2, 1:-1]) * inv_2dx
+    gz[1:-1, 1:-1, 1:-1] = (field[1:-1, 1:-1, 2:] - field[1:-1, 1:-1, :-2]) * inv_2dx
+
+    # xy-diagonals
+    gx[1:-1, 1:-1, 1:-1] = (
+        w_axis * gx[1:-1, 1:-1, 1:-1]
+        + w_diag * (
+            (field[2:, 2:, 1:-1] - field[:-2, :-2, 1:-1]) * inv_2sqrt2dx
+            + (field[2:, :-2, 1:-1] - field[:-2, 2:, 1:-1]) * inv_2sqrt2dx
+        )
+    )
+    gy[1:-1, 1:-1, 1:-1] = (
+        w_axis * gy[1:-1, 1:-1, 1:-1]
+        + w_diag * (
+            (field[2:, 2:, 1:-1] - field[:-2, :-2, 1:-1]) * inv_2sqrt2dx
+            + (field[:-2, 2:, 1:-1] - field[2:, :-2, 1:-1]) * inv_2sqrt2dx
+        )
+    )
+
+    # xz-diagonals
+    gx[1:-1, 1:-1, 1:-1] += w_diag * (
+        (field[2:, 1:-1, 2:] - field[:-2, 1:-1, :-2]) * inv_2sqrt2dx
+        + (field[2:, 1:-1, :-2] - field[:-2, 1:-1, 2:]) * inv_2sqrt2dx
+    )
+    gz[1:-1, 1:-1, 1:-1] = (
+        w_axis * gz[1:-1, 1:-1, 1:-1]
+        + w_diag * (
+            (field[2:, 1:-1, 2:] - field[:-2, 1:-1, :-2]) * inv_2sqrt2dx
+            + (field[:-2, 1:-1, 2:] - field[2:, 1:-1, :-2]) * inv_2sqrt2dx
+        )
+    )
+
+    # yz-diagonals
+    gy[1:-1, 1:-1, 1:-1] += w_diag * (
+        (field[1:-1, 2:, 2:] - field[1:-1, :-2, :-2]) * inv_2sqrt2dx
+        + (field[1:-1, 2:, :-2] - field[1:-1, :-2, 2:]) * inv_2sqrt2dx
+    )
+    gz[1:-1, 1:-1, 1:-1] += w_diag * (
+        (field[1:-1, 2:, 2:] - field[1:-1, :-2, :-2]) * inv_2sqrt2dx
+        + (field[1:-1, :-2, 2:] - field[1:-1, 2:, :-2]) * inv_2sqrt2dx
+    )
+
+    _zero_face_gradients(gx, gy, gz)
+    return gx, gy, gz
 
 
-@njit
-def isotropic_gradient_components(field, dx):
+@njit(cache=True, fastmath=True)
+def _divergence_from_components(ux: np.ndarray, uy: np.ndarray, uz: np.ndarray, dx: float) -> np.ndarray:
     """
-    Compute the isotropic gradient components using a more isotropic finite difference scheme.
-    
-    This function computes the gradient components in a way that treats all directions
-    more equally, reducing diamond-shaped artifacts that arise from Cartesian finite differences.
-    
-    Args:
-        field: The field to compute the gradient of
-        dx: Grid spacing
-        
-    Returns:
-        grad_x, grad_y, grad_z: Gradient component arrays
+    Divergence via centered differences of the provided components.
+    Faces use one-sided forms consistent with zero normal derivative.
     """
-    nx, ny, nz = field.shape
-    grad_x = np.zeros_like(field)
-    grad_y = np.zeros_like(field)
-    grad_z = np.zeros_like(field)
-    
-    # Use a more isotropic stencil that considers all neighboring points
-    for i in range(1, nx-1):
-        for j in range(1, ny-1):
-            for k in range(1, nz-1):
-                # Standard Cartesian gradients
-                grad_x[i, j, k] = (field[i+1, j, k] - field[i-1, j, k]) / (2*dx)
-                grad_y[i, j, k] = (field[i, j+1, k] - field[i, j-1, k]) / (2*dx)
-                grad_z[i, j, k] = (field[i, j, k+1] - field[i, j, k-1]) / (2*dx)
-                
-                # Add diagonal contributions for more isotropy
-                # This helps reduce grid-aligned artifacts
-                grad_x[i, j, k] += 0.1 * (
-                    (field[i+1, j+1, k] - field[i-1, j-1, k]) / (2*np.sqrt(2)*dx) +
-                    (field[i+1, j-1, k] - field[i-1, j+1, k]) / (2*np.sqrt(2)*dx) +
-                    (field[i+1, j, k+1] - field[i-1, j, k-1]) / (2*np.sqrt(2)*dx) +
-                    (field[i+1, j, k-1] - field[i-1, j, k+1]) / (2*np.sqrt(2)*dx)
-                )
-                
-                grad_y[i, j, k] += 0.1 * (
-                    (field[i+1, j+1, k] - field[i-1, j-1, k]) / (2*np.sqrt(2)*dx) +
-                    (field[i-1, j+1, k] - field[i+1, j-1, k]) / (2*np.sqrt(2)*dx) +
-                    (field[i, j+1, k+1] - field[i, j-1, k-1]) / (2*np.sqrt(2)*dx) +
-                    (field[i, j+1, k-1] - field[i, j-1, k+1]) / (2*np.sqrt(2)*dx)
-                )
-                
-                grad_z[i, j, k] += 0.1 * (
-                    (field[i+1, j, k+1] - field[i-1, j, k-1]) / (2*np.sqrt(2)*dx) +
-                    (field[i-1, j, k+1] - field[i+1, j, k-1]) / (2*np.sqrt(2)*dx) +
-                    (field[i, j+1, k+1] - field[i, j-1, k-1]) / (2*np.sqrt(2)*dx) +
-                    (field[i, j-1, k+1] - field[i, j+1, k-1]) / (2*np.sqrt(2)*dx)
-                )
-    
-    # Handle boundaries with simpler stencils
-    # X boundaries
-    for j in range(ny):
-        for k in range(nz):
-            # Left boundary
-            if nx > 1:
-                grad_x[0, j, k] = (field[1, j, k] - field[0, j, k]) / dx
-            # Right boundary  
-            if nx > 1:
-                grad_x[-1, j, k] = (field[-1, j, k] - field[-2, j, k]) / dx
-    
-    # Y boundaries
-    for i in range(nx):
-        for k in range(nz):
-            # Front boundary
-            if ny > 1:
-                grad_y[i, 0, k] = (field[i, 1, k] - field[i, 0, k]) / dx
-            # Back boundary
-            if ny > 1:
-                grad_y[i, -1, k] = (field[i, -1, k] - field[i, -2, k]) / dx
-    
-    # Z boundaries
-    for i in range(nx):
-        for j in range(ny):
-            # Bottom boundary
-            if nz > 1:
-                grad_z[i, j, 0] = (field[i, j, 1] - field[i, j, 0]) / dx
-            # Top boundary
-            if nz > 1:
-                grad_z[i, j, -1] = (field[i, j, -1] - field[i, j, -2]) / dx
-    
-    return grad_x, grad_y, grad_z
+    div = np.zeros_like(ux)
+    inv_2dx = 1.0 / (2.0 * dx)
+
+    # interior
+    div[1:-1, 1:-1, 1:-1] = (
+        (ux[2:, 1:-1, 1:-1] - ux[:-2, 1:-1, 1:-1])
+        + (uy[1:-1, 2:, 1:-1] - uy[1:-1, :-2, 1:-1])
+        + (uz[1:-1, 1:-1, 2:] - uz[1:-1, 1:-1, :-2])
+    ) * inv_2dx
+
+    # x-faces
+    div[0, 1:-1, 1:-1] = (
+        (ux[1, 1:-1, 1:-1] - ux[0, 1:-1, 1:-1])
+        + (uy[0, 2:, 1:-1] - uy[0, :-2, 1:-1])
+        + (uz[0, 1:-1, 2:] - uz[0, 1:-1, :-2])
+    ) * inv_2dx
+    div[-1, 1:-1, 1:-1] = (
+        (ux[-1, 1:-1, 1:-1] - ux[-2, 1:-1, 1:-1])
+        + (uy[-1, 2:, 1:-1] - uy[-1, :-2, 1:-1])
+        + (uz[-1, 1:-1, 2:] - uz[-1, 1:-1, :-2])
+    ) * inv_2dx
+
+    # y-faces
+    div[1:-1, 0, 1:-1] = (
+        (ux[2:, 0, 1:-1] - ux[:-2, 0, 1:-1])
+        + (uy[1:-1, 1, 1:-1] - uy[1:-1, 0, 1:-1])
+        + (uz[1:-1, 0, 2:] - uz[1:-1, 0, :-2])
+    ) * inv_2dx
+    div[1:-1, -1, 1:-1] = (
+        (ux[2:, -1, 1:-1] - ux[:-2, -1, 1:-1])
+        + (uy[1:-1, -1, 1:-1] - uy[1:-1, -2, 1:-1])
+        + (uz[1:-1, -1, 2:] - uz[1:-1, -1, :-2])
+    ) * inv_2dx
+
+    # z-faces
+    div[1:-1, 1:-1, 0] = (
+        (ux[2:, 1:-1, 0] - ux[:-2, 1:-1, 0])
+        + (uy[1:-1, 2:, 0] - uy[1:-1, :-2, 0])
+        + (uz[1:-1, 1:-1, 1] - uz[1:-1, 1:-1, 0])
+    ) * inv_2dx
+    div[1:-1, 1:-1, -1] = (
+        (ux[2:, 1:-1, -1] - ux[:-2, 1:-1, -1])
+        + (uy[1:-1, 2:, -1] - uy[1:-1, :-2, -1])
+        + (uz[1:-1, 1:-1, -1] - uz[1:-1, 1:-1, -2])
+    ) * inv_2dx
+
+    return div
 
 
-@njit
-def isotropic_laplacian(field, dx):
-    """
-    Compute the isotropic Laplacian using a rotated stencil approach.
-    
-    This uses multiple rotated stencils to achieve better isotropy than
-    standard Cartesian finite differences, reducing diamond-shaped artifacts.
-    
-    Args:
-        field: The field to compute the Laplacian of
-        dx: Grid spacing
-        
-    Returns:
-        Laplacian array
-    """
-    nx, ny, nz = field.shape
-    lap = np.zeros_like(field)
-    dx2 = dx * dx
-    
-    # Use multiple rotated stencils for better isotropy
-    for i in range(1, nx-1):
-        for j in range(1, ny-1):
-            for k in range(1, nz-1):
-                # Standard Cartesian stencil
-                cartesian = (
-                    (field[i+1, j, k] - 2*field[i, j, k] + field[i-1, j, k]) +
-                    (field[i, j+1, k] - 2*field[i, j, k] + field[i, j-1, k]) +
-                    (field[i, j, k+1] - 2*field[i, j, k] + field[i, j, k-1])
-                ) / dx2
-                
-                # Rotated stencils (45-degree rotations in each plane)
-                # XY plane rotation
-                rotated_xy = (
-                    (field[i+1, j+1, k] - 2*field[i, j, k] + field[i-1, j-1, k]) +
-                    (field[i+1, j-1, k] - 2*field[i, j, k] + field[i-1, j+1, k])
-                ) / (2 * dx2)
-                
-                # XZ plane rotation
-                rotated_xz = (
-                    (field[i+1, j, k+1] - 2*field[i, j, k] + field[i-1, j, k-1]) +
-                    (field[i+1, j, k-1] - 2*field[i, j, k] + field[i-1, j, k+1])
-                ) / (2 * dx2)
-                
-                # YZ plane rotation
-                rotated_yz = (
-                    (field[i, j+1, k+1] - 2*field[i, j, k] + field[i, j-1, k-1]) +
-                    (field[i, j+1, k-1] - 2*field[i, j, k] + field[i, j-1, k+1])
-                ) / (2 * dx2)
-                
-                # Combine all stencils with equal weight for maximum isotropy
-                lap[i, j, k] = (cartesian + rotated_xy + rotated_xz + rotated_yz) / 4.0
-    
-    # Handle boundaries with simpler stencils
-    # X boundaries
-    for j in range(ny):
-        for k in range(nz):
-            # Left boundary
-            if nx > 1:
-                lap[0, j, k] = (field[1, j, k] - field[0, j, k]) / dx2
-            # Right boundary
-            if nx > 1:
-                lap[-1, j, k] = (field[-2, j, k] - field[-1, j, k]) / dx2
-    
-    # Y boundaries
-    for i in range(nx):
-        for k in range(nz):
-            # Front boundary
-            if ny > 1:
-                lap[i, 0, k] = (field[i, 1, k] - field[i, 0, k]) / dx2
-            # Back boundary
-            if ny > 1:
-                lap[i, -1, k] = (field[i, -2, k] - field[i, -1, k]) / dx2
-    
-    # Z boundaries
-    for i in range(nx):
-        for j in range(ny):
-            # Bottom boundary
-            if nz > 1:
-                lap[i, j, 0] = (field[i, j, 1] - field[i, j, 0]) / dx2
-            # Top boundary
-            if nz > 1:
-                lap[i, j, -1] = (field[i, j, -2] - field[i, j, -1]) / dx2
-    
-    return lap
+@njit(cache=True, fastmath=True)
+def isotropic_laplacian(field: np.ndarray, dx: float) -> np.ndarray:
+    """∇²_iso φ := ∇·(isotropic ∇φ)."""
+    gix, giy, giz = isotropic_gradient_components(field, dx)
+    return _divergence_from_components(gix, giy, giz, dx)
+
+
+@njit(cache=True, fastmath=True)
+def isotropic_gradient(field: np.ndarray, dx: float) -> np.ndarray:
+    """|∇φ| computed from isotropic gradient components."""
+    gix, giy, giz = isotropic_gradient_components(field, dx)
+    return np.sqrt(gix * gix + giy * giy + giz * giz)
