@@ -20,9 +20,9 @@ Date: 2025-02-19
 import numpy as np
 from scipy.sparse.linalg import cg, LinearOperator
 from scipy.sparse import diags, csr_matrix
-from scipy.ndimage import laplace
+# Removed scipy.ndimage.laplace import - using isotropic operators instead
 from functools import lru_cache
-from src.growkit.MathEngine.Operators import gradient, laplacian, isotropic_gradient_components, isotropic_laplacian
+from src.growkit.MathEngine.Operators import isotropic_gradient_components, isotropic_laplacian
 from src.growkit.ProductionEngine.SourceConstructor import SourceConstructor
 
 
@@ -134,9 +134,8 @@ def get_cached_operator(shape, dx, epsilon):
 
     def matvec(p_flat):
         p = p_flat.reshape(shape)
-        # Use scipy.ndimage.laplace for maximum speed
-        # mode='nearest' handles Neumann boundary conditions efficiently
-        lap_p = laplace(p, mode='nearest') / dx2
+        # Use isotropic laplacian to eliminate grid artifacts
+        lap_p = isotropic_laplacian(p, dx)
         
         # Regularization term
         result = -lap_p.flatten() + epsilon * p_flat
@@ -163,10 +162,10 @@ def solve_pressure_poisson_optimized(phi_T, S_T, energy_deriv, dx, shape, rtol=1
     S_T = np.nan_to_num(S_T, nan=0.0, posinf=0.0, neginf=0.0)
     energy_deriv = np.nan_to_num(energy_deriv, nan=0.0, posinf=0.0, neginf=0.0)
     
-    # Compute the divergence term using regular operators
-    grad_C_x, grad_C_y, grad_C_z = gradient(phi_T, dx)
-    grad_energy_x, grad_energy_y, grad_energy_z = gradient(energy_deriv, dx)
-    laplace_phi = laplacian(phi_T, dx)
+    # Compute the divergence term using isotropic operators
+    grad_C_x, grad_C_y, grad_C_z = isotropic_gradient_components(phi_T, dx)
+    grad_energy_x, grad_energy_y, grad_energy_z = isotropic_gradient_components(energy_deriv, dx)
+    laplace_phi = isotropic_laplacian(phi_T, dx)
     
     divergence_term = (grad_energy_x * grad_C_x +
                        grad_energy_y * grad_C_y +
@@ -269,7 +268,7 @@ class PressureSolver:
         # Compute energy derivative if not provided
         if energy_deriv is None:
             from src.growkit.PhysicsEngine.VectorizedCellDynamics import compute_adhesion_energy_derivative_numba
-            laplace_phi = laplacian(phi_T, dx)
+            laplace_phi = isotropic_laplacian(phi_T, dx)
             energy_deriv = compute_adhesion_energy_derivative_numba(phi_T, laplace_phi, self.m)
         
         # Compute total source term

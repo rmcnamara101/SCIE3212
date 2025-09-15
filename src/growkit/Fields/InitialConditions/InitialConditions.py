@@ -81,20 +81,18 @@ class InitialConditions:
         # Get noise scale from config or use default
         noise_scale = self.ic_config.get("seeding_noise_scale", 0.2)
         
-        # Create base density with SMOOTH boundaries to reduce diamond artifacts
+        # Create base density with GAUSSIAN profile to eliminate diamond artifacts
+        # Gaussian profiles are naturally isotropic and should eliminate grid artifacts
         base_mask = np.zeros((nx, ny, nz), dtype=np.float32)
-        transition_width = 2.0  # Controls smoothness of boundary
         
         for i in range(nx):
             for j in range(ny):
                 for k in range(nz):
                     dist = np.sqrt((i - center[0])**2 + (j - center[1])**2 + (k - center[2])**2)
-                    # Use hard boundary (step function) instead of smooth transition
-                    # This eliminates the hyperbolic tangent that may be causing circular artifacts
-                    if dist <= radius:
-                        density = 1.0
-                    else:
-                        density = 0.0
+                    # Use Gaussian profile instead of step function
+                    # This should eliminate diamond artifacts by being naturally isotropic
+                    sigma = radius / 2.0  # Standard deviation controls width
+                    density = np.exp(-(dist**2) / (2 * sigma**2))
                     base_mask[i, j, k] = density
         
         # Add noise to each population's seeding

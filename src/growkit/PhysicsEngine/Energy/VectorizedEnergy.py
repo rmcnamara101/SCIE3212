@@ -14,8 +14,7 @@ Date: 2025-02-19
 
 import numpy as np
 from numba import njit
-from scipy.ndimage import gaussian_filter
-from src.growkit.MathEngine.Operators import laplacian, isotropic_laplacian
+from src.growkit.MathEngine.Operators import isotropic_laplacian
 
 
 def compute_adhesion_energy_derivative_numba(phi, laplace_phi, m):
@@ -79,21 +78,11 @@ class VectorizedEnergy:
         Returns:
             energy_deriv: Energy derivative field
         """
-        # Adaptive smoothing based on adhesion energy parameter
-        # For small m values, use less smoothing to prevent over-diffusion
-        if self.m <= 2.0:
-            # Light smoothing for weak adhesion to prevent cell leakage
-            sigma = 0.3
-        elif self.m <= 5.0:
-            # Moderate smoothing
-            sigma = 0.6
-        else:
-            # Strong smoothing for strong adhesion (original diamond fix)
-            sigma = 1.2
-            
-        phi_T_smooth = gaussian_filter(phi_T, sigma=sigma)
-        laplace_phi = laplacian(phi_T_smooth, dx)
-        # Use original phi_T for double-well derivative, smoothed field for curvature term
+        # NO SMOOTHING - use original field directly to eliminate potential diamond artifacts
+        # Gaussian smoothing might be creating grid-aligned artifacts
+        # Use the original phi_T field without any smoothing
+        laplace_phi = isotropic_laplacian(phi_T, dx)
+        # Use original phi_T for both double-well derivative and curvature term
         energy_deriv = compute_adhesion_energy_derivative_numba(phi_T, laplace_phi, self.m)
     
         

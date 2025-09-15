@@ -15,7 +15,7 @@ Date: 2025-02-19
 
 import numpy as np
 from numba import njit
-from src.growkit.MathEngine.Operators import _gradient_neumann, isotropic_gradient_components
+from src.growkit.MathEngine.Operators import isotropic_gradient_components
 
 
 def compute_mass_fluxes_numba(phi_hat, phi_T, dx, energy_deriv, M_matrix):

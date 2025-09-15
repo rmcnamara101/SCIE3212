@@ -22,7 +22,8 @@ import numpy as np
 from numba import njit
 import time
 
-from src.growkit.MathEngine.Operators import _gradient_neumann
+from src.growkit.MathEngine.Operators import _divergence_from_components, isotropic_gradient_components
+from src.growkit.MathEngine.NaturalBoundaryConditions import apply_natural_gradient_boundaries
 
 
 class VectorizedCellDynamics:
@@ -183,75 +184,80 @@ class VectorizedCellDynamics:
 
 
 @njit
-def _upwind_divergence(ux, uy, uz, phi, dx):
+def _isotropic_upwind_divergence(ux, uy, uz, phi, dx):
     """
-    Compute conservative upwind divergence of u * phi with improved scheme.
-    Uses a hybrid upwind-central scheme to reduce grid-aligned artifacts.
+    Compute isotropic upwind divergence of u * phi using gradient-based approach.
+    This eliminates grid-aligned artifacts by using isotropic gradient components.
     """
     nx, ny, nz = phi.shape
     div = np.zeros_like(phi, dtype=np.float32)
-
-    # X-direction fluxes at faces (i+1/2, j, k)
-    # Right faces for i = 0..nx-2
-    Fx_right = np.zeros((nx - 1, ny, nz), dtype=np.float32)
-    for i in range(nx - 1):
+    
+    # Compute gradients of phi using isotropic scheme
+    # We'll use a simplified isotropic gradient computation here
+    inv_2dx = 1.0 / (2.0 * dx)
+    inv_2sqrt2dx = 1.0 / (2.0 * np.sqrt(2.0) * dx)
+    w_axis = 1.0
+    w_diag = 0.10  # diagonal blend weight
+    
+    # Compute isotropic gradient components
+    grad_phi_x = np.zeros_like(phi)
+    grad_phi_y = np.zeros_like(phi)
+    grad_phi_z = np.zeros_like(phi)
+    
+    # Interior points with isotropic stencil
+    for i in range(1, nx-1):
+        for j in range(1, ny-1):
+            for k in range(1, nz-1):
+                # Axis-aligned components
+                gx_axis = (phi[i+1, j, k] - phi[i-1, j, k]) * inv_2dx
+                gy_axis = (phi[i, j+1, k] - phi[i, j-1, k]) * inv_2dx
+                gz_axis = (phi[i, j, k+1] - phi[i, j, k-1]) * inv_2dx
+                
+                # Diagonal components for isotropy
+                gx_diag = (
+                    (phi[i+1, j+1, k] - phi[i-1, j-1, k]) * inv_2sqrt2dx +
+                    (phi[i+1, j-1, k] - phi[i-1, j+1, k]) * inv_2sqrt2dx +
+                    (phi[i+1, j, k+1] - phi[i-1, j, k-1]) * inv_2sqrt2dx +
+                    (phi[i+1, j, k-1] - phi[i-1, j, k+1]) * inv_2sqrt2dx
+                ) * 0.25
+                
+                gy_diag = (
+                    (phi[i+1, j+1, k] - phi[i-1, j-1, k]) * inv_2sqrt2dx +
+                    (phi[i-1, j+1, k] - phi[i+1, j-1, k]) * inv_2sqrt2dx +
+                    (phi[i, j+1, k+1] - phi[i, j-1, k-1]) * inv_2sqrt2dx +
+                    (phi[i, j+1, k-1] - phi[i, j-1, k+1]) * inv_2sqrt2dx
+                ) * 0.25
+                
+                gz_diag = (
+                    (phi[i+1, j, k+1] - phi[i-1, j, k-1]) * inv_2sqrt2dx +
+                    (phi[i-1, j, k+1] - phi[i+1, j, k-1]) * inv_2sqrt2dx +
+                    (phi[i, j+1, k+1] - phi[i, j-1, k-1]) * inv_2sqrt2dx +
+                    (phi[i, j-1, k+1] - phi[i, j+1, k-1]) * inv_2sqrt2dx
+                ) * 0.25
+                
+                # Combine axis and diagonal components
+                grad_phi_x[i, j, k] = w_axis * gx_axis + w_diag * gx_diag
+                grad_phi_y[i, j, k] = w_axis * gy_axis + w_diag * gy_diag
+                grad_phi_z[i, j, k] = w_axis * gz_axis + w_diag * gz_diag
+    
+    # Apply NO boundary conditions - let gradients develop completely naturally
+    # This should eliminate all artificial constraints that cause diamond artifacts
+    # grad_phi_x, grad_phi_y, grad_phi_z = apply_natural_gradient_boundaries(
+    #     grad_phi_x, grad_phi_y, grad_phi_z, boundary_width=1
+    # )
+    
+    # Compute divergence using isotropic approach
+    # ∇·(u φ) = φ ∇·u + u·∇φ
+    # For incompressible flow: ∇·u = 0, so ∇·(u φ) = u·∇φ
+    
+    for i in range(nx):
         for j in range(ny):
             for k in range(nz):
-                u_face = 0.5 * (ux[i, j, k] + ux[i + 1, j, k])
-                
-                # Pure upwind scheme to prevent numerical diffusion
-                # This eliminates the central difference component that can cause cell leakage
-                if u_face > 0.0:
-                    phi_up = phi[i, j, k]  # Pure upwind: use upstream value
-                else:
-                    phi_up = phi[i + 1, j, k]  # Pure upwind: use upstream value
-                Fx_right[i, j, k] = u_face * phi_up
-
-    # Y-direction fluxes at faces (i, j+1/2, k)
-    Fy_right = np.zeros((nx, ny - 1, nz), dtype=np.float32)
-    for i in range(nx):
-        for j in range(ny - 1):
-            for k in range(nz):
-                v_face = 0.5 * (uy[i, j, k] + uy[i, j + 1, k])
-                
-                # Pure upwind scheme to prevent numerical diffusion
-                if v_face > 0.0:
-                    phi_up = phi[i, j, k]  # Pure upwind: use upstream value
-                else:
-                    phi_up = phi[i, j + 1, k]  # Pure upwind: use upstream value
-                Fy_right[i, j, k] = v_face * phi_up
-
-    # Z-direction fluxes at faces (i, j, k+1/2)
-    Fz_right = np.zeros((nx, ny, nz - 1), dtype=np.float32)
-    for i in range(nx):
-        for j in range(ny):
-            for k in range(nz - 1):
-                w_face = 0.5 * (uz[i, j, k] + uz[i, j, k + 1])
-                
-                # Pure upwind scheme to prevent numerical diffusion
-                if w_face > 0.0:
-                    phi_up = phi[i, j, k]  # Pure upwind: use upstream value
-                else:
-                    phi_up = phi[i, j, k + 1]  # Pure upwind: use upstream value
-                Fz_right[i, j, k] = w_face * phi_up
-
-    # Divergence from face flux differences
-    inv_dx = 1.0 / dx
-    for i in range(nx):
-        for j in range(ny):
-            for k in range(nz):
-                # X contribution
-                fx_r = Fx_right[i, j, k] if i < nx - 1 else 0.0
-                fx_l = Fx_right[i - 1, j, k] if i > 0 else 0.0
-                # Y contribution
-                fy_r = Fy_right[i, j, k] if j < ny - 1 else 0.0
-                fy_l = Fy_right[i, j - 1, k] if j > 0 else 0.0
-                # Z contribution
-                fz_r = Fz_right[i, j, k] if k < nz - 1 else 0.0
-                fz_l = Fz_right[i, j, k - 1] if k > 0 else 0.0
-
-                div[i, j, k] = (fx_r - fx_l + fy_r - fy_l + fz_r - fz_l) * inv_dx
-
+                # Compute u·∇φ using isotropic gradients
+                div[i, j, k] = (ux[i, j, k] * grad_phi_x[i, j, k] + 
+                               uy[i, j, k] * grad_phi_y[i, j, k] + 
+                               uz[i, j, k] * grad_phi_z[i, j, k])
+    
     # Return -∇·(u φ)
     return -div
 
@@ -276,16 +282,14 @@ def compute_cell_dynamics_numba(phi_hat, ux, uy, uz, J_hat, A_hat, dx):
     
     # Compute dynamics for each population
     for i in range(M):
-        # Advection term: conservative upwind divergence for -∇·(u φ_i)
-        advection = _upwind_divergence(ux, uy, uz, phi_hat[i], dx)
+        # Advection term: isotropic upwind divergence for -∇·(u φ_i)
+        advection = _isotropic_upwind_divergence(ux, uy, uz, phi_hat[i], dx)
         
-        # Mass flux term: -∇·J_i
+        # Mass flux term: -∇·J_i (using isotropic divergence)
         Jx = J_hat[i, 0]
         Jy = J_hat[i, 1]
         Jz = J_hat[i, 2]
-        mass_flux = -(_gradient_neumann(Jx, dx, 0) + 
-                      _gradient_neumann(Jy, dx, 1) + 
-                      _gradient_neumann(Jz, dx, 2))
+        mass_flux = -_divergence_from_components(Jx, Jy, Jz, dx)
         
         # Source term: A_i (growth/death)
         source_term = A_hat[i]

@@ -17,7 +17,7 @@ Date: 2025-02-19
 
 import numpy as np
 from functools import lru_cache
-from src.growkit.MathEngine.Operators import gradient, isotropic_gradient, isotropic_gradient_components
+from src.growkit.MathEngine.Operators import isotropic_gradient, isotropic_gradient_components
 from src.growkit.Integrator.PressureSolver import PressureSolver
 
 

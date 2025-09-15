@@ -21,6 +21,7 @@ All operators use Neumann (zero-normal-derivative) boundary behavior.
 from __future__ import annotations
 import numpy as np
 from numba import njit
+from .NaturalBoundaryConditions import apply_natural_gradient_boundaries, apply_controlled_boundary_conditions
 
 __all__ = [
     "_gradient_neumann",
@@ -134,140 +135,187 @@ def vector_laplacian(ux: np.ndarray, uy: np.ndarray, uz: np.ndarray, dx: float):
 
 @njit(cache=True, fastmath=True)
 def _zero_face_gradients(gx: np.ndarray, gy: np.ndarray, gz: np.ndarray):
-    """Enforce Neumann BCs (zero normal derivative) for gradient components at faces."""
-    gx[0, :, :] = 0.0
-    gx[-1, :, :] = 0.0
-    gy[:, 0, :] = 0.0
-    gy[:, -1, :] = 0.0
-    gz[:, :, 0] = 0.0
-    gz[:, :, -1] = 0.0
+    """Apply NO boundary conditions - let gradients develop naturally."""
+    # NO boundary conditions - let gradients develop completely naturally
+    # This should eliminate all artificial constraints that cause diamond artifacts
+    return gx, gy, gz
+
+
+def apply_cell_field_boundary_conditions(field: np.ndarray, boundary_type: str = "natural", 
+                                       control_factor: float = 0.5):
+    """
+    Apply boundary conditions to cell fields with different approaches.
+    
+    Args:
+        field: 3D cell field
+        boundary_type: Type of boundary condition
+            - "natural": Allow natural flow (recommended for eliminating diamond artifacts)
+            - "controlled": Adjustable constraint strength
+            - "open": Allow outflow with slight damping
+            - "minimal": Minimal constraints
+        control_factor: Control strength for "controlled" type (0.0 = open, 1.0 = constrained)
+        
+    Returns:
+        field with appropriate boundary conditions applied
+    """
+    if boundary_type == "natural":
+        # Use natural extrapolation - allows natural flow
+        return apply_natural_gradient_boundaries(field, field, field, boundary_width=1)[0]
+    elif boundary_type == "controlled":
+        # Use controlled boundaries with adjustable strength
+        return apply_controlled_boundary_conditions(field, boundary_width=1, control_factor=control_factor)
+    elif boundary_type == "open":
+        # Use open boundaries - allow outflow
+        from .NaturalBoundaryConditions import apply_open_boundary_conditions
+        return apply_open_boundary_conditions(field, boundary_width=1)
+    elif boundary_type == "minimal":
+        # Use minimal constraints
+        from .NaturalBoundaryConditions import apply_minimal_boundary_conditions
+        return apply_minimal_boundary_conditions(field, boundary_width=1)
+    else:
+        # Default to natural
+        return apply_natural_gradient_boundaries(field, field, field, boundary_width=1)[0]
 
 
 @njit(cache=True, fastmath=True)
 def isotropic_gradient_components(field: np.ndarray, dx: float):
     """
-    Isotropic gradient components using a 3×3×3 blended stencil:
-      - centered axis diffs + small diagonal blends (xy, xz, yz planes).
-    Using the same stencil for ∇ and its divergence reduces grid-aligned artifacts.
+    Isotropic gradient components using the proven approach from the old codebase.
+    This uses proper weights for axis-aligned and diagonal contributions.
     """
     nx, ny, nz = field.shape
     gx = np.zeros_like(field)
     gy = np.zeros_like(field)
     gz = np.zeros_like(field)
 
-    inv_2dx = 1.0 / (2.0 * dx)
-    inv_2sqrt2dx = 1.0 / (2.0 * np.sqrt(2.0) * dx)
-    w_axis = 1.0
-    w_diag = 0.10  # diagonal blend weight
+    # X component using isotropic approach
+    # Main x-direction gradient (70% weight)
+    gx[1:-1, :, :] = 0.7 * (field[2:, :, :] - field[:-2, :, :]) / (2*dx)
+    
+    # Add diagonal contributions (30% weight)
+    # Diagonal in xy plane
+    gx[1:-1, 1:-1, :] += 0.075 * (field[2:, 2:, :] - field[:-2, :-2, :]) / (2*dx*np.sqrt(2))
+    gx[1:-1, 1:-1, :] += 0.075 * (field[2:, :-2, :] - field[:-2, 2:, :]) / (2*dx*np.sqrt(2))
+    
+    # Diagonal in xz plane
+    gx[1:-1, :, 1:-1] += 0.075 * (field[2:, :, 2:] - field[:-2, :, :-2]) / (2*dx*np.sqrt(2))
+    gx[1:-1, :, 1:-1] += 0.075 * (field[2:, :, :-2] - field[:-2, :, 2:]) / (2*dx*np.sqrt(2))
+    
+    # Natural boundary handling
+    gx[0, :, :] = (field[1, :, :] - field[0, :, :]) / dx
+    gx[-1, :, :] = (field[-1, :, :] - field[-2, :, :]) / dx
+    
+    # Y component using isotropic approach
+    # Main y-direction gradient (70% weight)
+    gy[:, 1:-1, :] = 0.7 * (field[:, 2:, :] - field[:, :-2, :]) / (2*dx)
+    
+    # Add diagonal contributions (30% weight)
+    # Diagonal in xy plane
+    gy[1:-1, 1:-1, :] += 0.075 * (field[2:, 2:, :] - field[:-2, :-2, :]) / (2*dx*np.sqrt(2))
+    gy[1:-1, 1:-1, :] += 0.075 * (field[:-2, 2:, :] - field[2:, :-2, :]) / (2*dx*np.sqrt(2))
+    
+    # Diagonal in yz plane
+    gy[:, 1:-1, 1:-1] += 0.075 * (field[:, 2:, 2:] - field[:, :-2, :-2]) / (2*dx*np.sqrt(2))
+    gy[:, 1:-1, 1:-1] += 0.075 * (field[:, 2:, :-2] - field[:, :-2, 2:]) / (2*dx*np.sqrt(2))
+    
+    # Natural boundary handling
+    gy[:, 0, :] = (field[:, 1, :] - field[:, 0, :]) / dx
+    gy[:, -1, :] = (field[:, -1, :] - field[:, -2, :]) / dx
+    
+    # Z component using isotropic approach
+    # Main z-direction gradient (70% weight)
+    gz[:, :, 1:-1] = 0.7 * (field[:, :, 2:] - field[:, :, :-2]) / (2*dx)
+    
+    # Add diagonal contributions (30% weight)
+    # Diagonal in xz plane
+    gz[1:-1, :, 1:-1] += 0.075 * (field[2:, :, 2:] - field[:-2, :, :-2]) / (2*dx*np.sqrt(2))
+    gz[1:-1, :, 1:-1] += 0.075 * (field[:-2, :, 2:] - field[2:, :, :-2]) / (2*dx*np.sqrt(2))
+    
+    # Diagonal in yz plane
+    gz[:, 1:-1, 1:-1] += 0.075 * (field[:, 2:, 2:] - field[:, :-2, :-2]) / (2*dx*np.sqrt(2))
+    gz[:, 1:-1, 1:-1] += 0.075 * (field[:, :-2, 2:] - field[:, 2:, :-2]) / (2*dx*np.sqrt(2))
+    
+    # Natural boundary handling
+    gz[:, :, 0] = (field[:, :, 1] - field[:, :, 0]) / dx
+    gz[:, :, -1] = (field[:, :, -1] - field[:, :, -2]) / dx
 
-    # axis-centered interior
-    gx[1:-1, 1:-1, 1:-1] = (field[2:, 1:-1, 1:-1] - field[:-2, 1:-1, 1:-1]) * inv_2dx
-    gy[1:-1, 1:-1, 1:-1] = (field[1:-1, 2:, 1:-1] - field[1:-1, :-2, 1:-1]) * inv_2dx
-    gz[1:-1, 1:-1, 1:-1] = (field[1:-1, 1:-1, 2:] - field[1:-1, 1:-1, :-2]) * inv_2dx
-
-    # xy-diagonals
-    gx[1:-1, 1:-1, 1:-1] = (
-        w_axis * gx[1:-1, 1:-1, 1:-1]
-        + w_diag * (
-            (field[2:, 2:, 1:-1] - field[:-2, :-2, 1:-1]) * inv_2sqrt2dx
-            + (field[2:, :-2, 1:-1] - field[:-2, 2:, 1:-1]) * inv_2sqrt2dx
-        )
-    )
-    gy[1:-1, 1:-1, 1:-1] = (
-        w_axis * gy[1:-1, 1:-1, 1:-1]
-        + w_diag * (
-            (field[2:, 2:, 1:-1] - field[:-2, :-2, 1:-1]) * inv_2sqrt2dx
-            + (field[:-2, 2:, 1:-1] - field[2:, :-2, 1:-1]) * inv_2sqrt2dx
-        )
-    )
-
-    # xz-diagonals
-    gx[1:-1, 1:-1, 1:-1] += w_diag * (
-        (field[2:, 1:-1, 2:] - field[:-2, 1:-1, :-2]) * inv_2sqrt2dx
-        + (field[2:, 1:-1, :-2] - field[:-2, 1:-1, 2:]) * inv_2sqrt2dx
-    )
-    gz[1:-1, 1:-1, 1:-1] = (
-        w_axis * gz[1:-1, 1:-1, 1:-1]
-        + w_diag * (
-            (field[2:, 1:-1, 2:] - field[:-2, 1:-1, :-2]) * inv_2sqrt2dx
-            + (field[:-2, 1:-1, 2:] - field[2:, 1:-1, :-2]) * inv_2sqrt2dx
-        )
-    )
-
-    # yz-diagonals
-    gy[1:-1, 1:-1, 1:-1] += w_diag * (
-        (field[1:-1, 2:, 2:] - field[1:-1, :-2, :-2]) * inv_2sqrt2dx
-        + (field[1:-1, 2:, :-2] - field[1:-1, :-2, 2:]) * inv_2sqrt2dx
-    )
-    gz[1:-1, 1:-1, 1:-1] += w_diag * (
-        (field[1:-1, 2:, 2:] - field[1:-1, :-2, :-2]) * inv_2sqrt2dx
-        + (field[1:-1, :-2, 2:] - field[1:-1, 2:, :-2]) * inv_2sqrt2dx
-    )
-
-    _zero_face_gradients(gx, gy, gz)
     return gx, gy, gz
 
 
 @njit(cache=True, fastmath=True)
 def _divergence_from_components(ux: np.ndarray, uy: np.ndarray, uz: np.ndarray, dx: float) -> np.ndarray:
     """
-    Divergence via centered differences of the provided components.
-    Faces use one-sided forms consistent with zero normal derivative.
+    Divergence using the proven isotropic approach from the old codebase.
+    This uses the same isotropic gradient approach for each component.
     """
-    div = np.zeros_like(ux)
-    inv_2dx = 1.0 / (2.0 * dx)
-
-    # interior
-    div[1:-1, 1:-1, 1:-1] = (
-        (ux[2:, 1:-1, 1:-1] - ux[:-2, 1:-1, 1:-1])
-        + (uy[1:-1, 2:, 1:-1] - uy[1:-1, :-2, 1:-1])
-        + (uz[1:-1, 1:-1, 2:] - uz[1:-1, 1:-1, :-2])
-    ) * inv_2dx
-
-    # x-faces
-    div[0, 1:-1, 1:-1] = (
-        (ux[1, 1:-1, 1:-1] - ux[0, 1:-1, 1:-1])
-        + (uy[0, 2:, 1:-1] - uy[0, :-2, 1:-1])
-        + (uz[0, 1:-1, 2:] - uz[0, 1:-1, :-2])
-    ) * inv_2dx
-    div[-1, 1:-1, 1:-1] = (
-        (ux[-1, 1:-1, 1:-1] - ux[-2, 1:-1, 1:-1])
-        + (uy[-1, 2:, 1:-1] - uy[-1, :-2, 1:-1])
-        + (uz[-1, 1:-1, 2:] - uz[-1, 1:-1, :-2])
-    ) * inv_2dx
-
-    # y-faces
-    div[1:-1, 0, 1:-1] = (
-        (ux[2:, 0, 1:-1] - ux[:-2, 0, 1:-1])
-        + (uy[1:-1, 1, 1:-1] - uy[1:-1, 0, 1:-1])
-        + (uz[1:-1, 0, 2:] - uz[1:-1, 0, :-2])
-    ) * inv_2dx
-    div[1:-1, -1, 1:-1] = (
-        (ux[2:, -1, 1:-1] - ux[:-2, -1, 1:-1])
-        + (uy[1:-1, -1, 1:-1] - uy[1:-1, -2, 1:-1])
-        + (uz[1:-1, -1, 2:] - uz[1:-1, -1, :-2])
-    ) * inv_2dx
-
-    # z-faces
-    div[1:-1, 1:-1, 0] = (
-        (ux[2:, 1:-1, 0] - ux[:-2, 1:-1, 0])
-        + (uy[1:-1, 2:, 0] - uy[1:-1, :-2, 0])
-        + (uz[1:-1, 1:-1, 1] - uz[1:-1, 1:-1, 0])
-    ) * inv_2dx
-    div[1:-1, 1:-1, -1] = (
-        (ux[2:, 1:-1, -1] - ux[:-2, 1:-1, -1])
-        + (uy[1:-1, 2:, -1] - uy[1:-1, :-2, -1])
-        + (uz[1:-1, 1:-1, -1] - uz[1:-1, 1:-1, -2])
-    ) * inv_2dx
-
+    # Use the proven isotropic gradient approach for each component
+    gx_ux, gy_ux, gz_ux = isotropic_gradient_components(ux, dx)
+    gx_uy, gy_uy, gz_uy = isotropic_gradient_components(uy, dx)
+    gx_uz, gy_uz, gz_uz = isotropic_gradient_components(uz, dx)
+    
+    # Divergence is the sum of diagonal components
+    div = gx_ux + gy_uy + gz_uz
+    
     return div
 
 
 @njit(cache=True, fastmath=True)
 def isotropic_laplacian(field: np.ndarray, dx: float) -> np.ndarray:
-    """∇²_iso φ := ∇·(isotropic ∇φ)."""
-    gix, giy, giz = isotropic_gradient_components(field, dx)
-    return _divergence_from_components(gix, giy, giz, dx)
+    """
+    Isotropic Laplacian using the proven approach from the old codebase.
+    This uses proper weights for axis-aligned and diagonal contributions.
+    """
+    lap = np.zeros_like(field)
+    nx, ny, nz = field.shape
+    dx2 = dx * dx
+    
+    # Interior points - use the proven isotropic approach with proper weights
+    # Standard Cartesian directions (70% weight)
+    lap[1:-1, 1:-1, 1:-1] = 0.7 * (
+        (field[2:, 1:-1, 1:-1] + field[:-2, 1:-1, 1:-1] + 
+         field[1:-1, 2:, 1:-1] + field[1:-1, :-2, 1:-1] + 
+         field[1:-1, 1:-1, 2:] + field[1:-1, 1:-1, :-2] - 
+         6*field[1:-1, 1:-1, 1:-1]) / dx2
+    )
+    
+    # Diagonal directions (30% weight) - this is the key for isotropy
+    # Diagonal in xy plane
+    lap[1:-1, 1:-1, 1:-1] += 0.075 * (
+        (field[2:, 2:, 1:-1] + field[:-2, :-2, 1:-1] - 2*field[1:-1, 1:-1, 1:-1]) / (dx2 * 2)
+    )
+    lap[1:-1, 1:-1, 1:-1] += 0.075 * (
+        (field[2:, :-2, 1:-1] + field[:-2, 2:, 1:-1] - 2*field[1:-1, 1:-1, 1:-1]) / (dx2 * 2)
+    )
+    
+    # Diagonal in xz plane
+    lap[1:-1, 1:-1, 1:-1] += 0.075 * (
+        (field[2:, 1:-1, 2:] + field[:-2, 1:-1, :-2] - 2*field[1:-1, 1:-1, 1:-1]) / (dx2 * 2)
+    )
+    lap[1:-1, 1:-1, 1:-1] += 0.075 * (
+        (field[2:, 1:-1, :-2] + field[:-2, 1:-1, 2:] - 2*field[1:-1, 1:-1, 1:-1]) / (dx2 * 2)
+    )
+    
+    # Diagonal in yz plane
+    lap[1:-1, 1:-1, 1:-1] += 0.075 * (
+        (field[1:-1, 2:, 2:] + field[1:-1, :-2, :-2] - 2*field[1:-1, 1:-1, 1:-1]) / (dx2 * 2)
+    )
+    lap[1:-1, 1:-1, 1:-1] += 0.075 * (
+        (field[1:-1, 2:, :-2] + field[1:-1, :-2, 2:] - 2*field[1:-1, 1:-1, 1:-1]) / (dx2 * 2)
+    )
+    
+    # X boundaries - use natural boundary handling
+    lap[0, :, :] = 2*(field[1, :, :] - field[0, :, :]) / dx2
+    lap[-1, :, :] = 2*(field[-2, :, :] - field[-1, :, :]) / dx2
+    
+    # Y boundaries
+    lap[:, 0, :] += 2*(field[:, 1, :] - field[:, 0, :]) / dx2
+    lap[:, -1, :] += 2*(field[:, -2, :] - field[:, -1, :]) / dx2
+    
+    # Z boundaries
+    lap[:, :, 0] += 2*(field[:, :, 1] - field[:, :, 0]) / dx2
+    lap[:, :, -1] += 2*(field[:, :, -2] - field[:, :, -1]) / dx2
+    
+    return lap
 
 
 @njit(cache=True, fastmath=True)
