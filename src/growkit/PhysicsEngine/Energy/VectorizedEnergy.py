@@ -30,11 +30,19 @@ def compute_adhesion_energy_derivative_numba(phi, laplace_phi, m):
         Energy derivative field: δE/δφ
     """
     
+    # Promote to float64 for stability
+    phi = phi.astype(np.float64, copy=False)
+    laplace_phi = laplace_phi.astype(np.float64, copy=False)
+    m = float(m)
+
     # Compute double-well potential derivative: f'(φ) = 0.5 * φ * (1 - φ) * (2φ - 1)
     f_prime = 0.5 * phi * (1 - phi) * (2 * phi - 1)
     
     # Compute energy derivative: δE/δφ = m * (f'(φ) - 0.01 * ∇²φ)
     energy_deriv = m * (f_prime - 0.01 * laplace_phi)
+    
+    # Clip unphysical extremes to avoid overflow in downstream gradients
+    energy_deriv = np.clip(energy_deriv, -1e6, 1e6)
     
     
     return energy_deriv
@@ -81,9 +89,22 @@ class VectorizedEnergy:
         # NO SMOOTHING - use original field directly to eliminate potential diamond artifacts
         # Gaussian smoothing might be creating grid-aligned artifacts
         # Use the original phi_T field without any smoothing
+        # Ensure float64 for operator math
+        phi_T = phi_T.astype(np.float64, copy=False)
         laplace_phi = isotropic_laplacian(phi_T, dx)
         # Use original phi_T for both double-well derivative and curvature term
         energy_deriv = compute_adhesion_energy_derivative_numba(phi_T, laplace_phi, self.m)
+        
+        # Optional config-based clipping for very large adhesion m
+        max_ed = (
+            self.cfg.get("physics", {})
+            .get("adhesion_energy", {})
+            .get("max_energy_derivative", None)
+        )
+        if max_ed is not None and max_ed > 0:
+            energy_deriv = np.clip(energy_deriv, -float(max_ed), float(max_ed))
+        
+        # Store as float64 internally; cast down only when storing to field manager
     
         
         # Store energy derivative in field manager if available

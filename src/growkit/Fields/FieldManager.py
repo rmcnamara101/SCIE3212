@@ -94,8 +94,9 @@ class FieldManager:
         if cell_dynamics is None:
             cell_dynamics = VectorizedCellDynamics(self.cfg, self.cfg["populations"], self)
         
-        # Compute energy derivative using total volume fraction (including host)
-        phi_T = np.sum(phi_hat, axis=0) + self.host_field
+        # Compute energy derivative using only cellular volume fraction (exclude host)
+        # Including host makes total = 1 everywhere, zeroing gradients and killing adhesion
+        phi_T = np.sum(phi_hat, axis=0)
         self.energy_derivative = cell_dynamics.compute_energy_derivative(phi_T, self.dx)
         
         # Compute solid velocity (this will update pressure and velocity in field_manager)

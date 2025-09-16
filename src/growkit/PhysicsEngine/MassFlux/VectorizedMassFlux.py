@@ -33,7 +33,12 @@ def compute_mass_fluxes_numba(phi_hat, phi_T, dx, energy_deriv, M_matrix):
         J_hat: Stacked mass flux fields (M, 3, nx, ny, nz)
     """
     M, nx, ny, nz = phi_hat.shape
-    J_hat = np.zeros((M, 3, nx, ny, nz), dtype=np.float32)
+    # Use float64 for numerical stability during computation
+    phi_hat = phi_hat.astype(np.float64, copy=False)
+    phi_T = phi_T.astype(np.float64, copy=False)
+    energy_deriv = energy_deriv.astype(np.float64, copy=False)
+    M_matrix = M_matrix.astype(np.float64, copy=False)
+    J_hat = np.zeros((M, 3, nx, ny, nz), dtype=np.float64)
     
     # Compute gradients of energy derivative using isotropic operators
     grad_energy_x, grad_energy_y, grad_energy_z = isotropic_gradient_components(energy_deriv, dx)
@@ -50,16 +55,15 @@ def compute_mass_fluxes_numba(phi_hat, phi_T, dx, energy_deriv, M_matrix):
         # Scale by population fraction: (φ_i / φ_T)
         epsilon_small = 1e-6
         phi_T_clamped = np.where(phi_T < epsilon_small, epsilon_small, phi_T)
-        scaling = phi_hat[i] / phi_T_clamped
+        # Clamp scaling ratio to avoid extreme amplification when phi_T is tiny
+        scaling = np.clip(phi_hat[i] / phi_T_clamped, 0.0, 5.0)
         
         J_hat[i, 0] = scaling * Jx_base
         J_hat[i, 1] = scaling * Jy_base
         J_hat[i, 2] = scaling * Jz_base
-
-        J_hat[i, 0] = J_hat[i, 0]
-        J_hat[i, 1] = J_hat[i, 1]
-        J_hat[i, 2] = J_hat[i, 2]
     
+    # Sanitize any NaNs/Infs that may have arisen numerically
+    J_hat = np.nan_to_num(J_hat, nan=0.0, posinf=0.0, neginf=0.0)
     return J_hat
 
 
@@ -127,10 +131,31 @@ class VectorizedMassFlux:
             energy_computer = VectorizedEnergy(self.cfg, self.pops)
             energy_deriv = energy_computer.compute_energy_derivative(phi_T, dx)
         
-        # Compute mass fluxes using the vectorized approach
+        # Compute mass fluxes using the vectorized approach (float64 internal)
         J_hat = compute_mass_fluxes_numba(
             phi_hat, phi_T, dx, energy_deriv, self.M_matrix
         )
+        
+        # Optional global scaling for mass flux magnitude to counteract large dx
+        flux_scale = (
+            self.cfg.get("physics", {})
+            .get("mass_flux", {})
+            .get("scale", 1.0)
+        )
+        if flux_scale != 1.0:
+            J_hat = J_hat * float(flux_scale)
+        
+        # Optional clipping based on config to prevent overflow/explosions
+        max_mag = (
+            self.cfg.get("physics", {})
+            .get("mass_flux", {})
+            .get("max_magnitude", None)
+        )
+        if max_mag is not None and max_mag > 0:
+            J_hat = np.clip(J_hat, -float(max_mag), float(max_mag))
+        
+        # Cast to float32 for storage/compatibility if needed
+        J_hat = J_hat.astype(np.float32, copy=False)
         
         # Store mass flux in field manager if available
         if self.field_manager is not None:
