@@ -49,6 +49,8 @@ class InitialConditions:
             phi_hat = self._create_multiple_spheres_initial_conditions()
         elif self.ic_type == "uniform":
             phi_hat = self._create_uniform_initial_conditions()
+        elif self.ic_type == "organoid_settling":
+            phi_hat = self._create_organoid_settling_initial_conditions()
         elif self.ic_type == "custom":
             phi_hat = self._create_custom_initial_conditions()
         else:
@@ -292,6 +294,90 @@ class InitialConditions:
                 noisy_density = self._add_seeding_noise(base_density, noise_scale)
             else:
                 noisy_density = base_density  # Keep zero density populations at zero
+            phi_hat[m, :, :, :] = noisy_density
+        
+        return phi_hat
+    
+    def _create_organoid_settling_initial_conditions(self) -> np.ndarray:
+        """
+        Create organoid settling initial conditions - a loose collection of cells 
+        with decreasing density from center, simulating organoids settling under adhesion.
+        """
+        nx, ny, nz = self.grid
+        phi_hat = np.zeros((self.M, nx, ny, nz), dtype=np.float32)
+        
+        # Get configuration parameters
+        center = self.ic_config.get("center", [nx//2, ny//2, nz//2])
+        core_radius = self.ic_config.get("core_radius", min(nx, ny, nz) // 8)  # Dense core radius
+        outer_radius = self.ic_config.get("outer_radius", min(nx, ny, nz) // 3)  # Outer boundary
+        core_density = self.ic_config.get("core_density", 0.7)  # Maximum density at center
+        outer_density = self.ic_config.get("outer_density", 0.1)  # Minimum density at edge
+        seeding_densities = self.ic_config.get("seeding_densities", {})
+        
+        # Set random seed for reproducible patterns
+        np.random.seed(self.cfg.get("simulation", {}).get("seed", 42))
+        
+        # Default seeding densities if not specified
+        if not seeding_densities:
+            seeding_densities = {name: 0.8 if i == 0 else 0.1 / (self.M - 1) 
+                               for i, name in enumerate(self.names)}
+        
+        # Create the density profile with multiple components
+        total_density = np.zeros((nx, ny, nz), dtype=np.float32)
+        
+        for i in range(nx):
+            for j in range(ny):
+                for k in range(nz):
+                    # Calculate distance from center
+                    dist = np.sqrt((i - center[0])**2 + (j - center[1])**2 + (k - center[2])**2)
+                    
+                    if dist <= outer_radius:
+                        # Simple smooth falloff from center to edge
+                        # Use a smooth exponential or power law decay
+                        
+                        # Normalize distance to [0, 1] range
+                        normalized_dist = dist / outer_radius
+                        
+                        # Create smooth falloff using exponential decay
+                        # This gives a natural organoid-like density distribution
+                        falloff_factor = np.exp(-3.0 * normalized_dist)  # Adjust -3.0 to control steepness
+                        
+                        # Scale from core_density at center to outer_density at edge
+                        density = outer_density + (core_density - outer_density) * falloff_factor
+                        
+                        # Add some randomness to create loose, irregular structure
+                        random_factor = 0.9 + 0.2 * np.random.random()  # 0.9 to 1.1 (small variation)
+                        density *= random_factor
+                        
+                        # Add small-scale spatial variations to break symmetry
+                        # Create small clusters and voids typical of organoid settling
+                        spatial_variation = 1.0 + 0.1 * np.sin(2 * np.pi * i / 6) * np.cos(2 * np.pi * j / 6) * np.sin(2 * np.pi * k / 6)
+                        density *= spatial_variation
+                        
+                        # Ensure density is always positive
+                        density = max(0.0, density)
+                        
+                        total_density[i, j, k] = density
+        
+        # Normalize to ensure maximum density doesn't exceed 1.0
+        max_density = np.max(total_density)
+        if max_density > 0:
+            total_density = total_density / max_density * 0.8  # Scale to 80% max to leave room for other populations
+        
+        # Get noise scale from config or use default (lower for organoid settling)
+        noise_scale = self.ic_config.get("seeding_noise_scale", 0.15)
+        
+        # Distribute density among populations with noise
+        for m, name in enumerate(self.names):
+            density_fraction = seeding_densities.get(name, 1.0 / self.M)
+            base_density = total_density * density_fraction
+            
+            # Only add noise if the base density is non-zero
+            if np.sum(base_density) > 0:
+                noisy_density = self._add_seeding_noise(base_density, noise_scale)
+            else:
+                noisy_density = base_density
+            
             phi_hat[m, :, :, :] = noisy_density
         
         return phi_hat

@@ -41,8 +41,15 @@ class VectorizedSolidVelocity:
         self.M = len(self.labels)
         self.field_manager = field_manager
         
-        # Initialize pressure solver
-        self.pressure_solver = self._create_pressure_solver(cfg)
+        # Check if pressure solver should be disabled
+        self.disable_pressure = cfg.get("physics", {}).get("disable_pressure", False)
+        
+        # Initialize pressure solver only if not disabled
+        if not self.disable_pressure:
+            self.pressure_solver = self._create_pressure_solver(cfg)
+        else:
+            self.pressure_solver = None
+            print("Pressure solver disabled - using adhesion-only mode")
         
         # Cache for pressure solutions to avoid redundant solves during RK4
         self._pressure_cache = {}
@@ -96,6 +103,27 @@ class VectorizedSolidVelocity:
             energy_computer = VectorizedEnergy(self.cfg, self.pops, self.field_manager)
             energy_deriv = energy_computer.compute_energy_derivative(phi_T, dx)
         
+        # Check if pressure solver is disabled
+        if self.disable_pressure:
+            # Adhesion-only mode: u = -(δE/δφ_T) ∇φ_T (no pressure term)
+            # Compute gradients of total cell density using isotropic scheme
+            grad_C_x, grad_C_y, grad_C_z = isotropic_gradient_components(phi_T, dx)
+            
+            # Compute velocity: u = -energy_deriv * ∇φ_T (adhesion only)
+            ux = -energy_deriv * grad_C_x
+            uy = -energy_deriv * grad_C_y
+            uz = -energy_deriv * grad_C_z
+            
+            # Store zero pressure in field manager if available
+            if self.field_manager is not None:
+                self.field_manager.pressure = np.zeros_like(phi_T)
+                self.field_manager.velocity[0] = ux
+                self.field_manager.velocity[1] = uy
+                self.field_manager.velocity[2] = uz
+            
+            return ux, uy, uz
+        
+        # Normal mode with pressure solver
         # Ensure we have at least 2 populations for the pressure solver
         if len(phi_hat) < 2:
             raise ValueError("Need at least 2 populations for pressure solver")

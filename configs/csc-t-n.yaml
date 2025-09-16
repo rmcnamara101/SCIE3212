@@ -10,16 +10,16 @@ domain:
 
 time:
   steps: 10 # integer defining the number of steps to run the simulation for
-  dt: 0.7 # float defining the time step
+  dt: 0.5 # float defining the time step
 
 populations:
   Stem:
     label: Stem Cells
     color: Green
     dynamics:
-      lambda: 5 # float
-      mu: 0.1 # float
-      mobility: 1 # float
+      lambda: 0 # float
+      mu: 0 # float
+      mobility: 5 # float
       nutrient_threshold: 0.5 # float
       nutrient_consumption: 0.1 # float
       nutrient_production: 0.05 # float
@@ -31,9 +31,9 @@ populations:
     label: Tumour Cells
     color: Green
     dynamics:
-      lambda: 5 # float
-      mu: 0.1 # float
-      mobility: 1 # float
+      lambda: 0 # float
+      mu: 0 # float
+      mobility: 5 # float
       nutrient_threshold: 0.5 # float
       nutrient_consumption: 0.1 # float
       nutrient_production: 0.05 # float
@@ -44,7 +44,7 @@ populations:
     color: Black
     dynamics:
       lambda: 0.0 # float
-      mu: 0.1 # float
+      mu: 0 # float
       mobility: 0.0 # float
       nutrient_threshold: 0.0 # float
       nutrient_consumption: 0.0 # float
@@ -62,18 +62,21 @@ nutrient:
 
 physics:
   adhesion_energy:
-    m: 10
+    m: 100
+  # Set to true to disable pressure solver for adhesion-only analysis
+  disable_pressure: true
 
 initial_conditions:
-  type: gaussian_random_blob # Options: "spherical", "gaussian_random_blob", "multiple_spheres", "uniform", "custom"
+  type: organoid_settling # Options: "spherical", "gaussian_random_blob", "multiple_spheres", "uniform", "organoid_settling", "custom"
   
   center: [48, 48, 48] # Center coordinates (optional, defaults to domain center)
-  radius: 6.5 # Radius of the sphere (optional, defaults to domain_size/4)
-  
-  deformation_strength: 0.6 # How much to deform (0.0=sphere, 0.5=very deformed, optional, defaults to 0.3)
+  core_radius: 6.0 # Dense core radius (optional, defaults to domain_size/8)
+  outer_radius: 12.0 # Outer boundary radius (optional, defaults to domain_size/3)
+  core_density: 0.9 # Maximum density at center (optional, defaults to 0.7)
+  outer_density: 0.1 # Minimum density at edge (optional, defaults to 0.1)
   
   seeding_densities:
-    Tumour: 0.7 # Density for specific population
+    Tumour: 0.6 # Density for specific population
     Stem: 0.3 # Density for specific population
     Necrotic: 0.0 # Density for specific population
   
