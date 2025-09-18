@@ -6,11 +6,11 @@ simulation:
 
 domain:
   shape: 100 # integer defining the number of grid points in each dimension
-  dx: 1000 # float defining the spacing of the grid
+  dx: 500 # float defining the spacing of the grid
 
 time:
-  steps: 10 # integer defining the number of steps to run the simulation for
-  dt: 0.05 # float defining the time step
+  steps: 50 # integer defining the number of steps to run the simulation for
+  dt: 0.1 # float defining the time step
 
 populations:
   Stem:
@@ -62,7 +62,7 @@ nutrient:
 
 physics:
   adhesion_energy:
-    m: 100000
+    m: 10000
   disable_pressure: True
 
 initial_conditions:

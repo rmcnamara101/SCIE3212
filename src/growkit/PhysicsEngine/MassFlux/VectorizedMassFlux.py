@@ -4,10 +4,10 @@ Vectorized Mass Flux Module
 This module computes the mass flux vector fields for all populations in a vectorized form.
 The mass flux is defined as:
 
-J_i = -M_i * ∇(δE/δφ_T) * (φ_i / φ_T)
+J_i = -M_i * ∇(δE/δφ_T)
 
-where M_i is the mobility of population i, δE/δφ_T is the adhesion energy derivative,
-φ_i is the volume fraction of population i, and φ_T is the total cell density.
+where M_i is the mobility of population i, δE/δφ_T is the adhesion energy derivative.
+This follows standard phase field theory for adhesion-driven mass transport.
 
 Author: Riley Jae McNamara
 Date: 2025-02-19
@@ -52,15 +52,10 @@ def compute_mass_fluxes_numba(phi_hat, phi_T, dx, energy_deriv, M_matrix):
         Jy_base = -mobility * grad_energy_y
         Jz_base = -mobility * grad_energy_z
         
-        # Scale by population fraction: (φ_i / φ_T)
-        epsilon_small = 1e-6
-        phi_T_clamped = np.where(phi_T < epsilon_small, epsilon_small, phi_T)
-        # Clamp scaling ratio to avoid extreme amplification when phi_T is tiny
-        scaling = np.clip(phi_hat[i] / phi_T_clamped, 0.0, 5.0)
-        
-        J_hat[i, 0] = scaling * Jx_base
-        J_hat[i, 1] = scaling * Jy_base
-        J_hat[i, 2] = scaling * Jz_base
+        # No scaling - use pure adhesion physics: J_i = -M_i * ∇(δE/δφ_T)
+        J_hat[i, 0] = Jx_base
+        J_hat[i, 1] = Jy_base
+        J_hat[i, 2] = Jz_base
     
     # Sanitize any NaNs/Infs that may have arisen numerically
     J_hat = np.nan_to_num(J_hat, nan=0.0, posinf=0.0, neginf=0.0)

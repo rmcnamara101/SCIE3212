@@ -297,5 +297,8 @@ def compute_cell_dynamics_numba(phi_hat, ux, uy, uz, J_hat, A_hat, dx):
         # Total derivative: dφ_i/dt = -∇·(u φ_i) - ∇·J_i + A_i
         dphi_hat[i] = advection + mass_flux + source_term
         
+        # Apply conservative clipping to prevent unphysical values
+        dphi_hat[i] = np.clip(dphi_hat[i], -1.0, 1.0)
+        
     
     return dphi_hat
