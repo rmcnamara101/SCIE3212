@@ -143,6 +143,10 @@ class VectorizedCellDynamics:
         
         # Compute solid velocity
         ux, uy, uz = self.compute_solid_velocity(phi_hat, nutrient_field, dx)
+        # Pure-adhesion (mass-flux-only) run: disable advection by zeroing velocity
+        ux = np.zeros_like(ux)
+        uy = np.zeros_like(uy)
+        uz = np.zeros_like(uz)
         
         # Compute mass fluxes (pass precomputed energy derivative)
         J_hat = self.compute_mass_fluxes(phi_hat, dx, energy_deriv)
@@ -186,80 +190,63 @@ class VectorizedCellDynamics:
 @njit
 def _isotropic_upwind_divergence(ux, uy, uz, phi, dx):
     """
-    Compute isotropic upwind divergence of u * phi using gradient-based approach.
-    This eliminates grid-aligned artifacts by using isotropic gradient components.
+    Compute conservative divergence of u * phi: -∇·(u φ)
+    This ensures mass conservation by computing the full divergence, not just u·∇φ
     """
     nx, ny, nz = phi.shape
     div = np.zeros_like(phi, dtype=np.float32)
     
-    # Compute gradients of phi using isotropic scheme
-    # We'll use a simplified isotropic gradient computation here
+    # Form the flux components: ux*phi, uy*phi, uz*phi
+    flux_x = ux * phi
+    flux_y = uy * phi  
+    flux_z = uz * phi
+    
+    # Compute divergence of the flux using isotropic scheme
     inv_2dx = 1.0 / (2.0 * dx)
     inv_2sqrt2dx = 1.0 / (2.0 * np.sqrt(2.0) * dx)
     w_axis = 1.0
     w_diag = 0.10  # diagonal blend weight
     
-    # Compute isotropic gradient components
-    grad_phi_x = np.zeros_like(phi)
-    grad_phi_y = np.zeros_like(phi)
-    grad_phi_z = np.zeros_like(phi)
-    
     # Interior points with isotropic stencil
     for i in range(1, nx-1):
         for j in range(1, ny-1):
             for k in range(1, nz-1):
-                # Axis-aligned components
-                gx_axis = (phi[i+1, j, k] - phi[i-1, j, k]) * inv_2dx
-                gy_axis = (phi[i, j+1, k] - phi[i, j-1, k]) * inv_2dx
-                gz_axis = (phi[i, j, k+1] - phi[i, j, k-1]) * inv_2dx
+                # Axis-aligned divergence components
+                div_x_axis = (flux_x[i+1, j, k] - flux_x[i-1, j, k]) * inv_2dx
+                div_y_axis = (flux_y[i, j+1, k] - flux_y[i, j-1, k]) * inv_2dx
+                div_z_axis = (flux_z[i, j, k+1] - flux_z[i, j, k-1]) * inv_2dx
                 
-                # Diagonal components for isotropy
-                gx_diag = (
-                    (phi[i+1, j+1, k] - phi[i-1, j-1, k]) * inv_2sqrt2dx +
-                    (phi[i+1, j-1, k] - phi[i-1, j+1, k]) * inv_2sqrt2dx +
-                    (phi[i+1, j, k+1] - phi[i-1, j, k-1]) * inv_2sqrt2dx +
-                    (phi[i+1, j, k-1] - phi[i-1, j, k+1]) * inv_2sqrt2dx
+                # Diagonal divergence components for isotropy
+                div_x_diag = (
+                    (flux_x[i+1, j+1, k] - flux_x[i-1, j-1, k]) * inv_2sqrt2dx +
+                    (flux_x[i+1, j-1, k] - flux_x[i-1, j+1, k]) * inv_2sqrt2dx +
+                    (flux_x[i+1, j, k+1] - flux_x[i-1, j, k-1]) * inv_2sqrt2dx +
+                    (flux_x[i+1, j, k-1] - flux_x[i-1, j, k+1]) * inv_2sqrt2dx
                 ) * 0.25
                 
-                gy_diag = (
-                    (phi[i+1, j+1, k] - phi[i-1, j-1, k]) * inv_2sqrt2dx +
-                    (phi[i-1, j+1, k] - phi[i+1, j-1, k]) * inv_2sqrt2dx +
-                    (phi[i, j+1, k+1] - phi[i, j-1, k-1]) * inv_2sqrt2dx +
-                    (phi[i, j+1, k-1] - phi[i, j-1, k+1]) * inv_2sqrt2dx
+                div_y_diag = (
+                    (flux_y[i+1, j+1, k] - flux_y[i-1, j-1, k]) * inv_2sqrt2dx +
+                    (flux_y[i-1, j+1, k] - flux_y[i+1, j-1, k]) * inv_2sqrt2dx +
+                    (flux_y[i, j+1, k+1] - flux_y[i, j-1, k-1]) * inv_2sqrt2dx +
+                    (flux_y[i, j+1, k-1] - flux_y[i, j-1, k+1]) * inv_2sqrt2dx
                 ) * 0.25
                 
-                gz_diag = (
-                    (phi[i+1, j, k+1] - phi[i-1, j, k-1]) * inv_2sqrt2dx +
-                    (phi[i-1, j, k+1] - phi[i+1, j, k-1]) * inv_2sqrt2dx +
-                    (phi[i, j+1, k+1] - phi[i, j-1, k-1]) * inv_2sqrt2dx +
-                    (phi[i, j-1, k+1] - phi[i, j+1, k-1]) * inv_2sqrt2dx
+                div_z_diag = (
+                    (flux_z[i+1, j, k+1] - flux_z[i-1, j, k-1]) * inv_2sqrt2dx +
+                    (flux_z[i-1, j, k+1] - flux_z[i+1, j, k-1]) * inv_2sqrt2dx +
+                    (flux_z[i, j+1, k+1] - flux_z[i, j-1, k-1]) * inv_2sqrt2dx +
+                    (flux_z[i, j-1, k+1] - flux_z[i, j+1, k-1]) * inv_2sqrt2dx
                 ) * 0.25
                 
                 # Combine axis and diagonal components
-                grad_phi_x[i, j, k] = w_axis * gx_axis + w_diag * gx_diag
-                grad_phi_y[i, j, k] = w_axis * gy_axis + w_diag * gy_diag
-                grad_phi_z[i, j, k] = w_axis * gz_axis + w_diag * gz_diag
+                div[i, j, k] = (w_axis * (div_x_axis + div_y_axis + div_z_axis) + 
+                               w_diag * (div_x_diag + div_y_diag + div_z_diag))
     
-    # Apply NO boundary conditions - let gradients develop completely naturally
-    # This should eliminate all artificial constraints that cause diamond artifacts
-    # grad_phi_x, grad_phi_y, grad_phi_z = apply_natural_gradient_boundaries(
-    #     grad_phi_x, grad_phi_y, grad_phi_z, boundary_width=1
-    # )
-    
-    # Compute divergence using isotropic approach
-    # ∇·(u φ) = φ ∇·u + u·∇φ
-    # For incompressible flow: ∇·u = 0, so ∇·(u φ) = u·∇φ
-    
-    for i in range(nx):
-        for j in range(ny):
-            for k in range(nz):
-                # Compute u·∇φ using isotropic gradients
-                div[i, j, k] = (ux[i, j, k] * grad_phi_x[i, j, k] + 
-                               uy[i, j, k] * grad_phi_y[i, j, k] + 
-                               uz[i, j, k] * grad_phi_z[i, j, k])
-    
-    # Return -∇·(u φ)
-    return -div
+    # Return -∇·(u φ) for conservative advection
+    # Ensure divergence is zero wherever phi is zero (no mass creation in voids)
+    result = -div
+    result = np.where(phi < 1e-6, 0.0, result)
+    return result
 
 
 @njit
@@ -290,6 +277,9 @@ def compute_cell_dynamics_numba(phi_hat, ux, uy, uz, J_hat, A_hat, dx):
         Jy = J_hat[i, 1]
         Jz = J_hat[i, 2]
         mass_flux = -_divergence_from_components(Jx, Jy, Jz, dx)
+        
+        # Ensure mass flux divergence is zero wherever phi is zero
+        mass_flux = np.where(phi_hat[i] < 1e-6, 0.0, mass_flux)
         
         # Source term: A_i (growth/death)
         source_term = A_hat[i]

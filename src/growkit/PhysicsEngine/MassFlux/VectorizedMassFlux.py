@@ -4,10 +4,11 @@ Vectorized Mass Flux Module
 This module computes the mass flux vector fields for all populations in a vectorized form.
 The mass flux is defined as:
 
-J_i = -M_i * ∇(δE/δφ_T)
+J_i = φ_i * (-M_i * ∇(δE/δφ_T))
 
-where M_i is the mobility of population i, δE/δφ_T is the adhesion energy derivative.
-This follows standard phase field theory for adhesion-driven mass transport.
+where M_i is the mobility of population i, δE/δφ_T is the adhesion energy derivative,
+and φ_i is the local population density. The gating by φ_i ensures no flux in void regions,
+preventing mass creation where no cells exist.
 
 Author: Riley Jae McNamara
 Date: 2025-02-19
@@ -52,10 +53,11 @@ def compute_mass_fluxes_numba(phi_hat, phi_T, dx, energy_deriv, M_matrix):
         Jy_base = -mobility * grad_energy_y
         Jz_base = -mobility * grad_energy_z
         
-        # No scaling - use pure adhesion physics: J_i = -M_i * ∇(δE/δφ_T)
-        J_hat[i, 0] = Jx_base
-        J_hat[i, 1] = Jy_base
-        J_hat[i, 2] = Jz_base
+        # Gate mass flux by local population presence to prevent flux in voids
+        # This ensures J_i = 0 where φ_i = 0, preventing mass creation in empty regions
+        J_hat[i, 0] = phi_hat[i] * Jx_base
+        J_hat[i, 1] = phi_hat[i] * Jy_base
+        J_hat[i, 2] = phi_hat[i] * Jz_base
     
     # Sanitize any NaNs/Infs that may have arisen numerically
     J_hat = np.nan_to_num(J_hat, nan=0.0, posinf=0.0, neginf=0.0)
