@@ -6,11 +6,11 @@ simulation:
 
 domain:
   shape: 100 # integer defining the number of grid points in each dimension
-  dx: 50000 # float defining the spacing of the grid
+  dx: 1000 # float defining the spacing of the grid
 
 time:
   steps: 50 # integer defining the number of steps to run the simulation for
-  dt: 100 # float defining the time step
+  dt: 5 # float defining the time step
 
 populations:
   Stem:
@@ -63,7 +63,7 @@ nutrient:
 physics:
   adhesion_energy:
     m: 1000
-  disable_pressure: False
+  disable_pressure: True
 
 initial_conditions:
   type: organoid_settling # Options: "spherical", "gaussian_random_blob", "multiple_spheres", "uniform", "custom"

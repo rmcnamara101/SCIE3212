@@ -70,3 +70,18 @@ nutrient:
   dynamics:
     diffusion: <diffusion rate> # float
     boundary_value: <boundary value> # float defining the value of the nutrient at the boundary
+
+# Integrator configuration
+integrator:
+  type: <integrator_type> # Options: "rk4", "adaptive_grid", "rk4_adaptive", "forward_euler", "forward_euler_adaptive", "improved_euler"
+  
+  # Parameters for adaptive_grid integrator
+  padding: <padding> # Number of grid points to pad around active regions (default: 5)
+  threshold: <threshold> # Minimum cell density to consider a point active (default: 1e-6)
+  min_sub_grid_size: <min_sub_grid_size> # Minimum size of sub-grid to use adaptive approach (default: 10)
+  
+  # Parameters for adaptive integrators
+  tolerance: <tolerance> # Error tolerance for adaptive stepping (default: 1e-6 for RK4, 0.1 for Forward Euler)
+  min_dt: <min_dt> # Minimum allowed time step (default: 1e-8)
+  max_dt: <max_dt> # Maximum allowed time step (default: 1e-2)
+  safety_factor: <safety_factor> # Safety factor for time step adjustment (default: 0.8, Forward Euler only)

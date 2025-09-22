@@ -278,9 +278,6 @@ def compute_cell_dynamics_numba(phi_hat, ux, uy, uz, J_hat, A_hat, dx):
         Jz = J_hat[i, 2]
         mass_flux = -_divergence_from_components(Jx, Jy, Jz, dx)
         
-        # Ensure mass flux divergence is zero wherever phi is zero
-        mass_flux = np.where(phi_hat[i] < 1e-6, 0.0, mass_flux)
-        
         # Source term: A_i (growth/death)
         source_term = A_hat[i]
         

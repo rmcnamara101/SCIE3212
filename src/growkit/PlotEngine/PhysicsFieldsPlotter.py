@@ -1160,3 +1160,181 @@ class PhysicsFieldsPlotter:
             tumor_boundary_level=tumor_boundary_level, boundary_color=boundary_color,
             tumor_boundary_color=tumor_boundary_color
         )
+    
+    def calculate_total_free_energy(self, phi_T, dx, m):
+        """
+        Calculate the total free energy for a given cell density field.
+        
+        The free energy functional is:
+        E = ∫ m * (f(φ) - 0.01 * ∇²φ) dV
+        
+        where f(φ) = 0.5 * φ * (1 - φ) * (2φ - 1) is the double-well potential.
+        
+        Args:
+            phi_T: Total cell density field
+            dx: Grid spacing
+            m: Adhesion energy parameter
+            
+        Returns:
+            total_energy: Total free energy integrated over the domain
+        """
+        from src.growkit.MathEngine.Operators import isotropic_laplacian
+        
+        # Ensure float64 for stability
+        phi_T = phi_T.astype(np.float64, copy=False)
+        
+        # Compute double-well potential: f(φ) = 0.5 * φ * (1 - φ) * (2φ - 1)
+        f_phi = 0.5 * phi_T * (1 - phi_T) * (2 * phi_T - 1)
+        
+        # Compute Laplacian
+        laplace_phi = isotropic_laplacian(phi_T, dx)
+        
+        # Compute energy density: m * (f(φ) - 0.01 * ∇²φ)
+        energy_density = m * (f_phi - 0.01 * laplace_phi)
+        
+        # Integrate over the domain (multiply by dx^3 for 3D volume element)
+        total_energy = np.sum(energy_density) * (dx ** 3)
+        
+        return total_energy
+    
+    def calculate_total_free_energy_from_phi_hat(self, phi_hat, dx, m):
+        """
+        Calculate the total free energy from stacked population fields.
+        
+        Args:
+            phi_hat: Stacked cell fraction fields (M, nx, ny, nz)
+            dx: Grid spacing
+            m: Adhesion energy parameter
+            
+        Returns:
+            total_energy: Total free energy integrated over the domain
+        """
+        # Calculate total cell density
+        phi_T = np.sum(phi_hat, axis=0)
+        return self.calculate_total_free_energy(phi_T, dx, m)
+    
+    def plot_total_free_energy_evolution(self, simulation_data, output_dir=None, 
+                                       save_plot=False, show_plot=True, 
+                                       figsize=(10, 6), line_style='-', 
+                                       line_color='blue', line_width=2,
+                                       marker='o', marker_size=4):
+        """
+        Calculate and plot the total free energy evolution over time from saved simulation data.
+        
+        Args:
+            simulation_data: Dictionary containing simulation data
+            output_dir: Directory to save plot
+            save_plot: Whether to save the plot
+            show_plot: Whether to display the plot
+            figsize: Figure size tuple
+            line_style: Line style for the plot
+            line_color: Color of the line
+            line_width: Width of the line
+            marker: Marker style for data points
+            marker_size: Size of markers
+        """
+        print("Calculating total free energy evolution...")
+        
+        # Get simulation metadata
+        saved_steps = simulation_data["metadata"]["saved_steps"]
+        saved_times = simulation_data["metadata"]["saved_times"]
+        grid_size = simulation_data["metadata"]["grid_size"]
+        dx = 1.0  # Default value, should be extracted from config if available
+        
+        # Try to get adhesion energy parameter from config if available
+        m = 1.0  # Default value
+        if "config" in simulation_data["metadata"]:
+            config = simulation_data["metadata"]["config"]
+            if "physics" in config and "adhesion_energy" in config["physics"]:
+                m = config["physics"]["adhesion_energy"]["m"]
+        
+        # Calculate total free energy for each saved step
+        total_energies = []
+        valid_times = []
+        
+        for i, (step, time) in enumerate(zip(saved_steps, saved_times)):
+            # Get cell density field for this step
+            phi_hat = simulation_data["field_data"]["phi_hat"][i]
+            
+            # Calculate total cell density
+            phi_T = np.sum(phi_hat, axis=0)
+            
+            # Calculate total free energy
+            total_energy = self.calculate_total_free_energy(phi_T, dx, m)
+            total_energies.append(total_energy)
+            valid_times.append(time)
+            
+            print(f"Step {step} (t={time:.3f}): Total Free Energy = {total_energy:.6f}")
+        
+        # Create plot
+        fig, ax = plt.subplots(figsize=figsize)
+        
+        ax.plot(valid_times, total_energies, linestyle=line_style, color=line_color, 
+                linewidth=line_width, marker=marker, markersize=marker_size)
+        
+        ax.set_xlabel('Time')
+        ax.set_ylabel('Total Free Energy')
+        ax.set_title('Total Free Energy Evolution')
+        ax.grid(True, alpha=0.3)
+        
+        # Add some statistics to the plot
+        min_energy = np.min(total_energies)
+        max_energy = np.max(total_energies)
+        final_energy = total_energies[-1]
+        initial_energy = total_energies[0]
+        energy_change = final_energy - initial_energy
+        
+        # Add text box with statistics
+        stats_text = f'Initial: {initial_energy:.3f}\nFinal: {final_energy:.3f}\nChange: {energy_change:.3f}\nMin: {min_energy:.3f}\nMax: {max_energy:.3f}'
+        ax.text(0.02, 0.98, stats_text, transform=ax.transAxes, fontsize=10,
+                verticalalignment='top', bbox=dict(boxstyle='round', facecolor='wheat', alpha=0.8))
+        
+        plt.tight_layout()
+        
+        # Save plot if requested
+        if save_plot and output_dir:
+            os.makedirs(output_dir, exist_ok=True)
+            filename = "total_free_energy_evolution.png"
+            filepath = os.path.join(output_dir, filename)
+            plt.savefig(filepath, dpi=300, bbox_inches='tight')
+            print(f"Saved total free energy evolution plot to {filepath}")
+        
+        if show_plot:
+            plt.show()
+        else:
+            plt.close()
+        
+        return {
+            'times': valid_times,
+            'total_energies': total_energies,
+            'initial_energy': initial_energy,
+            'final_energy': final_energy,
+            'energy_change': energy_change,
+            'min_energy': min_energy,
+            'max_energy': max_energy
+        }
+    
+    def calculate_current_total_free_energy(self, m=None):
+        """
+        Calculate the total free energy for the current state of the field manager.
+        
+        This method can be called during simulation to track energy in real-time.
+        
+        Args:
+            m: Adhesion energy parameter (if None, uses the one from field_manager config)
+            
+        Returns:
+            total_energy: Total free energy for current state
+        """
+        if m is None:
+            # Try to get from field manager config
+            if hasattr(self.field_manager, 'cfg') and self.field_manager.cfg:
+                m = self.field_manager.cfg.get("physics", {}).get("adhesion_energy", {}).get("m", 1.0)
+            else:
+                m = 1.0  # Default value
+        
+        # Calculate total cell density from current phi_hat
+        phi_T = np.sum(self.field_manager.phi_hat, axis=0)
+        
+        # Calculate total free energy
+        return self.calculate_total_free_energy(phi_T, self.dx, m)

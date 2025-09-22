@@ -24,6 +24,11 @@ from src.growkit.PhysicsEngine.Nutrient.NutrientField import NutrientField
 from src.growkit.ProductionEngine.SourceConstructor import SourceConstructor
 from src.growkit.Integrator.RK4Integrator import RK4Integrator, AdaptiveRK4Integrator
 from src.growkit.Integrator.AdaptiveGridIntegrator import AdaptiveGridRK4Integrator
+from src.growkit.Integrator.ForwardEulerIntegrator import (
+    ForwardEulerIntegrator, 
+    AdaptiveForwardEulerIntegrator, 
+    ImprovedEulerIntegrator
+)
 
 
 class Profiler:
@@ -136,21 +141,39 @@ class TumorGrowthSimulator:
         # Initialize integrator
         dt = self.cfg["time"]["dt"]
         integrator_config = self.cfg.get("integrator", {})
+        integrator_type = integrator_config.get("type", "rk4")
         
-        if integrator_config.get("type") == "adaptive_grid":
-            # Use adaptive grid integrator
+        if integrator_type == "adaptive_grid":
+            # Use adaptive grid RK4 integrator
             padding = integrator_config.get("padding", 5)
             threshold = integrator_config.get("threshold", 1e-6)
             min_sub_grid_size = integrator_config.get("min_sub_grid_size", 10)
             self.integrator = AdaptiveGridRK4Integrator(dt, padding, threshold, min_sub_grid_size)
-        elif integrator_config.get("adaptive", False):
-            # Use adaptive time step integrator
+        elif integrator_type == "rk4_adaptive" or integrator_config.get("adaptive", False):
+            # Use adaptive time step RK4 integrator
             tolerance = integrator_config.get("tolerance", 1e-6)
             min_dt = integrator_config.get("min_dt", 1e-8)
             max_dt = integrator_config.get("max_dt", 1e-2)
             self.integrator = AdaptiveRK4Integrator(dt, tolerance, min_dt, max_dt)
+        elif integrator_type == "forward_euler":
+            # Use basic Forward Euler integrator
+            self.integrator = ForwardEulerIntegrator(dt)
+        elif integrator_type == "forward_euler_adaptive":
+            # Use adaptive Forward Euler integrator
+            tolerance = integrator_config.get("tolerance", 0.1)
+            min_dt = integrator_config.get("min_dt", 1e-8)
+            max_dt = integrator_config.get("max_dt", 1e-2)
+            safety_factor = integrator_config.get("safety_factor", 0.8)
+            self.integrator = AdaptiveForwardEulerIntegrator(dt, tolerance, min_dt, max_dt, safety_factor)
+        elif integrator_type == "improved_euler":
+            # Use Improved Euler (Heun's method) integrator
+            self.integrator = ImprovedEulerIntegrator(dt)
+        elif integrator_type == "rk4":
+            # Use standard RK4 integrator (default)
+            self.integrator = RK4Integrator(dt)
         else:
-            # Use standard RK4 integrator
+            # Default to RK4 if unknown type
+            print(f"Warning: Unknown integrator type '{integrator_type}', defaulting to RK4")
             self.integrator = RK4Integrator(dt)
         
         # Simulation parameters

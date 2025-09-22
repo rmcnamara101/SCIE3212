@@ -52,12 +52,13 @@ def compute_mass_fluxes_numba(phi_hat, phi_T, dx, energy_deriv, M_matrix):
         Jx_base = -mobility * grad_energy_x
         Jy_base = -mobility * grad_energy_y
         Jz_base = -mobility * grad_energy_z
-        
+
         # Gate mass flux by local population presence to prevent flux in voids
         # This ensures J_i = 0 where φ_i = 0, preventing mass creation in empty regions
-        J_hat[i, 0] = phi_hat[i] * Jx_base
-        J_hat[i, 1] = phi_hat[i] * Jy_base
-        J_hat[i, 2] = phi_hat[i] * Jz_base
+        J_hat[i, 0] = Jx_base * phi_hat[i]
+        J_hat[i, 1] = Jy_base * phi_hat[i]
+        J_hat[i, 2] = Jz_base * phi_hat[i]
+    
     
     # Sanitize any NaNs/Infs that may have arisen numerically
     J_hat = np.nan_to_num(J_hat, nan=0.0, posinf=0.0, neginf=0.0)
