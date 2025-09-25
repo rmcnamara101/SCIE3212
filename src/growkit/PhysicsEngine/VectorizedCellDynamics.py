@@ -143,11 +143,7 @@ class VectorizedCellDynamics:
         
         # Compute solid velocity
         ux, uy, uz = self.compute_solid_velocity(phi_hat, nutrient_field, dx)
-        # Pure-adhesion (mass-flux-only) run: disable advection by zeroing velocity
-        ux = np.zeros_like(ux)
-        uy = np.zeros_like(uy)
-        uz = np.zeros_like(uz)
-        
+
         # Compute mass fluxes (pass precomputed energy derivative)
         J_hat = self.compute_mass_fluxes(phi_hat, dx, energy_deriv)
         

@@ -6,19 +6,19 @@ simulation:
 
 domain:
   shape: 100 # integer defining the number of grid points in each dimension
-  dx: 1000 # float defining the spacing of the grid
+  dx: 100 # float defining the spacing of the grid
 
 time:
   steps: 50 # integer defining the number of steps to run the simulation for
-  dt: 5 # float defining the time step
+  dt: 0.1 # float defining the time step
 
 populations:
   Stem:
     label: Stem Cells
     color: Green
     dynamics:
-      lambda: 0 # float
-      mu: 0 # float
+      lambda: 10 # float
+      mu: 1 # float
       mobility: 10 # float
       nutrient_threshold: 0.5 # float
       nutrient_consumption: 0.1 # float
@@ -31,8 +31,8 @@ populations:
     label: Tumour Cells
     color: Green
     dynamics:
-      lambda: 0 # float
-      mu: 0 # float
+      lambda: 10 # float
+      mu: 1 # float
       mobility: 10 # float
       nutrient_threshold: 0.5 # float
       nutrient_consumption: 0.1 # float
@@ -62,8 +62,8 @@ nutrient:
 
 physics:
   adhesion_energy:
-    m: 1000
-  disable_pressure: True
+    m: 10
+  disable_pressure: False
 
 initial_conditions:
   type: organoid_settling # Options: "spherical", "gaussian_random_blob", "multiple_spheres", "uniform", "custom"

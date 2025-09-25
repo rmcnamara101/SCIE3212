@@ -20,4 +20,4 @@ from src.growkit.Simulator import TumorGrowthSimulator
 cfg = proj / "configs" / "csc-t-n.yaml"
 simulator = TumorGrowthSimulator(str(cfg))
 
-simulator.run_and_save_simulation(total_steps=100, save_interval=10, save_physics_fields=True, output_dir=output_dir)
+simulator.run_and_save_simulation(total_steps=6, save_interval=1, save_physics_fields=True, output_dir=output_dir)
