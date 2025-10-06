@@ -1178,7 +1178,13 @@ class PhysicsFieldsPlotter:
         Returns:
             total_energy: Total free energy integrated over the domain
         """
-        from src.growkit.MathEngine.Operators import isotropic_laplacian
+        try:
+            from src.growkit.MathEngine.Operators import isotropic_laplacian
+            use_numba = True
+        except ImportError:
+            # Fallback to scipy for GUI usage (no Numba compilation)
+            from scipy.ndimage import laplace
+            use_numba = False
         
         # Ensure float64 for stability
         phi_T = phi_T.astype(np.float64, copy=False)
@@ -1187,7 +1193,11 @@ class PhysicsFieldsPlotter:
         f_phi = 0.5 * phi_T * (1 - phi_T) * (2 * phi_T - 1)
         
         # Compute Laplacian
-        laplace_phi = isotropic_laplacian(phi_T, dx)
+        if use_numba:
+            laplace_phi = isotropic_laplacian(phi_T, dx)
+        else:
+            # Use scipy's laplacian as fallback
+            laplace_phi = laplace(phi_T) / (dx ** 2)
         
         # Compute energy density: m * (f(φ) - 0.01 * ∇²φ)
         energy_density = m * (f_phi - 0.01 * laplace_phi)

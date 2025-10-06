@@ -241,7 +241,7 @@ def _isotropic_upwind_divergence(ux, uy, uz, phi, dx):
     # Return -∇·(u φ) for conservative advection
     # Ensure divergence is zero wherever phi is zero (no mass creation in voids)
     result = -div
-    result = np.where(phi < 1e-6, 0.0, result)
+    result = np.where(phi < 1e-9, 0.0, result)
     return result
 
 
@@ -281,7 +281,7 @@ def compute_cell_dynamics_numba(phi_hat, ux, uy, uz, J_hat, A_hat, dx):
         dphi_hat[i] = advection + mass_flux + source_term
         
         # Apply conservative clipping to prevent unphysical values
-        dphi_hat[i] = np.clip(dphi_hat[i], -1.0, 1.0)
+        dphi_hat[i] = dphi_hat[i]
         
     
     return dphi_hat
