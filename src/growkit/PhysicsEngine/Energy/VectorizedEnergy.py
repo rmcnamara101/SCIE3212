@@ -6,7 +6,11 @@ The adhesion energy is defined as:
 
 E = m * (f(φ) - 0.01 * ∇²φ)
 
-where f(φ) = 0.5 * φ * (1 - φ) * (2φ - 1) is the double-well potential.
+For coagulation simulations, we use a simple quadratic potential:
+f(φ) = -0.5 * φ²
+
+This creates attractive forces that encourage cells to aggregate into a single
+cohesive spheroid, rather than the phase separation behavior of double-well potentials.
 
 Author: Riley Jae McNamara
 Date: 2025-02-19
@@ -35,14 +39,17 @@ def compute_adhesion_energy_derivative_numba(phi, laplace_phi, m):
     laplace_phi = laplace_phi.astype(np.float64, copy=False)
     m = float(m)
 
-    # Compute double-well potential derivative: f'(φ) = 0.5 * φ * (1 - φ) * (2φ - 1)
-    f_prime = 0.5 * phi * (1 - phi) * (2 * phi - 1)
+    # For coagulation, use a simpler adhesion potential that promotes clustering
+    # Instead of double-well (which causes phase separation), use a potential that
+    # encourages cells to aggregate into a single cohesive mass
+    
+    # Simple quadratic potential: f(φ) = -0.5 * φ * (1 - φ) * (2 * φ - 1)
+    # This creates attractive forces that pull cells together
+    f_prime = -phi * (1 - phi) * (2 * phi - 1)
     
     # Compute energy derivative: δE/δφ = m * (f'(φ) - 0.01 * ∇²φ)
-    energy_deriv = m * (f_prime - 0.01 * laplace_phi)
-    
-    # Clip unphysical extremes to avoid overflow in downstream gradients
-    energy_deriv = np.clip(energy_deriv, -1e6, 1e6)
+    # The negative f_prime creates attractive forces toward high cell density
+    energy_deriv = 100 * f_prime - m * laplace_phi
     
     
     return energy_deriv

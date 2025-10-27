@@ -309,18 +309,29 @@ class TumorGrowthSimulator:
             self.profiler.end_timer("physics_fields_update")
             print(f"Physics fields updated")
             
-            # Normalize volume fractions after each time step
-            self.profiler.start_timer("volume_fraction_normalization")
-            phi_hat_normalized = self.field_manager.normalize_volume_fractions(add_host_field=False)
-            self.profiler.end_timer("volume_fraction_normalization")
-            print(f"Volume fraction normalization completed")
-            
-            # Update fields with normalized values (only if normalization was needed)
-            if phi_hat_normalized is not None:
-                self.profiler.start_timer("field_update")
-                self.field_manager.set_cell_fields(phi_hat_normalized, nutrient_field_new)
-                self.profiler.end_timer("field_update")
-                print(f"Fields updated with normalized values")
+            # Only normalize volume fractions if pressure is enabled (to prevent mass loss during coagulation)
+            disable_pressure = self.cfg.get("physics", {}).get("disable_pressure", False)
+            if not disable_pressure:
+                # Normalize volume fractions after each time step
+                self.profiler.start_timer("volume_fraction_normalization")
+                phi_hat_normalized = self.field_manager.normalize_volume_fractions(add_host_field=False)
+                self.profiler.end_timer("volume_fraction_normalization")
+                print(f"Volume fraction normalization completed")
+                
+                # Update fields with normalized values (only if normalization was needed)
+                if phi_hat_normalized is not None:
+                    self.profiler.start_timer("field_update")
+                    self.field_manager.set_cell_fields(phi_hat_normalized, nutrient_field_new)
+                    self.profiler.end_timer("field_update")
+                    print(f"Fields updated with normalized values")
+            else:
+                # When pressure is disabled, only clip to prevent negative values but don't normalize
+                # This preserves mass conservation during coagulation
+                self.profiler.start_timer("volume_fraction_clipping")
+                phi_hat_clipped = np.clip(phi_hat_new, 0.0, None)  # Only clip negative values
+                self.field_manager.set_cell_fields(phi_hat_clipped, nutrient_field_new)
+                self.profiler.end_timer("volume_fraction_clipping")
+                print(f"Volume fraction clipping completed (no normalization to preserve mass)")
         
         # Update time
         self.time += dt_used
@@ -397,12 +408,20 @@ class TumorGrowthSimulator:
             # Update physics fields (this also updates the field manager's stored fields)
             self.field_manager.update_physics_fields(phi_hat_new, nutrient_field_new, self.cell_dynamics, source_terms)
             
-            # Normalize volume fractions after each time step
-            phi_hat_normalized = self.field_manager.normalize_volume_fractions(add_host_field=True)
-            
-            # Update fields with normalized values (only if normalization was needed)
-            if phi_hat_normalized is not None:
-                self.field_manager.set_cell_fields(phi_hat_normalized, nutrient_field_new)
+            # Only normalize volume fractions if pressure is enabled (to prevent mass loss during coagulation)
+            disable_pressure = self.cfg.get("physics", {}).get("disable_pressure", False)
+            if not disable_pressure:
+                # Normalize volume fractions after each time step
+                phi_hat_normalized = self.field_manager.normalize_volume_fractions(add_host_field=True)
+                
+                # Update fields with normalized values (only if normalization was needed)
+                if phi_hat_normalized is not None:
+                    self.field_manager.set_cell_fields(phi_hat_normalized, nutrient_field_new)
+            else:
+                # When pressure is disabled, use conservative host field updates
+                # This preserves mass conservation during coagulation while maintaining volume constraints
+                phi_hat_clipped = np.clip(phi_hat_new, 0.0, None)  # Only clip negative values
+                self.field_manager.set_cell_fields(phi_hat_clipped, nutrient_field_new)
         
         # Update time
         self.time += dt_used
@@ -419,6 +438,13 @@ class TumorGrowthSimulator:
         is_valid, max_deviation, mean_deviation = self.field_manager.check_volume_fraction_constraints()
         if not is_valid:  # Warn if there are negative values or overflow
             print(f"Warning: Volume fraction constraint violation - Max deviation: {max_deviation:.6f}, Mean deviation: {mean_deviation:.6f}")
+        
+        # Check mass conservation in compaction mode
+        disable_pressure = self.cfg.get("physics", {}).get("disable_pressure", False)
+        if disable_pressure:
+            is_conserved, mass_change, relative_change = self.field_manager.check_mass_conservation()
+            if not is_conserved:
+                print(f"Warning: Mass conservation violated - mass_change: {mass_change:.2e}, relative_change: {relative_change:.2f}%")
         
         return success
     

@@ -201,9 +201,10 @@ def isotropic_gradient_components(field: np.ndarray, dx: float):
     gx[1:-1, :, 1:-1] += 0.075 * (field[2:, :, 2:] - field[:-2, :, :-2]) / (2*dx*np.sqrt(2))
     gx[1:-1, :, 1:-1] += 0.075 * (field[2:, :, :-2] - field[:-2, :, 2:]) / (2*dx*np.sqrt(2))
     
-    # Natural boundary handling
-    gx[0, :, :] = (field[1, :, :] - field[0, :, :]) / dx
-    gx[-1, :, :] = (field[-1, :, :] - field[-2, :, :]) / dx
+    # Consistent boundary handling to prevent grid artifacts
+    # Use the same 0.7 weight as interior to maintain consistency
+    gx[0, :, :] = 0.7 * (field[1, :, :] - field[0, :, :]) / dx
+    gx[-1, :, :] = 0.7 * (field[-1, :, :] - field[-2, :, :]) / dx
     
     # Y component using isotropic approach
     # Main y-direction gradient (70% weight)
@@ -218,9 +219,9 @@ def isotropic_gradient_components(field: np.ndarray, dx: float):
     gy[:, 1:-1, 1:-1] += 0.075 * (field[:, 2:, 2:] - field[:, :-2, :-2]) / (2*dx*np.sqrt(2))
     gy[:, 1:-1, 1:-1] += 0.075 * (field[:, 2:, :-2] - field[:, :-2, 2:]) / (2*dx*np.sqrt(2))
     
-    # Natural boundary handling
-    gy[:, 0, :] = (field[:, 1, :] - field[:, 0, :]) / dx
-    gy[:, -1, :] = (field[:, -1, :] - field[:, -2, :]) / dx
+    # Consistent boundary handling for Y
+    gy[:, 0, :] = 0.7 * (field[:, 1, :] - field[:, 0, :]) / dx
+    gy[:, -1, :] = 0.7 * (field[:, -1, :] - field[:, -2, :]) / dx
     
     # Z component using isotropic approach
     # Main z-direction gradient (70% weight)
@@ -235,9 +236,9 @@ def isotropic_gradient_components(field: np.ndarray, dx: float):
     gz[:, 1:-1, 1:-1] += 0.075 * (field[:, 2:, 2:] - field[:, :-2, :-2]) / (2*dx*np.sqrt(2))
     gz[:, 1:-1, 1:-1] += 0.075 * (field[:, :-2, 2:] - field[:, 2:, :-2]) / (2*dx*np.sqrt(2))
     
-    # Natural boundary handling
-    gz[:, :, 0] = (field[:, :, 1] - field[:, :, 0]) / dx
-    gz[:, :, -1] = (field[:, :, -1] - field[:, :, -2]) / dx
+    # Consistent boundary handling for Z
+    gz[:, :, 0] = 0.7 * (field[:, :, 1] - field[:, :, 0]) / dx
+    gz[:, :, -1] = 0.7 * (field[:, :, -1] - field[:, :, -2]) / dx
 
     return gx, gy, gz
 

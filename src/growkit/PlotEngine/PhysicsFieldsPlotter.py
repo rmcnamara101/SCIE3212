@@ -60,7 +60,7 @@ class PhysicsFieldsPlotter:
     def plot_pressure_field(self, step=0, z_slice=None, cmap="viridis", alpha=0.8, 
                            output_dir=None, save_plot=False, show_plot=True,
                            add_boundary_contours=False, tumor_boundary_level=0.5,
-                           boundary_color='darkblue', tumor_boundary_color='black'):
+                           boundary_color='darkblue', tumor_boundary_color='black', center_x=None, center_y=None, zoom_factor=1.0):
         """
         Plot pressure field as 2D heatmap.
         
@@ -76,24 +76,38 @@ class PhysicsFieldsPlotter:
             tumor_boundary_level: Density level for tumor boundary contour (default 0.5)
             boundary_color: Color for boundary region contour (default 'darkblue')
             tumor_boundary_color: Color for tumor boundary contour (default 'black')
+            zoom_factor: Zoom factor (1.0 = no zoom)
         """
         nx, ny, nz = self.grid
         if z_slice is None:
             z_slice = nz // 2
         
-        # Create coordinate grids
-        x = np.arange(nx) * self.dx
-        y = np.arange(ny) * self.dx
+        # Set default center coordinates if not provided
+        if center_x is None:
+            center_x = nx // 2
+        if center_y is None:
+            center_y = ny // 2
+        
+        # Convert to integers for slice indices
+        center_x = int(center_x)
+        center_y = int(center_y)
+        
+        # Get full pressure field
         pressure_slice = self.field_manager.pressure[:, :, z_slice]
         
         # Handle NaN and infinite values
         pressure_slice = np.nan_to_num(pressure_slice, nan=0.0, posinf=0.0, neginf=0.0)
         
+        # Create coordinate grids for the full domain
+        x_full = np.arange(nx) * self.dx
+        y_full = np.arange(ny) * self.dx
+        
         # Create plot
         fig = plt.figure(figsize=(10, 8))
         ax = fig.add_subplot(111)
         
-        im = ax.imshow(pressure_slice, extent=[x[0], x[-1], y[0], y[-1]], 
+        # Plot the full field
+        im = ax.imshow(pressure_slice, extent=[x_full[0], x_full[-1], y_full[0], y_full[-1]], 
                       origin='lower', cmap=cmap, aspect='equal')
         
         # Add tumor boundary contours if requested
@@ -102,9 +116,32 @@ class PhysicsFieldsPlotter:
             tumor_density = np.sum(self.field_manager.phi_hat, axis=0)[:, :, z_slice]
             ax.contour(tumor_density, levels=[tumor_boundary_level], 
                       colors=tumor_boundary_color, linewidths=3, alpha=0.9,
-                      extent=[x[0], x[-1], y[0], y[-1]], origin='lower')
+                      extent=[x_full[0], x_full[-1], y_full[0], y_full[-1]], origin='lower')
         
-        ax.set_title(f'Pressure Field (z={z_slice})')
+        # Apply zoom if requested
+        if zoom_factor > 1.0:
+            # Calculate zoom window size
+            window_size = min(nx, ny) // zoom_factor
+            half_window = window_size // 2
+            
+            # Calculate window boundaries in physical coordinates
+            center_x_phys = center_x * self.dx
+            center_y_phys = center_y * self.dx
+            window_size_phys = window_size * self.dx
+            half_window_phys = window_size_phys / 2
+            
+            x_min = center_x_phys - half_window_phys
+            x_max = center_x_phys + half_window_phys
+            y_min = center_y_phys - half_window_phys
+            y_max = center_y_phys + half_window_phys
+            
+            # Set axis limits to zoom in
+            ax.set_xlim(x_min, x_max)
+            ax.set_ylim(y_min, y_max)
+            ax.set_title(f'Pressure Field (z={z_slice}) - Zoomed View (factor: {zoom_factor:.1f})')
+        else:
+            ax.set_title(f'Pressure Field (z={z_slice})')
+        
         ax.set_xlabel('X')
         ax.set_ylabel('Y')
         fig.colorbar(im, ax=ax, label='Pressure')
@@ -400,77 +437,90 @@ class PhysicsFieldsPlotter:
         center_x = int(center_x)
         center_y = int(center_y)
         
-        # Calculate zoom window size
-        window_size = min(nx, ny) // zoom_factor
-        half_window = window_size // 2
+        # Get full flux field
+        flux_x_full = self.field_manager.mass_flux[population_idx, 0, :, :, z_slice]
+        flux_y_full = self.field_manager.mass_flux[population_idx, 1, :, :, z_slice]
         
-        # Calculate window boundaries
-        x_start = int(max(0, center_x - half_window))
-        x_end = int(min(nx, center_x + half_window))
-        y_start = int(max(0, center_y - half_window))
-        y_end = int(min(ny, center_y + half_window))
+        # Create coordinate grids for the full domain
+        x_full = np.arange(nx) * self.dx
+        y_full = np.arange(ny) * self.dx
+        X_full, Y_full = np.meshgrid(x_full, y_full, indexing='ij')
         
-        # Create coordinate grids for zoomed region
-        x_region = np.arange(x_start, x_end) * self.dx
-        y_region = np.arange(y_start, y_end) * self.dx
-        X_region, Y_region = np.meshgrid(x_region, y_region, indexing='ij')
-        
-        # Extract mass flux components for zoomed region
-        flux_x_slice = self.field_manager.mass_flux[population_idx, 0, x_start:x_end, y_start:y_end, z_slice]
-        flux_y_slice = self.field_manager.mass_flux[population_idx, 1, x_start:x_end, y_start:y_end, z_slice]
-        
-        # Sample for visualization - adjust skip based on zoom factor and arrow density
-        # For arrow_density_factor > 1, we want to sample more frequently (smaller skip)
-        # For arrow_density_factor < 1, we want to sample less frequently (larger skip)
-        # Use a more robust calculation that handles extreme values better
-        base_skip = skip / zoom_factor
+        # Calculate effective skip based on zoom and density factors
+        # Higher arrow_density_factor = more arrows (smaller skip)
+        base_skip = max(1, int(skip / zoom_factor))
         effective_skip = max(1, int(base_skip / arrow_density_factor))
-        x_skip = x_region[::effective_skip]
-        y_skip = y_region[::effective_skip]
-        X_skip, Y_skip = np.meshgrid(x_skip, y_skip, indexing='ij')
-        flux_x_skip = flux_x_slice[::effective_skip, ::effective_skip]
-        flux_y_skip = flux_y_slice[::effective_skip, ::effective_skip]
         
-        # Normalize vectors
+        # Sample the full field
+        x_indices = np.arange(0, nx, effective_skip)
+        y_indices = np.arange(0, ny, effective_skip)
+        
+        # Create sampling meshgrid
+        X_indices, Y_indices = np.meshgrid(x_indices, y_indices, indexing='ij')
+        
+        # Sample coordinates and flux data
+        X_skip = X_full[x_indices[:, None], y_indices]
+        Y_skip = Y_full[x_indices[:, None], y_indices]
+        flux_x_skip = flux_x_full[x_indices[:, None], y_indices]
+        flux_y_skip = flux_y_full[x_indices[:, None], y_indices]
+        
+        # Calculate magnitudes for coloring
         flux_magnitude = np.sqrt(flux_x_skip**2 + flux_y_skip**2)
-        max_flux_mag = np.max(flux_magnitude) if np.max(flux_magnitude) > 0 else 1.0
-        flux_x_norm = flux_x_skip / max_flux_mag
-        flux_y_norm = flux_y_skip / max_flux_mag
         
         # Create plot
         fig = plt.figure(figsize=(10, 8))
         ax = fig.add_subplot(111)
         
-        quiv = ax.quiver(X_skip, Y_skip, flux_x_norm, flux_y_norm, flux_magnitude, 
+        # Plot quiver
+        quiv = ax.quiver(X_skip, Y_skip, flux_x_skip, flux_y_skip, flux_magnitude, 
                         cmap=cmap, scale=scale, width=width)
         
         # Add tumor boundary contours if requested
         if add_boundary_contours:
-            # Get total tumor density for boundary detection (zoomed region)
-            tumor_density = np.sum(self.field_manager.phi_hat, axis=0)[x_start:x_end, y_start:y_end, z_slice]
+            # Get total tumor density for boundary detection
+            tumor_density = np.sum(self.field_manager.phi_hat, axis=0)[:, :, z_slice]
             
             # Apply contour shift by adjusting the coordinate grids
-            X_region_shifted = X_region + contour_shift_x * self.dx
-            Y_region_shifted = Y_region + contour_shift_y * self.dx
+            X_shifted = X_full + contour_shift_x * self.dx
+            Y_shifted = Y_full + contour_shift_y * self.dx
             
             # Add tumor boundary contour using the shifted coordinate system
-            ax.contour(X_region_shifted, Y_region_shifted, tumor_density, levels=[tumor_boundary_level], 
+            ax.contour(X_shifted, Y_shifted, tumor_density, levels=[tumor_boundary_level], 
                       colors=tumor_boundary_color, linewidths=3, alpha=0.9)
         
-        # Add center point marker if zoomed
+        # Apply zoom if requested
         if zoom_factor > 1.0:
-            center_x_coord = center_x * self.dx
-            center_y_coord = center_y * self.dx
-            ax.plot(center_x_coord, center_y_coord, 'k+', markersize=10, markeredgewidth=2, 
-                   label=f'Center: ({center_x_coord:.2f}, {center_y_coord:.2f})')
+            # Calculate zoom window in physical coordinates
+            center_x_phys = center_x * self.dx
+            center_y_phys = center_y * self.dx
+            window_size_phys = min(nx, ny) * self.dx / zoom_factor
+            half_window_phys = window_size_phys / 2
+            
+            x_min = center_x_phys - half_window_phys
+            x_max = center_x_phys + half_window_phys
+            y_min = center_y_phys - half_window_phys
+            y_max = center_y_phys + half_window_phys
+            
+            # Set axis limits to zoom in
+            ax.set_xlim(x_min, x_max)
+            ax.set_ylim(y_min, y_max)
+            
+            # Add center point marker
+            ax.plot(center_x_phys, center_y_phys, 'k+', markersize=10, markeredgewidth=2, 
+                   label=f'Center: ({center_x_phys:.2f}, {center_y_phys:.2f})')
             ax.legend()
+            
             ax.set_title(f'Mass Flux - {self.labels[population_idx]} (z={z_slice}) - Zoomed View')
         else:
             ax.set_title(f'Mass Flux - {self.labels[population_idx]} (z={z_slice})')
+        
         ax.set_xlabel('X')
         ax.set_ylabel('Y')
         ax.set_aspect('equal')
-        fig.colorbar(quiv, ax=ax)
+        
+        # Add colorbar
+        cbar = fig.colorbar(quiv, ax=ax)
+        cbar.set_label('Flux Magnitude')
         
         plt.tight_layout()
         
@@ -490,7 +540,7 @@ class PhysicsFieldsPlotter:
                           add_contours=False, contour_population_idx=0,
                           contour_levels=[0.1, 0.3, 0.5],
                           contour_colors=['red', 'orange', 'yellow'],
-                          contour_linewidths=[2, 1.5, 1]):
+                          contour_linewidths=[2, 1.5, 1], center_x=None, center_y=None, zoom_factor=1.0):
         """
         Plot total tumor density field.
         
@@ -501,17 +551,45 @@ class PhysicsFieldsPlotter:
             output_dir: Directory to save plot
             save_plot: Whether to save the plot
             show_plot: Whether to display the plot
+            add_contours: Whether to add tumor contours
+            contour_population_idx: Index of population to plot contours for
+            contour_levels: List of density levels for contours
+            contour_colors: List of colors for each contour level
+            contour_linewidths: List of line widths for each contour level
+            center_x: Center x coordinate for zoom
+            center_y: Center y coordinate for zoom
+            zoom_factor: Zoom factor (1.0 = no zoom)
         """
         nx, ny, nz = self.grid
         if z_slice is None:
             z_slice = nz // 2
         
+        # Set default center coordinates if not provided
+        if center_x is None:
+            center_x = nx // 2
+        if center_y is None:
+            center_y = ny // 2
+        
+        # Convert to integers for slice indices
+        center_x = int(center_x)
+        center_y = int(center_y)
+        
+        # Calculate zoom window size
+        window_size = min(nx, ny) // zoom_factor
+        half_window = window_size // 2
+        
+        # Calculate window boundaries
+        x_start = int(max(0, center_x - half_window))
+        x_end = int(min(nx, center_x + half_window))
+        y_start = int(max(0, center_y - half_window))
+        y_end = int(min(ny, center_y + half_window))
+        
         # Create coordinate grids
-        x = np.arange(nx) * self.dx
-        y = np.arange(ny) * self.dx
+        x = np.arange(x_start, x_end) * self.dx
+        y = np.arange(y_start, y_end) * self.dx
         
         # Calculate total tumor density (sum of all populations)
-        total_density = np.sum(self.field_manager.phi_hat, axis=0)[:, :, z_slice]
+        total_density = np.sum(self.field_manager.phi_hat, axis=0)[x_start:x_end, y_start:y_end, z_slice]
         
         # Create plot
         fig = plt.figure(figsize=(10, 8))
@@ -520,29 +598,17 @@ class PhysicsFieldsPlotter:
         im = ax.imshow(total_density, extent=[x[0], x[-1], y[0], y[-1]], 
                       origin='lower', cmap=cmap, aspect='equal')
         
-        # Add tumor contours if requested
-        if add_contours:
-            self._add_tumor_contours(ax, contour_population_idx, z_slice, 
-                                   contour_levels, contour_colors, contour_linewidths)
-        
         ax.set_title(f'Total Tumor Density (z={z_slice})')
         ax.set_xlabel('X')
         ax.set_ylabel('Y')
-        fig.colorbar(im, ax=ax, label='Tumor Density')
-        
-        plt.tight_layout()
-        
-        if save_plot and output_dir:
-            os.makedirs(output_dir, exist_ok=True)
-            filename = f'tumor_density_step_{step:06d}.png'
-            plt.savefig(os.path.join(output_dir, filename), dpi=300, bbox_inches='tight')
-            print(f"Tumor density plot saved to {output_dir}/{filename}")
+        fig.colorbar(im, ax=ax, label='Tumor Density')   
         
         if show_plot:
             plt.show()
         else:
             plt.close()
-        
+
+
     def plot_tumor_boundary_contour(self, population_idx=0, step=0, z_slice=None, 
                                   contour_levels=[0.1, 0.3, 0.5], contour_colors=['red', 'orange', 'yellow'],
                                   contour_linewidths=[2, 1.5, 1], background_cmap="Blues", 
@@ -666,7 +732,7 @@ class PhysicsFieldsPlotter:
                                      cmap="viridis", alpha=0.8, output_dir=None, 
                                      save_plot=False, show_plot=True,
                                      add_boundary_contours=False, tumor_boundary_level=0.5,
-                                     boundary_color='darkblue', tumor_boundary_color='black'):
+                                     boundary_color='darkblue', tumor_boundary_color='black', center_x=None, center_y=None, zoom_factor=1.0):
         """
         Plot pressure field from saved simulation data.
         
@@ -683,6 +749,7 @@ class PhysicsFieldsPlotter:
             tumor_boundary_level: Density level for tumor boundary contour
             boundary_color: Color for boundary region contour
             tumor_boundary_color: Color for tumor boundary contour
+            zoom_factor: Zoom factor (1.0 = no zoom)
         """
         # Get step information
         step = simulation_data["metadata"]["saved_steps"][step_idx]
@@ -700,7 +767,9 @@ class PhysicsFieldsPlotter:
             add_boundary_contours=add_boundary_contours, 
             tumor_boundary_level=tumor_boundary_level,
             boundary_color=boundary_color, 
-            tumor_boundary_color=tumor_boundary_color
+            tumor_boundary_color=tumor_boundary_color,
+            zoom_factor=zoom_factor,
+            center_x=center_x, center_y=center_y
         )
     
     def plot_velocity_field_from_saved(self, simulation_data, step_idx=0, z_slice=None, 
@@ -940,7 +1009,8 @@ class PhysicsFieldsPlotter:
     def plot_source_terms(self, population_idx=0, step=0, z_slice=None, cmap="RdBu_r", 
                          alpha=0.8, output_dir=None, save_plot=False, show_plot=True,
                          add_boundary_contours=False, tumor_boundary_level=0.5,
-                         boundary_color='darkblue', tumor_boundary_color='black'):
+                         boundary_color='darkblue', tumor_boundary_color='black',
+                         center_x=None, center_y=None, zoom_factor=1.0):
         """
         Plot source terms (growth/death) for a specific population as 2D color map.
         
@@ -957,6 +1027,9 @@ class PhysicsFieldsPlotter:
             tumor_boundary_level: Density level for tumor boundary contour
             boundary_color: Color for boundary region contour
             tumor_boundary_color: Color for tumor boundary contour
+            center_x: Center x coordinate for zoom
+            center_y: Center y coordinate for zoom
+            zoom_factor: Zoom factor (1.0 = no zoom)
         """
         if population_idx >= self.M:
             print(f"Warning: Population index {population_idx} out of range (0-{self.M-1})")
@@ -966,10 +1039,30 @@ class PhysicsFieldsPlotter:
         if z_slice is None:
             z_slice = nz // 2
         
+        # Set default center coordinates if not provided
+        if center_x is None:
+            center_x = nx // 2
+        if center_y is None:
+            center_y = ny // 2
+        
+        # Convert to integers for slice indices
+        center_x = int(center_x)
+        center_y = int(center_y)
+        
+        # Calculate zoom window size
+        window_size = min(nx, ny) // zoom_factor
+        half_window = window_size // 2
+        
+        # Calculate window boundaries
+        x_start = int(max(0, center_x - half_window))
+        x_end = int(min(nx, center_x + half_window))
+        y_start = int(max(0, center_y - half_window))
+        y_end = int(min(ny, center_y + half_window))
+        
         # Create coordinate grids
-        x = np.arange(nx) * self.dx
-        y = np.arange(ny) * self.dx
-        source_slice = self.field_manager.source_terms[population_idx, :, :, z_slice]
+        x = np.arange(x_start, x_end) * self.dx
+        y = np.arange(y_start, y_end) * self.dx
+        source_slice = self.field_manager.source_terms[population_idx, x_start:x_end, y_start:y_end, z_slice]
         
         # Handle NaN and infinite values
         source_slice = np.nan_to_num(source_slice, nan=0.0, posinf=0.0, neginf=0.0)
@@ -983,7 +1076,7 @@ class PhysicsFieldsPlotter:
         vmin = -vmax if vmax > 0 else -1.0
         
         im = ax.imshow(source_slice, extent=[x[0], x[-1], y[0], y[-1]], 
-                      origin='lower', cmap=cmap, aspect='equal', vmin=vmin, vmax=vmax)
+                      origin='lower', cmap=cmap, aspect='equal')
         
         # Add tumor boundary contours if requested
         if add_boundary_contours:
@@ -1016,7 +1109,7 @@ class PhysicsFieldsPlotter:
     def plot_nutrient_field(self, step=0, z_slice=None, cmap="viridis", alpha=0.8, 
                            output_dir=None, save_plot=False, show_plot=True,
                            add_boundary_contours=False, tumor_boundary_level=0.5,
-                           boundary_color='darkblue', tumor_boundary_color='black'):
+                           boundary_color='darkblue', tumor_boundary_color='black', center_x=None, center_y=None, zoom_factor=1.0   ):
         """
         Plot nutrient field as 2D color map.
         
@@ -1032,15 +1125,38 @@ class PhysicsFieldsPlotter:
             tumor_boundary_level: Density level for tumor boundary contour
             boundary_color: Color for boundary region contour
             tumor_boundary_color: Color for tumor boundary contour
+            center_x: Center x coordinate for zoom
+            center_y: Center y coordinate for zoom
+            zoom_factor: Zoom factor (1.0 = no zoom)
         """
         nx, ny, nz = self.grid
         if z_slice is None:
             z_slice = nz // 2
         
+        # Set default center coordinates if not provided
+        if center_x is None:
+            center_x = nx // 2
+        if center_y is None:
+            center_y = ny // 2
+        
+        # Convert to integers for slice indices
+        center_x = int(center_x)
+        center_y = int(center_y)
+        
+        # Calculate zoom window size
+        window_size = min(nx, ny) // zoom_factor
+        half_window = window_size // 2
+        
+        # Calculate window boundaries
+        x_start = int(max(0, center_x - half_window))
+        x_end = int(min(nx, center_x + half_window))
+        y_start = int(max(0, center_y - half_window))
+        y_end = int(min(ny, center_y + half_window))
+        
         # Create coordinate grids
-        x = np.arange(nx) * self.dx
-        y = np.arange(ny) * self.dx
-        nutrient_slice = self.field_manager.nutrient_field[:, :, z_slice]
+        x = np.arange(x_start, x_end) * self.dx
+        y = np.arange(y_start, y_end) * self.dx
+        nutrient_slice = self.field_manager.nutrient_field[x_start:x_end, y_start:y_end, z_slice]
         
         # Handle NaN and infinite values
         nutrient_slice = np.nan_to_num(nutrient_slice, nan=0.0, posinf=0.0, neginf=0.0)
@@ -1055,7 +1171,7 @@ class PhysicsFieldsPlotter:
         # Add tumor boundary contours if requested
         if add_boundary_contours:
             # Use the first population for contours (usually the main tumor population)
-            tumor_density = self.field_manager.phi_hat[0, :, :, z_slice]
+            tumor_density = self.field_manager.phi_hat[0, x_start:x_end, y_start:y_end, z_slice]
             ax.contour(tumor_density, levels=[tumor_boundary_level], 
                       colors=tumor_boundary_color, linewidths=3, alpha=0.9,
                       extent=[x[0], x[-1], y[0], y[-1]], origin='lower')
@@ -1084,7 +1200,7 @@ class PhysicsFieldsPlotter:
                                    z_slice=None, cmap="RdBu_r", alpha=0.8, output_dir=None, 
                                    save_plot=False, show_plot=True, add_boundary_contours=False, 
                                    tumor_boundary_level=0.5, boundary_color='darkblue', 
-                                   tumor_boundary_color='black'):
+                                   tumor_boundary_color='black', center_x=None, center_y=None, zoom_factor=1.0):
         """
         Plot source terms from saved simulation data.
         
@@ -1119,14 +1235,15 @@ class PhysicsFieldsPlotter:
             add_boundary_contours=add_boundary_contours, 
             tumor_boundary_level=tumor_boundary_level,
             boundary_color=boundary_color, 
-            tumor_boundary_color=tumor_boundary_color
+            tumor_boundary_color=tumor_boundary_color,
+            center_x=center_x, center_y=center_y, zoom_factor=zoom_factor
         )
     
     def plot_nutrient_field_from_saved(self, simulation_data, step_idx=0, z_slice=None, 
                                      cmap="viridis", alpha=0.8, output_dir=None, 
                                      save_plot=False, show_plot=True, add_boundary_contours=False, 
                                      tumor_boundary_level=0.5, boundary_color='darkblue', 
-                                     tumor_boundary_color='black'):
+                                     tumor_boundary_color='black', center_x=None, center_y=None, zoom_factor=1.0):
         """
         Plot nutrient field from saved simulation data.
         
@@ -1158,7 +1275,8 @@ class PhysicsFieldsPlotter:
             step=step, z_slice=z_slice, cmap=cmap, alpha=alpha, output_dir=output_dir, 
             save_plot=save_plot, show_plot=show_plot, add_boundary_contours=add_boundary_contours,
             tumor_boundary_level=tumor_boundary_level, boundary_color=boundary_color,
-            tumor_boundary_color=tumor_boundary_color
+            tumor_boundary_color=tumor_boundary_color,
+            center_x=center_x, center_y=center_y, zoom_factor=zoom_factor
         )
     
     def calculate_total_free_energy(self, phi_T, dx, m):
@@ -1243,7 +1361,6 @@ class PhysicsFieldsPlotter:
             marker: Marker style for data points
             marker_size: Size of markers
         """
-        print("Calculating total free energy evolution...")
         
         # Get simulation metadata
         saved_steps = simulation_data["metadata"]["saved_steps"]
@@ -1274,7 +1391,6 @@ class PhysicsFieldsPlotter:
             total_energies.append(total_energy)
             valid_times.append(time)
             
-            print(f"Step {step} (t={time:.3f}): Total Free Energy = {total_energy:.6f}")
         
         # Create plot
         fig, ax = plt.subplots(figsize=figsize)
@@ -1314,15 +1430,6 @@ class PhysicsFieldsPlotter:
         else:
             plt.close()
         
-        return {
-            'times': valid_times,
-            'total_energies': total_energies,
-            'initial_energy': initial_energy,
-            'final_energy': final_energy,
-            'energy_change': energy_change,
-            'min_energy': min_energy,
-            'max_energy': max_energy
-        }
     
     def calculate_current_total_free_energy(self, m=None):
         """

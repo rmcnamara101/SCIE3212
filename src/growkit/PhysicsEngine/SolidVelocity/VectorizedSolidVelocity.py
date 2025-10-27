@@ -51,6 +51,18 @@ class VectorizedSolidVelocity:
             self.pressure_solver = None
             print("Pressure solver disabled - using adhesion-only mode")
         
+        # Initialize gravity and bowl potential parameters
+        physics_config = cfg.get("physics", {})
+        self.gravity_enabled = physics_config.get("gravity_enabled", False)
+        self.gravity_strength = physics_config.get("gravity_strength", 0.1)
+        self.bowl_potential_enabled = physics_config.get("bowl_potential_enabled", False)
+        self.bowl_potential_strength = physics_config.get("bowl_potential_strength", 0.05)
+        
+        # Get bowl center, default to domain center if not specified
+        domain_shape = cfg.get("domain", {}).get("shape", 100)
+        default_center = [domain_shape // 2, domain_shape // 2, domain_shape // 2]
+        self.bowl_center = physics_config.get("bowl_center", default_center)
+        
         # Cache for pressure solutions to avoid redundant solves during RK4
         self._pressure_cache = {}
     
@@ -80,6 +92,52 @@ class VectorizedSolidVelocity:
         ))
         
         return state_hash
+    
+    def _compute_gravity_velocity(self, shape):
+        """
+        Compute gravity velocity field (uniform downward force in -z direction).
+        
+        Args:
+            shape: Shape of the velocity field (nx, ny, nz)
+            
+        Returns:
+            ux, uy, uz: Velocity components (ux=0, uy=0, uz=-gravity_strength)
+        """
+        ux = np.zeros(shape, dtype=np.float32)
+        uy = np.zeros(shape, dtype=np.float32)
+        uz = np.full(shape, -self.gravity_strength, dtype=np.float32)
+        return ux, uy, uz
+    
+    def _compute_bowl_potential_velocity(self, shape, dx):
+        """
+        Compute bowl potential velocity (radial restoring force toward center).
+        
+        Args:
+            shape: Shape of the velocity field (nx, ny, nz)
+            dx: Grid spacing
+            
+        Returns:
+            ux, uy, uz: Velocity components pointing toward bowl center
+        """
+        nx, ny, nz = shape
+        
+        # Create coordinate grids
+        x = np.arange(nx) * dx
+        y = np.arange(ny) * dx
+        z = np.arange(nz) * dx
+        X, Y, Z = np.meshgrid(x, y, z, indexing='ij')
+        
+        # Compute displacement from bowl center (in physical units)
+        dx_field = X - self.bowl_center[0] * dx
+        dy_field = Y - self.bowl_center[1] * dx
+        dz_field = Z - self.bowl_center[2] * dx
+        
+        # Velocity = -k * displacement (restoring force toward center)
+        ux = -self.bowl_potential_strength * dx_field
+        uy = -self.bowl_potential_strength * dy_field
+        uz = -self.bowl_potential_strength * dz_field
+        
+        return ux, uy, uz
     
     def compute_solid_velocity(self, phi_hat, nutrient_field, dx, energy_deriv=None):
         """
@@ -113,6 +171,27 @@ class VectorizedSolidVelocity:
             ux = -energy_deriv * grad_C_x
             uy = -energy_deriv * grad_C_y
             uz = -energy_deriv * grad_C_z
+            
+            # Add gravity contribution if enabled
+            if self.gravity_enabled:
+                ux_grav, uy_grav, uz_grav = self._compute_gravity_velocity(phi_T.shape)
+                ux += ux_grav
+                uy += uy_grav
+                uz += uz_grav
+
+            # Add bowl potential contribution if enabled  
+            if self.bowl_potential_enabled:
+                ux_bowl, uy_bowl, uz_bowl = self._compute_bowl_potential_velocity(
+                    phi_T.shape, dx
+                )
+                ux += ux_bowl
+                uy += uy_bowl
+                uz += uz_bowl
+            
+            # Apply boundary conditions to velocity field to ensure proper mass conservation
+            # This is critical for preventing artificial mass creation in compaction mode
+            from src.growkit.MathEngine.NaturalBoundaryConditions import apply_natural_gradient_boundaries
+            ux, uy, uz = apply_natural_gradient_boundaries(ux, uy, uz, boundary_width=1)
             
             # Store zero pressure in field manager if available
             if self.field_manager is not None:
@@ -168,6 +247,23 @@ class VectorizedSolidVelocity:
         ux = (grad_p_x - energy_deriv * grad_C_x)
         uy = (grad_p_y - energy_deriv * grad_C_y)
         uz = (grad_p_z - energy_deriv * grad_C_z)
+        
+        # Add gravity contribution if enabled
+        if self.gravity_enabled:
+            ux_grav, uy_grav, uz_grav = self._compute_gravity_velocity(phi_T.shape)
+            ux += ux_grav
+            uy += uy_grav
+            uz += uz_grav
+
+        # Add bowl potential contribution if enabled  
+        if self.bowl_potential_enabled:
+            ux_bowl, uy_bowl, uz_bowl = self._compute_bowl_potential_velocity(
+                phi_T.shape, dx
+            )
+            ux += ux_bowl
+            uy += uy_bowl
+            uz += uz_bowl
+        
         # Store velocity in field manager if available
         if self.field_manager is not None:
             self.field_manager.velocity[0] = ux
@@ -220,4 +316,6 @@ class VectorizedSolidVelocity:
         else:
             mu_3 = mu_2  # Use the same as second population
         
-        return PressureSolver(self.cfg, self.pops)
+        # Get solver type from config, default to fft for massive speedup
+        solver_type = self.cfg.get("physics", {}).get("pressure_solver", "fft")
+        return PressureSolver(self.cfg, self.pops, solver_type=solver_type)

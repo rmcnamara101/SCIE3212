@@ -14,8 +14,8 @@ class FieldManager:
         # --- domain ---------------------------------------------------------
         shape = int(self.cfg["domain"]["shape"])  # Ensure shape is an integer
         self.grid = (shape, shape, shape)
-        self.dx    = self.cfg["domain"]["dx"]
-        self.dt    = self.cfg["time"]["dt"]
+        self.dx    = np.float32(self.cfg["domain"]["dx"])
+        self.dt    = np.float32(self.cfg["time"]["dt"])
         self.steps = self.cfg["time"]["steps"]
 
         # --- populations ----------------------------------------------------
@@ -119,6 +119,46 @@ class FieldManager:
             
             # Host field fills the remaining space (1 - total_cell_fraction)
             self.host_field = np.clip(1.0 - phi_T, 0.0, 1.0)
+    
+    def _update_host_field_conservative(self, phi_hat_old, phi_hat_new):
+        """
+        Update host field to maintain volume constraints while conserving mass.
+        The host field should change by the opposite amount that cell fields change.
+        This prevents artificial mass creation in compaction mode.
+        
+        Args:
+            phi_hat_old: Previous cell fraction fields
+            phi_hat_new: New cell fraction fields
+        """
+        if self.phi_hat is not None:
+            # Calculate how much cell mass changed at each spatial point
+            phi_T_old = np.sum(phi_hat_old, axis=0)
+            phi_T_new = np.sum(phi_hat_new, axis=0)
+            cell_mass_change = phi_T_new - phi_T_old
+            
+            # Host field should change by the opposite amount to conserve total mass
+            # This ensures that (cells + host) mass is conserved
+            self.host_field = np.clip(self.host_field - cell_mass_change, 0.0, 1.0)
+            
+            # Ensure total volume fraction = 1 everywhere (but don't create mass)
+            total_volume = phi_T_new + self.host_field
+            overflow_mask = total_volume > 1.0
+            
+            if np.any(overflow_mask):
+                # Scale down proportionally where overflow occurs to maintain volume constraints
+                # This is a conservative approach that redistributes existing mass
+                scaling = np.ones_like(total_volume)
+                scaling[overflow_mask] = 1.0 / total_volume[overflow_mask]
+                
+                # Apply scaling to both cell and host fields to maintain mass conservation
+                phi_hat_new_scaled = phi_hat_new * scaling[None, :, :, :]
+                self.host_field *= scaling
+                
+                # Update the stored cell fields with scaled values
+                self.phi_hat = phi_hat_new_scaled
+            else:
+                # No overflow - just update the stored fields
+                self.phi_hat = phi_hat_new
 
     def get_cell_fields(self):
         """
@@ -131,17 +171,30 @@ class FieldManager:
         """
         return self.phi_hat, self.nutrient_field, self.host_field
 
-    def set_cell_fields(self, phi_hat, nutrient_field):
+    def set_cell_fields(self, phi_hat, nutrient_field, phi_hat_old=None):
         """
         Set cell fields and update host field accordingly.
         
         Args:
             phi_hat: Cell fraction fields
             nutrient_field: Nutrient field
+            phi_hat_old: Previous cell fraction fields (for conservative updates)
         """
-        self.phi_hat = phi_hat
+        # Store old fields for conservative updates
+        phi_hat_previous = self.phi_hat.copy() if self.phi_hat is not None else None
+        
+        # Check if we're in compaction mode (pressure disabled)
+        disable_pressure = self.cfg.get("physics", {}).get("disable_pressure", False)
+        
+        if disable_pressure and phi_hat_previous is not None:
+            # Use conservative host field update in compaction mode
+            self._update_host_field_conservative(phi_hat_previous, phi_hat)
+        else:
+            # Use standard host field update for normal mode
+            self.phi_hat = phi_hat
+            self._update_host_field()
+        
         self.nutrient_field = nutrient_field
-        self._update_host_field()
 
     def get_total_volume_fraction(self):
         """
@@ -234,6 +287,36 @@ class FieldManager:
         is_valid = not has_negative and not has_deviation
         
         return is_valid, max_deviation, mean_deviation
+    
+    def check_mass_conservation(self, phi_hat_old=None, tolerance=1e-6):
+        """
+        Check if mass is conserved between time steps.
+        
+        Args:
+            phi_hat_old: Previous cell fraction fields (optional)
+            tolerance: Tolerance for mass conservation check
+            
+        Returns:
+            is_conserved: Boolean indicating if mass is conserved
+            mass_change: Total mass change (positive = mass gained, negative = mass lost)
+            relative_change: Relative mass change as a percentage
+        """
+        if self.phi_hat is None:
+            return True, 0.0, 0.0
+        
+        current_mass = np.sum(self.phi_hat)
+        
+        if phi_hat_old is not None:
+            old_mass = np.sum(phi_hat_old)
+            mass_change = current_mass - old_mass
+            relative_change = (mass_change / old_mass * 100) if old_mass > 0 else 0.0
+            is_conserved = abs(mass_change) < tolerance
+        else:
+            mass_change = 0.0
+            relative_change = 0.0
+            is_conserved = True
+        
+        return is_conserved, mass_change, relative_change
 
     def get_cell_and_host_fields(self):
         """

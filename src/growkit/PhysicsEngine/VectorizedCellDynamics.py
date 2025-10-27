@@ -72,7 +72,7 @@ class VectorizedCellDynamics:
         dummy_uz = np.random.random((10, 10, 10)).astype(np.float32)
         dummy_J_hat = np.random.random((3, 3, 10, 10, 10)).astype(np.float32)
         dummy_A_hat = np.random.random(dummy_shape).astype(np.float32)
-        dummy_dx = 0.2
+        dummy_dx = np.float32(0.2)
         
         # Compile the functions
         try:
@@ -172,6 +172,11 @@ class VectorizedCellDynamics:
         Returns:
             A_hat: Source terms for all populations (M, nx, ny, nz)
         """
+        # Check if pressure is disabled - if so, disable source terms to model no growth
+        disable_pressure = self.cfg.get("physics", {}).get("disable_pressure", False)
+        if disable_pressure:
+            return np.zeros_like(phi_hat)
+        
         if self.source_constructor is not None:
             A_hat = self.source_constructor.compute_source_vector_vectorized(phi_hat, nutrient_field)
     
@@ -272,7 +277,7 @@ def compute_cell_dynamics_numba(phi_hat, ux, uy, uz, J_hat, A_hat, dx):
         Jx = J_hat[i, 0]
         Jy = J_hat[i, 1]
         Jz = J_hat[i, 2]
-        mass_flux = -_divergence_from_components(Jx, Jy, Jz, dx)
+        mass_flux = _divergence_from_components(Jx, Jy, Jz, dx)
         
         # Source term: A_i (growth/death)
         source_term = A_hat[i]

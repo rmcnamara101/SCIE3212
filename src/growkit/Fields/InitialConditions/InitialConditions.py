@@ -18,7 +18,7 @@ class InitialConditions:
         """
         self.cfg = cfg
         self.grid = (cfg["domain"]["shape"], cfg["domain"]["shape"], cfg["domain"]["shape"])
-        self.dx = cfg["domain"]["dx"]
+        self.dx = np.float32(cfg["domain"]["dx"])
         
         # Get initial conditions configuration
         self.ic_config = cfg.get("initial_conditions", {})
@@ -51,6 +51,8 @@ class InitialConditions:
             phi_hat = self._create_uniform_initial_conditions()
         elif self.ic_type == "organoid_settling":
             phi_hat = self._create_organoid_settling_initial_conditions()
+        elif self.ic_type == "main_spheroid_with_blobs":
+            phi_hat = self._create_main_spheroid_with_blobs_initial_conditions()
         elif self.ic_type == "custom":
             phi_hat = self._create_custom_initial_conditions()
         else:
@@ -366,6 +368,101 @@ class InitialConditions:
         
         # Get noise scale from config or use default (lower for organoid settling)
         noise_scale = self.ic_config.get("seeding_noise_scale", 0.15)
+        
+        # Distribute density among populations with noise
+        for m, name in enumerate(self.names):
+            density_fraction = seeding_densities.get(name, 1.0 / self.M)
+            base_density = total_density * density_fraction
+            
+            # Only add noise if the base density is non-zero
+            if np.sum(base_density) > 0:
+                noisy_density = self._add_seeding_noise(base_density, noise_scale)
+            else:
+                noisy_density = base_density
+            
+            phi_hat[m, :, :, :] = noisy_density
+        
+        return phi_hat
+    
+    def _create_main_spheroid_with_blobs_initial_conditions(self) -> np.ndarray:
+        """
+        Create initial conditions with one main spheroid and multiple smaller blobs around it.
+        This is designed for testing coagulation dynamics where smaller blobs should
+        aggregate toward the main spheroid under gravity and bowl potential forces.
+        """
+        nx, ny, nz = self.grid
+        phi_hat = np.zeros((self.M, nx, ny, nz), dtype=np.float32)
+        
+        # Get configuration parameters
+        center = self.ic_config.get("center", [nx//2, ny//2, nz//2])
+        main_radius = self.ic_config.get("main_radius", min(nx, ny, nz) // 6)  # Main spheroid radius
+        num_blobs = self.ic_config.get("num_blobs", 8)  # Number of smaller blobs
+        blob_radius_range = self.ic_config.get("blob_radius_range", [2, 4])  # Min/max blob radius
+        blob_distance_range = self.ic_config.get("blob_distance_range", [main_radius + 5, main_radius + 15])  # Distance from main spheroid
+        seeding_densities = self.ic_config.get("seeding_densities", {})
+        
+        # Set random seed for reproducible patterns
+        np.random.seed(self.cfg.get("simulation", {}).get("seed", 42))
+        
+        # Default seeding densities if not specified
+        if not seeding_densities:
+            seeding_densities = {name: 0.8 if i == 0 else 0.1 / (self.M - 1) 
+                               for i, name in enumerate(self.names)}
+        
+        # Create the main spheroid at the center
+        main_density = np.zeros((nx, ny, nz), dtype=np.float32)
+        for i in range(nx):
+            for j in range(ny):
+                for k in range(nz):
+                    dist = np.sqrt((i - center[0])**2 + (j - center[1])**2 + (k - center[2])**2)
+                    if dist <= main_radius:
+                        # Use smooth falloff for the main spheroid
+                        density = 1.0 - (dist / main_radius) * 0.3  # Slight falloff from center
+                        main_density[i, j, k] = density
+        
+        # Create smaller blobs around the main spheroid
+        blob_density = np.zeros((nx, ny, nz), dtype=np.float32)
+        
+        for blob_idx in range(num_blobs):
+            # Generate random position around the main spheroid
+            # Use spherical coordinates for better distribution
+            theta = np.random.uniform(0, 2 * np.pi)  # Azimuthal angle
+            phi = np.random.uniform(0, np.pi)  # Polar angle
+            distance = np.random.uniform(blob_distance_range[0], blob_distance_range[1])
+            
+            # Convert to Cartesian coordinates
+            blob_x = center[0] + distance * np.sin(phi) * np.cos(theta)
+            blob_y = center[1] + distance * np.sin(phi) * np.sin(theta)
+            blob_z = center[2] + distance * np.cos(phi)
+            
+            # Ensure blob is within domain bounds
+            blob_x = np.clip(blob_x, 0, nx - 1)
+            blob_y = np.clip(blob_y, 0, ny - 1)
+            blob_z = np.clip(blob_z, 0, nz - 1)
+            
+            # Random blob radius
+            blob_radius = np.random.uniform(blob_radius_range[0], blob_radius_range[1])
+            
+            # Create this blob
+            for i in range(nx):
+                for j in range(ny):
+                    for k in range(nz):
+                        dist_to_blob = np.sqrt((i - blob_x)**2 + (j - blob_y)**2 + (k - blob_z)**2)
+                        if dist_to_blob <= blob_radius:
+                            # Use smooth falloff for blobs too
+                            density = 1.0 - (dist_to_blob / blob_radius) * 0.2
+                            blob_density[i, j, k] = max(blob_density[i, j, k], density)
+        
+        # Combine main spheroid and blobs
+        total_density = main_density + blob_density
+        
+        # Normalize to prevent overflow
+        max_density = np.max(total_density)
+        if max_density > 1.0:
+            total_density = total_density / max_density * 0.9  # Scale to 90% max
+        
+        # Get noise scale from config or use default
+        noise_scale = self.ic_config.get("seeding_noise_scale", 0.1)  # Lower noise for cleaner blobs
         
         # Distribute density among populations with noise
         for m, name in enumerate(self.names):

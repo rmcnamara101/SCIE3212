@@ -44,6 +44,12 @@ def compute_mass_fluxes_numba(phi_hat, phi_T, dx, energy_deriv, M_matrix):
     # Compute gradients of energy derivative using isotropic operators
     grad_energy_x, grad_energy_y, grad_energy_z = isotropic_gradient_components(energy_deriv, dx)
     
+    # Apply boundary conditions to gradient components to ensure proper mass conservation
+    from src.growkit.MathEngine.NaturalBoundaryConditions import apply_natural_gradient_boundaries
+    grad_energy_x, grad_energy_y, grad_energy_z = apply_natural_gradient_boundaries(
+        grad_energy_x, grad_energy_y, grad_energy_z, boundary_width=1
+    )
+    
     # Compute mass fluxes for each population
     for i in range(M):
         mobility = M_matrix[i, i]

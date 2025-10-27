@@ -2,6 +2,7 @@ import numpy as np
 import matplotlib.pyplot as plt
 import os
 from pathlib import Path
+from mpl_toolkits.mplot3d import Axes3D
 
 class CellFieldPlotter:
     def __init__(self, field_manager_or_simulation_data, step_idx=0, simulator=None):
@@ -44,11 +45,8 @@ class CellFieldPlotter:
                 self.grid = data["metadata"]["grid_size"]
                 self.dx = 1.0  # Default value, should be extracted from config
                 
-                # Get population labels from simulator if available (most reliable)
-                if simulator is not None and hasattr(simulator, 'field_manager'):
-                    self.labels = simulator.field_manager.labels
-                # Try to get population labels from metadata
-                elif "population_labels" in data["metadata"]:
+                # Get population labels from saved simulation data (most reliable)
+                if "population_labels" in data["metadata"]:
                     self.labels = data["metadata"]["population_labels"]
                 # Try to extract from config if available
                 elif "config" in data["metadata"]:
@@ -57,6 +55,9 @@ class CellFieldPlotter:
                         self.labels = [p["label"] for p in config["populations"].values()]
                     else:
                         self.labels = [f"Population_{i}" for i in range(data["metadata"]["num_populations"])]
+                # Fallback to simulator if available
+                elif simulator is not None and hasattr(simulator, 'field_manager'):
+                    self.labels = simulator.field_manager.labels
                 else:
                     self.labels = [f"Population_{i}" for i in range(data["metadata"]["num_populations"])]
                 
@@ -629,16 +630,408 @@ class CellFieldPlotter:
         print("\nThe saved simulation data starts from step 1 (time=5.0),")
         print("which already has necrotic cells generated during simulation.")
 
+    def plot_3d_tumor_field(self, simulation_data, step_idx=0, isosurface_level=0.1, 
+                           cmap="viridis", output_dir=None, save_plot=False, show_plot=True,
+                           figsize=(12, 8), alpha=0.6, title_suffix=""):
+        """
+        Plot 3D visualization of tumor field using isosurfaces.
+        
+        Args:
+            simulation_data: Dictionary containing simulation data
+            step_idx: Index of the saved step to use for plotting
+            isosurface_level: Density level for isosurface (0.1 = 10% density)
+            cmap: Colormap for the plot
+            output_dir: Directory to save plot
+            save_plot: Whether to save the plot
+            show_plot: Whether to display the plot
+            figsize: Figure size
+            alpha: Transparency of the isosurface
+            title_suffix: Additional text for the title
+        """
+        # Get step information
+        step = simulation_data["metadata"]["saved_steps"][step_idx]
+        time = simulation_data["metadata"]["saved_times"][step_idx]
+        
+        print(f"Creating 3D tumor field visualization for step {step} (time={time:.3f})...")
+        
+        # Get phi_hat for the specified step
+        phi_hat = simulation_data["field_data"]["phi_hat"][step_idx]
+        
+        # Calculate total tumor density
+        total_density = np.sum(phi_hat, axis=0)
+        
+        # Create 3D coordinate grids
+        nx, ny, nz = self.grid
+        x = np.arange(nx) * self.dx
+        y = np.arange(ny) * self.dx
+        z = np.arange(nz) * self.dx
+        X, Y, Z = np.meshgrid(x, y, z, indexing='ij')
+        
+        # Create figure
+        fig = plt.figure(figsize=figsize)
+        ax = fig.add_subplot(111, projection='3d')
+        
+        # Create isosurface
+        # Find voxels above the threshold
+        tumor_mask = total_density >= isosurface_level
+        
+        if np.any(tumor_mask):
+            # Extract coordinates and values for tumor regions
+            tumor_x = X[tumor_mask]
+            tumor_y = Y[tumor_mask]
+            tumor_z = Z[tumor_mask]
+            tumor_values = total_density[tumor_mask]
+            
+            # Create scatter plot with color mapping
+            scatter = ax.scatter(tumor_x, tumor_y, tumor_z, c=tumor_values, 
+                               cmap=cmap, alpha=alpha, s=20)
+            
+            # Add colorbar
+            cbar = fig.colorbar(scatter, ax=ax, shrink=0.5, aspect=20)
+            cbar.set_label('Tumor Density')
+        else:
+            print(f"Warning: No tumor regions found above density level {isosurface_level}")
+        
+        # Set labels and title
+        ax.set_xlabel('X (μm)')
+        ax.set_ylabel('Y (μm)')
+        ax.set_zlabel('Z (μm)')
+        ax.set_title(f'3D Tumor Field - Step {step} (t={time:.2f}){title_suffix}')
+        
+        # Set equal aspect ratio
+        max_range = np.array([X.max()-X.min(), Y.max()-Y.min(), Z.max()-Z.min()]).max() / 2.0
+        mid_x = (X.max()+X.min()) * 0.5
+        mid_y = (Y.max()+Y.min()) * 0.5
+        mid_z = (Z.max()+Z.min()) * 0.5
+        ax.set_xlim(mid_x - max_range, mid_x + max_range)
+        ax.set_ylim(mid_y - max_range, mid_y + max_range)
+        ax.set_zlim(mid_z - max_range, mid_z + max_range)
+        
+        plt.tight_layout()
+        
+        if save_plot and output_dir:
+            os.makedirs(output_dir, exist_ok=True)
+            filename = f'3d_tumor_field_step_{step:06d}.png'
+            plt.savefig(os.path.join(output_dir, filename), dpi=300, bbox_inches='tight')
+            print(f"3D tumor field plot saved to {output_dir}/{filename}")
+        
+        if show_plot:
+            plt.show()
+        else:
+            plt.close()
+    
+    def plot_3d_quadratic_potential(self, simulation_data, step_idx=0, potential_strength=None,
+                                   bowl_center=None, output_dir=None, save_plot=False, 
+                                   show_plot=True, figsize=(12, 8), alpha=0.6, 
+                                   title_suffix="", show_tumor_field=True, tumor_isosurface_level=0.1):
+        """
+        Plot 3D visualization of the quadratic (bowl) potential field.
+        
+        Args:
+            simulation_data: Dictionary containing simulation data
+            step_idx: Index of the saved step to use for plotting
+            potential_strength: Strength of the bowl potential (if None, extract from config)
+            bowl_center: Center coordinates of the bowl (if None, extract from config)
+            output_dir: Directory to save plot
+            save_plot: Whether to save the plot
+            show_plot: Whether to display the plot
+            figsize: Figure size
+            alpha: Transparency of the potential surface
+            title_suffix: Additional text for the title
+            show_tumor_field: Whether to overlay tumor field as scatter points
+            tumor_isosurface_level: Density level for tumor field overlay
+        """
+        # Get step information
+        step = simulation_data["metadata"]["saved_steps"][step_idx]
+        time = simulation_data["metadata"]["saved_times"][step_idx]
+        
+        print(f"Creating 3D quadratic potential visualization for step {step} (time={time:.3f})...")
+        
+        # Extract potential parameters from config if not provided
+        if potential_strength is None or bowl_center is None:
+            config = simulation_data["metadata"]["config"]
+            physics_config = config.get("physics", {})
+            
+            if potential_strength is None:
+                potential_strength = physics_config.get("bowl_potential_strength", 0.1)
+            
+            if bowl_center is None:
+                bowl_center = physics_config.get("bowl_center", [50, 50, 50])
+        
+        # Create 3D coordinate grids
+        nx, ny, nz = self.grid
+        x = np.arange(nx) * self.dx
+        y = np.arange(ny) * self.dx
+        z = np.arange(nz) * self.dx
+        X, Y, Z = np.meshgrid(x, y, z, indexing='ij')
+        
+        # Calculate quadratic potential: V = k * r²
+        # where r is distance from bowl center
+        center_x = bowl_center[0] * self.dx
+        center_y = bowl_center[1] * self.dx
+        center_z = bowl_center[2] * self.dx
+        
+        r_squared = (X - center_x)**2 + (Y - center_y)**2 + (Z - center_z)**2
+        potential = potential_strength * r_squared
+        
+        # Create figure
+        fig = plt.figure(figsize=figsize)
+        ax = fig.add_subplot(111, projection='3d')
+        
+        # Create potential visualization using scatter plot instead of surface
+        # Sample every few points for visualization
+        sample_rate = max(1, min(nx, ny, nz) // 15)  # Sample every 15th point or so
+        
+        X_sample = X[::sample_rate, ::sample_rate, ::sample_rate]
+        Y_sample = Y[::sample_rate, ::sample_rate, ::sample_rate]
+        Z_sample = Z[::sample_rate, ::sample_rate, ::sample_rate]
+        potential_sample = potential[::sample_rate, ::sample_rate, ::sample_rate]
+        
+        # Create scatter plot of potential (more suitable for 3D visualization)
+        potential_normalized = potential_sample / potential_sample.max()
+        scatter = ax.scatter(X_sample.flatten(), Y_sample.flatten(), Z_sample.flatten(), 
+                           c=potential_normalized.flatten(), cmap='viridis', alpha=alpha, s=10)
+        
+        # Add colorbar for potential
+        cbar = fig.colorbar(scatter, ax=ax, shrink=0.5, aspect=20)
+        cbar.set_label('Potential Strength')
+        
+        # Overlay tumor field if requested
+        if show_tumor_field:
+            phi_hat = simulation_data["field_data"]["phi_hat"][step_idx]
+            total_density = np.sum(phi_hat, axis=0)
+            tumor_mask = total_density >= tumor_isosurface_level
+            
+            if np.any(tumor_mask):
+                tumor_x = X[tumor_mask]
+                tumor_y = Y[tumor_mask]
+                tumor_z = Z[tumor_mask]
+                tumor_values = total_density[tumor_mask]
+                
+                # Overlay tumor field as scatter points
+                ax.scatter(tumor_x, tumor_y, tumor_z, c='red', alpha=0.8, s=30, 
+                          label=f'Tumor Field (density ≥ {tumor_isosurface_level})')
+                ax.legend()
+        
+        # Add bowl center marker
+        ax.scatter([center_x], [center_y], [center_z], c='black', s=100, 
+                  marker='*', label='Bowl Center', alpha=1.0)
+        ax.legend()
+        
+        # Set labels and title
+        ax.set_xlabel('X (μm)')
+        ax.set_ylabel('Y (μm)')
+        ax.set_zlabel('Z (μm)')
+        ax.set_title(f'3D Quadratic Potential - Step {step} (t={time:.2f}){title_suffix}\n'
+                    f'Strength: {potential_strength:.3f}, Center: ({center_x:.1f}, {center_y:.1f}, {center_z:.1f})')
+        
+        # Set equal aspect ratio
+        max_range = np.array([X.max()-X.min(), Y.max()-Y.min(), Z.max()-Z.min()]).max() / 2.0
+        mid_x = (X.max()+X.min()) * 0.5
+        mid_y = (Y.max()+Y.min()) * 0.5
+        mid_z = (Z.max()+Z.min()) * 0.5
+        ax.set_xlim(mid_x - max_range, mid_x + max_range)
+        ax.set_ylim(mid_y - max_range, mid_y + max_range)
+        ax.set_zlim(mid_z - max_range, mid_z + max_range)
+        
+        plt.tight_layout()
+        
+        if save_plot and output_dir:
+            os.makedirs(output_dir, exist_ok=True)
+            filename = f'3d_quadratic_potential_step_{step:06d}.png'
+            plt.savefig(os.path.join(output_dir, filename), dpi=300, bbox_inches='tight')
+            print(f"3D quadratic potential plot saved to {output_dir}/{filename}")
+        
+        if show_plot:
+            plt.show()
+        else:
+            plt.close()
+    
+    def plot_coagulation_analysis(self, simulation_data, step_indices=None, 
+                                tumor_isosurface_level=0.1, potential_strength=None,
+                                bowl_center=None, output_dir=None, save_plot=False, 
+                                show_plot=True, figsize=(15, 10)):
+        """
+        Create a comprehensive analysis plot showing both tumor field and quadratic potential
+        for multiple time steps to visualize coagulation dynamics.
+        
+        Args:
+            simulation_data: Dictionary containing simulation data
+            step_indices: List of step indices to plot (None for all available)
+            tumor_isosurface_level: Density level for tumor field visualization
+            potential_strength: Strength of the bowl potential (if None, extract from config)
+            bowl_center: Center coordinates of the bowl (if None, extract from config)
+            output_dir: Directory to save plot
+            save_plot: Whether to save the plot
+            show_plot: Whether to display the plot
+            figsize: Figure size
+        """
+        # Get available step indices if not provided
+        if step_indices is None:
+            step_indices = list(range(len(simulation_data["metadata"]["saved_steps"])))
+        
+        # Limit number of plots to avoid overcrowding
+        if len(step_indices) > 6:
+            print(f"Warning: Limiting plots to 6 steps (requested {len(step_indices)})")
+            step_indices = step_indices[:6]
+        
+        # Calculate subplot layout
+        num_plots = len(step_indices)
+        num_cols = min(3, num_plots)
+        num_rows = (num_plots + num_cols - 1) // num_cols
+        
+        # Create figure with subplots
+        fig = plt.figure(figsize=figsize)
+        
+        for i, step_idx in enumerate(step_indices):
+            # Get step information
+            step = simulation_data["metadata"]["saved_steps"][step_idx]
+            time = simulation_data["metadata"]["saved_times"][step_idx]
+            
+            # Create 3D subplot
+            ax = fig.add_subplot(num_rows, num_cols, i+1, projection='3d')
+            
+            # Get phi_hat for this step
+            phi_hat = simulation_data["field_data"]["phi_hat"][step_idx]
+            total_density = np.sum(phi_hat, axis=0)
+            
+            # Create 3D coordinate grids
+            nx, ny, nz = self.grid
+            x = np.arange(nx) * self.dx
+            y = np.arange(ny) * self.dx
+            z = np.arange(nz) * self.dx
+            X, Y, Z = np.meshgrid(x, y, z, indexing='ij')
+            
+            # Plot tumor field
+            tumor_mask = total_density >= tumor_isosurface_level
+            if np.any(tumor_mask):
+                tumor_x = X[tumor_mask]
+                tumor_y = Y[tumor_mask]
+                tumor_z = Z[tumor_mask]
+                tumor_values = total_density[tumor_mask]
+                
+                scatter = ax.scatter(tumor_x, tumor_y, tumor_z, c=tumor_values, 
+                                   cmap='viridis', alpha=0.7, s=15)
+            
+            # Plot quadratic potential (simplified representation)
+            if potential_strength is None or bowl_center is None:
+                config = simulation_data["metadata"]["config"]
+                physics_config = config.get("physics", {})
+                if potential_strength is None:
+                    potential_strength = physics_config.get("bowl_potential_strength", 0.1)
+                if bowl_center is None:
+                    bowl_center = physics_config.get("bowl_center", [50, 50, 50])
+            
+            center_x = bowl_center[0] * self.dx
+            center_y = bowl_center[1] * self.dx
+            center_z = bowl_center[2] * self.dx
+            
+            # Add bowl center marker
+            ax.scatter([center_x], [center_y], [center_z], c='red', s=100, 
+                      marker='*', alpha=1.0)
+            
+            # Set labels and title
+            ax.set_title(f'Step {step} (t={time:.2f})')
+            ax.set_xlabel('X')
+            ax.set_ylabel('Y')
+            ax.set_zlabel('Z')
+            
+            # Set equal aspect ratio
+            max_range = np.array([X.max()-X.min(), Y.max()-Y.min(), Z.max()-Z.min()]).max() / 2.0
+            mid_x = (X.max()+X.min()) * 0.5
+            mid_y = (Y.max()+Y.min()) * 0.5
+            mid_z = (Z.max()+Z.min()) * 0.5
+            ax.set_xlim(mid_x - max_range, mid_x + max_range)
+            ax.set_ylim(mid_y - max_range, mid_y + max_range)
+            ax.set_zlim(mid_z - max_range, mid_z + max_range)
+        
+        # Set overall title
+        fig.suptitle('Coagulation Dynamics: Tumor Field Evolution with Quadratic Potential', 
+                    fontsize=16)
+        
+        plt.tight_layout()
+        
+        if save_plot and output_dir:
+            os.makedirs(output_dir, exist_ok=True)
+            filename = f'coagulation_analysis_steps_{step_indices[0]}-{step_indices[-1]}.png'
+            plt.savefig(os.path.join(output_dir, filename), dpi=300, bbox_inches='tight')
+            print(f"Coagulation analysis plot saved to {output_dir}/{filename}")
+        
+        if show_plot:
+            plt.show()
+        else:
+            plt.close()
+
     @classmethod
     def from_simulation_data(cls, simulation_data, step_idx=0):
         """
         Create a plotter instance from saved simulation data.
         
         Args:
-            simulation_data: Dictionary containing simulation data
+            simulation_data: Dictionary containing simulation data or NpzFile object
             step_idx: Index of the saved step to use for plotting
             
         Returns:
             plotter: CellFieldPlotter instance with loaded data
         """
+        # Handle NpzFile objects by converting to dictionary
+        if hasattr(simulation_data, 'files'):  # It's an NpzFile object
+            simulation_data = cls._convert_npz_to_dict(simulation_data)
+        
         return cls(simulation_data, step_idx)
+    
+    @staticmethod
+    def _convert_npz_to_dict(npz_file):
+        """
+        Convert NpzFile object to simulation data dictionary.
+        
+        Args:
+            npz_file: NpzFile object from np.load()
+            
+        Returns:
+            simulation_data: Dictionary with proper structure
+        """
+        # Load metadata from pickle bytes
+        import pickle
+        metadata_bytes = npz_file["metadata"].tobytes()
+        metadata = pickle.loads(metadata_bytes)
+        
+        # Create step indices and times from the data
+        num_steps = npz_file["phi_hat"].shape[0]
+        saved_steps = list(range(num_steps))
+        saved_times = [i * 0.5 for i in range(num_steps)]  # Assuming dt=0.5
+        
+        # Reconstruct simulation data structure
+        simulation_data = {
+            "metadata": {
+                **metadata,
+                "saved_steps": saved_steps,
+                "saved_times": saved_times
+            },
+            "field_data": {
+                "phi_hat": npz_file["phi_hat"],
+                "nutrient_fields": npz_file["nutrient_fields"],
+                "host_fields": npz_file["host_fields"]
+            },
+            "performance": {
+                "step_times": npz_file["step_times"],
+                "total_cells": npz_file["total_cells"]
+            }
+        }
+        
+        # Add physics data if available
+        if "pressure" in npz_file:
+            simulation_data["physics_data"] = []
+            for i in range(len(npz_file["pressure"])):
+                physics_data = {
+                    "pressure": npz_file["pressure"][i],
+                    "velocity": npz_file["velocity"][i],
+                    "energy_derivative": npz_file["energy_derivative"][i],
+                    "mass_flux": npz_file["mass_flux"][i]
+                }
+                # Add source terms if available
+                if "source_terms" in npz_file:
+                    physics_data["source_terms"] = npz_file["source_terms"][i]
+                simulation_data["physics_data"].append(physics_data)
+        
+        return simulation_data
