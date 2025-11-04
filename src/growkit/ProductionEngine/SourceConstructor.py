@@ -306,6 +306,72 @@ class SourceConstructor:
         A_hat = growth_term - death_term
         
         return A_hat
+    
+    def compute_growth_and_death_separately(self, phi_hat, nutrient_field):
+        """
+        Compute growth and death terms separately for diagnostic purposes.
+        
+        This method helps understand the contribution of growth vs death to the
+        source terms, which is useful for debugging and analysis.
+        
+        Args:
+            phi_hat: Stacked cell fraction fields for all M populations (M, nx, ny, nz)
+            nutrient_field: Local nutrient concentration field (nx, ny, nz)
+            
+        Returns:
+            dict with keys:
+                - 'growth_term': (M, nx, ny, nz) growth contributions for each population
+                - 'death_term': (M, nx, ny, nz) death contributions for each population
+                - 'net_source': (M, nx, ny, nz) net source terms (growth - death)
+                - 'net_source_viable': (nx, ny, nz) net source for viable populations only (excludes necrotic)
+                - 'total_growth': (nx, ny, nz) total growth across all populations
+                - 'total_death': (nx, ny, nz) total death across all populations
+        """
+        M = self.M
+        
+        # Compute nutrient switches (spatially varying)
+        Theta = self._compute_nutrient_switches(nutrient_field)  # (M, nx, ny, nz)
+        
+        # Compute necrotic feedback
+        V_N = np.sum(phi_hat[-1])  # Total necrotic volume
+        G_N = np.exp(-self.beta_N * V_N)
+        
+        # Compute proliferation-weighted populations
+        alpha_hat = self.lambda_[:, None, None, None] * phi_hat
+        
+        # Apply nutrient modulation to death matrix
+        D_modulated = np.zeros((M, M, *nutrient_field.shape), dtype=np.float32)
+        for i in range(M):
+            for j in range(M):
+                D_modulated[i, j] = self.D[i, j] * Theta[j]
+        
+        # Compute growth and death terms
+        growth_term = G_N * nutrient_field[None, :, :, :] * np.tensordot(self.P, alpha_hat, axes=([1], [0]))
+        
+        death_term = np.zeros_like(phi_hat)
+        for i in range(M):
+            for j in range(M):
+                death_term[i] += D_modulated[i, j] * phi_hat[j]
+        
+        # Compute net source
+        net_source = growth_term - death_term
+        
+        # For analysis, exclude necrotic population (last population) when computing net viable source
+        # This gives the net growth/death for viable cells only
+        net_source_viable = np.sum(net_source[:-1], axis=0) if M > 1 else net_source[0]
+        
+        # Total growth and death (summed across all populations)
+        total_growth = np.sum(growth_term, axis=0)
+        total_death = np.sum(death_term, axis=0)
+        
+        return {
+            'growth_term': growth_term,
+            'death_term': death_term,
+            'net_source': net_source,
+            'net_source_viable': net_source_viable,
+            'total_growth': total_growth,
+            'total_death': total_death
+        }
 
 
 @njit

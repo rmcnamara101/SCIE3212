@@ -1,13 +1,38 @@
-# field_manager.py
+"""
+
+Field Manager Module
+
+This module handles the management of simulation fields.
+It supports the management of cell fields, nutrient fields, and host fields.
+It also supports the management of physics fields (pressure, velocity, energy derivative, mass flux, and source terms).
+
+This is the central module that coordinates the management of all simulation fields.
+
+Author: Riley Jae McNamara
+Date: 2025-10-27
+
+"""
+
+# -- Standard imports --
 import numpy as np
 from pathlib import Path
 import yaml
 
+
+# -- Local imports --
 from src.growkit.Fields.InitialConditions.InitialConditions import InitialConditions
 from src.growkit.PhysicsEngine.VectorizedCellDynamics import VectorizedCellDynamics
 
+
+# -- Module definition --  
 class FieldManager:
+    """
+    Manages simulation fields.
+    """
     def __init__(self, cfg_path: str):
+        """
+        Initialize the field manager.
+        """
 
         self.cfg = yaml.safe_load(Path(cfg_path).read_text())
 

@@ -41,6 +41,9 @@ class NutrientField:
             self.production_rate[self.labels.index(pop)] = float(self.pops[pop].get('dynamics', {}).get('nutrient_production', 0.0))
             self.nutrient_threshold[self.labels.index(pop)] = float(self.pops[pop].get('dynamics', {}).get('nutrient_threshold', 0.0))
         self.boundary_value = float(cfg.get('nutrient', {}).get('boundary_value', 1.0))
+        self.k_switch = float(cfg.get('nutrient', {}).get('dynamics', {}).get('k', 1.0))
+        self.lambda_rates = np.array([float(self.pops[pop].get('dynamics', {}).get('lambda', 0.0)) for pop in self.labels], dtype=np.float32)
+        self.mu_rates = np.array([float(self.pops[pop].get('dynamics', {}).get('mu', 0.0)) for pop in self.labels], dtype=np.float32)
         
         # Extract consumption rates for each population
         self.population_consumption_rates = {}
@@ -223,13 +226,15 @@ class NutrientField:
         # Compute nutrient update using Numba-optimized function
         return compute_nutrient_update_numba(
             nutrient_field, phi_hat, dx,
-            self.diffusion_coeff, production_rate, consumption_rates, nutrient_threshold
+            self.diffusion_coeff, production_rate, consumption_rates, nutrient_threshold,
+            self.lambda_rates, self.mu_rates, np.float32(self.k_switch)
         )
 
 
 @njit
 def compute_nutrient_update_numba(nutrient_field, phi_hat, dx, 
-                                diffusion_coeff, production_rate, consumption_rates, nutrient_threshold):
+                                diffusion_coeff, production_rate, consumption_rates, nutrient_threshold,
+                                lambda_rates, mu_rates, k_switch):
     """
     Compute nutrient field update using Numba optimization. 
     
@@ -296,17 +301,15 @@ def compute_nutrient_update_numba(nutrient_field, phi_hat, dx,
             for k in range(nz):
                 diffusion = diffusion_field[i, j, k]
                 
-                # Compute consumption term
+                # Compute consumption term tied to proliferation activity
                 consumption = 0.0
-                for m in range(M):
-                    # Each population consumes nutrient based on its density and consumption rate
-                    # Use a simple linear consumption model
-                    consumption += consumption_rates[m] * phi_hat[m, i, j, k]
-
-                # Compute production term
                 production = 0.0
+                local_n = nutrient_field[i, j, k]
                 for m in range(M):
-                    production += production_rate[m] * (1 - phi_T[i, j, k]) * (1 - nutrient_field[i, j, k])
+                    s_grow = 0.5 * (1.0 + np.tanh(k_switch * (local_n - nutrient_threshold[m])))
+                    s_death = 1.0 - s_grow
+                    consumption += consumption_rates[m] * lambda_rates[m] * s_grow * phi_hat[m, i, j, k]
+                    production += 0 #production_rate[m] * mu_rates[m] * s_death * phi_hat[m, i, j, k] * (1.0 - local_n)
 
                 # Update nutrient field 
                 nutrient_field_new[i, j, k] = nutrient_field[i, j, k] + diffusion - consumption + production

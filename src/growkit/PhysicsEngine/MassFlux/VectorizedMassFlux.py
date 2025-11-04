@@ -18,6 +18,21 @@ import numpy as np
 from numba import njit
 from src.growkit.MathEngine.Operators import isotropic_gradient_components
 
+def safe_float32_cast(arr, safety_factor=0.1):
+    """
+    Safely cast array to float32 by clipping extreme values to prevent overflow.
+    
+    Args:
+        arr: Input array
+        safety_factor: Fraction of max float32 value to use as clipping limit
+    
+    Returns:
+        Array safely cast to float32
+    """
+    max_val = np.finfo(np.float32).max * safety_factor
+    clipped_arr = np.clip(arr, -max_val, max_val)
+    return clipped_arr.astype(np.float32)
+
 
 def compute_mass_fluxes_numba(phi_hat, phi_T, dx, energy_deriv, M_matrix):
     """
@@ -55,9 +70,10 @@ def compute_mass_fluxes_numba(phi_hat, phi_T, dx, energy_deriv, M_matrix):
         mobility = M_matrix[i, i]
         
         # Base mass flux: -M * ∇(δE/δφ_T)
-        Jx_base = -mobility * grad_energy_x
-        Jy_base = -mobility * grad_energy_y
-        Jz_base = -mobility * grad_energy_z
+        # Prevent overflow in intermediate calculations using safe casting
+        Jx_base = safe_float32_cast(-mobility * grad_energy_x, safety_factor=0.01)
+        Jy_base = safe_float32_cast(-mobility * grad_energy_y, safety_factor=0.01)
+        Jz_base = safe_float32_cast(-mobility * grad_energy_z, safety_factor=0.01)
 
         # Gate mass flux by local population presence to prevent flux in voids
         # This ensures J_i = 0 where φ_i = 0, preventing mass creation in empty regions
@@ -158,8 +174,8 @@ class VectorizedMassFlux:
         if max_mag is not None and max_mag > 0:
             J_hat = np.clip(J_hat, -float(max_mag), float(max_mag))
         
-        # Cast to float32 for storage/compatibility if needed
-        J_hat = J_hat.astype(np.float32, copy=False)
+        # Prevent overflow by clipping extreme flux values before casting to float32
+        J_hat = safe_float32_cast(J_hat, safety_factor=0.1)
         
         # Store mass flux in field manager if available
         if self.field_manager is not None:

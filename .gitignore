@@ -2,3 +2,4 @@
 archive/
 laboratory/saved_simulations/
 */__pycache__/
+laboratory/parameter_sweeps/

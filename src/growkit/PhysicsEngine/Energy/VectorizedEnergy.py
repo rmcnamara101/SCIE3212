@@ -49,7 +49,7 @@ def compute_adhesion_energy_derivative_numba(phi, laplace_phi, m):
     
     # Compute energy derivative: δE/δφ = m * (f'(φ) - 0.01 * ∇²φ)
     # The negative f_prime creates attractive forces toward high cell density
-    energy_deriv = 100 * f_prime - m * laplace_phi
+    energy_deriv = f_prime - m * laplace_phi
     
     
     return energy_deriv

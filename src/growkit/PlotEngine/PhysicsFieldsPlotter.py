@@ -1455,3 +1455,558 @@ class PhysicsFieldsPlotter:
         
         # Calculate total free energy
         return self.calculate_total_free_energy(phi_T, self.dx, m)
+    
+    def plot_nutrient_diffusion_over_time(self, simulation_data, output_dir=None, save_plot=False, 
+                                        show_plot=True, figsize=(15, 10), z_slice=None, 
+                                        center_x=None, center_y=None, max_radius=None,
+                                        num_radial_bins=20, time_points=None):
+        """
+        Plot nutrient diffusion over time showing how deep nutrients penetrate into the organoid.
+        
+        This function creates multiple visualizations:
+        1. Radial nutrient concentration profiles at different time points
+        2. Penetration depth over time
+        3. 2D cross-sections showing nutrient distribution
+        
+        Args:
+            simulation_data: Dictionary containing simulation data
+            output_dir: Directory to save plots
+            save_plot: Whether to save the plots
+            show_plot: Whether to display the plots
+            figsize: Figure size tuple
+            z_slice: Z-slice to analyze (defaults to center)
+            center_x: Center x coordinate for analysis (defaults to domain center)
+            center_y: Center y coordinate for analysis (defaults to domain center)
+            max_radius: Maximum radius to analyze (defaults to half domain size)
+            num_radial_bins: Number of radial bins for averaging
+            time_points: List of time point indices to plot (defaults to all saved steps)
+        """
+        # Get simulation metadata
+        saved_steps = simulation_data["metadata"]["saved_steps"]
+        saved_times = simulation_data["metadata"]["saved_times"]
+        grid_size = simulation_data["metadata"]["grid_size"]
+        dx = 1.0  # Default value, should be extracted from config if available
+        
+        nx, ny, nz = grid_size
+        if z_slice is None:
+            z_slice = nz // 2
+        
+        # Set default center coordinates if not provided
+        if center_x is None:
+            center_x = nx // 2
+        if center_y is None:
+            center_y = ny // 2
+        
+        # Set default max radius
+        if max_radius is None:
+            max_radius = min(nx, ny) // 2
+        
+        # Set default time points
+        if time_points is None:
+            time_points = list(range(len(saved_steps)))
+        
+        # Create coordinate grids
+        x = np.arange(nx) * dx
+        y = np.arange(ny) * dx
+        X, Y = np.meshgrid(x, y, indexing='ij')
+        
+        # Calculate radial coordinates from center
+        center_x_phys = center_x * dx
+        center_y_phys = center_y * dx
+        R = np.sqrt((X - center_x_phys)**2 + (Y - center_y_phys)**2)
+        
+        # Create radial bins
+        radial_bins = np.linspace(0, max_radius * dx, num_radial_bins + 1)
+        radial_centers = (radial_bins[:-1] + radial_bins[1:]) / 2
+        
+        # Store data for analysis
+        nutrient_profiles = []
+        penetration_depths = []
+        times = []
+        
+        # Analyze each time point
+        for i in time_points:
+            step = saved_steps[i]
+            time = saved_times[i]
+            
+            # Get nutrient field for this time point
+            nutrient_field = simulation_data["field_data"]["nutrient_fields"][i]
+            nutrient_slice = nutrient_field[:, :, z_slice]
+            
+            # Calculate radial average of nutrient concentration
+            radial_nutrient = np.zeros(num_radial_bins)
+            radial_counts = np.zeros(num_radial_bins)
+            
+            for j in range(num_radial_bins):
+                mask = (R >= radial_bins[j]) & (R < radial_bins[j + 1])
+                if np.any(mask):
+                    radial_nutrient[j] = np.mean(nutrient_slice[mask])
+                    radial_counts[j] = np.sum(mask)
+            
+            # Calculate penetration depth (where nutrient concentration drops to 10% of maximum)
+            max_nutrient = np.max(nutrient_slice)
+            threshold = 0.1 * max_nutrient
+            
+            penetration_idx = np.where(radial_nutrient >= threshold)[0]
+            if len(penetration_idx) > 0:
+                penetration_depth = radial_centers[penetration_idx[-1]]
+            else:
+                penetration_depth = 0.0
+            
+            nutrient_profiles.append(radial_nutrient)
+            penetration_depths.append(penetration_depth)
+            times.append(time)
+        
+        # Create the main figure with subplots
+        fig = plt.figure(figsize=figsize)
+        
+        # 1. Radial nutrient profiles at different time points
+        ax1 = plt.subplot(2, 2, 1)
+        colors = plt.cm.viridis(np.linspace(0, 1, len(time_points)))
+        
+        for i, (profile, time, color) in enumerate(zip(nutrient_profiles, times, colors)):
+            ax1.plot(radial_centers, profile, color=color, linewidth=2, 
+                    label=f't = {time:.2f}', alpha=0.8)
+        
+        ax1.set_xlabel('Radial Distance from Center')
+        ax1.set_ylabel('Nutrient Concentration')
+        ax1.set_title('Radial Nutrient Profiles Over Time')
+        ax1.legend(bbox_to_anchor=(1.05, 1), loc='upper left')
+        ax1.grid(True, alpha=0.3)
+        
+        # 2. Penetration depth over time
+        ax2 = plt.subplot(2, 2, 2)
+        ax2.plot(times, penetration_depths, 'o-', linewidth=2, markersize=6, color='red')
+        ax2.set_xlabel('Time')
+        ax2.set_ylabel('Penetration Depth')
+        ax2.set_title('Nutrient Penetration Depth Over Time')
+        ax2.grid(True, alpha=0.3)
+        
+        # Add trend line
+        if len(times) > 1:
+            z = np.polyfit(times, penetration_depths, 1)
+            p = np.poly1d(z)
+            ax2.plot(times, p(times), '--', color='red', alpha=0.7, 
+                    label=f'Trend: {z[0]:.3f}x + {z[1]:.3f}')
+            ax2.legend()
+        
+        # 3. 2D cross-section at initial time
+        ax3 = plt.subplot(2, 2, 3)
+        initial_nutrient = simulation_data["field_data"]["nutrient_fields"][time_points[0]]
+        initial_slice = initial_nutrient[:, :, z_slice]
+        
+        im3 = ax3.imshow(initial_slice, extent=[x[0], x[-1], y[0], y[-1]], 
+                        origin='lower', cmap='viridis', aspect='equal')
+        ax3.set_title(f'Initial Nutrient Distribution (t = {times[0]:.2f})')
+        ax3.set_xlabel('X')
+        ax3.set_ylabel('Y')
+        plt.colorbar(im3, ax=ax3, label='Concentration')
+        
+        # Add center point and radius circles
+        ax3.plot(center_x_phys, center_y_phys, 'r+', markersize=10, markeredgewidth=2)
+        for r in [penetration_depths[0], max_radius * dx]:
+            circle = plt.Circle((center_x_phys, center_y_phys), r, fill=False, 
+                              color='red', linestyle='--', alpha=0.7)
+            ax3.add_patch(circle)
+        
+        # 4. 2D cross-section at final time
+        ax4 = plt.subplot(2, 2, 4)
+        final_nutrient = simulation_data["field_data"]["nutrient_fields"][time_points[-1]]
+        final_slice = final_nutrient[:, :, z_slice]
+        
+        im4 = ax4.imshow(final_slice, extent=[x[0], x[-1], y[0], y[-1]], 
+                        origin='lower', cmap='viridis', aspect='equal')
+        ax4.set_title(f'Final Nutrient Distribution (t = {times[-1]:.2f})')
+        ax4.set_xlabel('X')
+        ax4.set_ylabel('Y')
+        plt.colorbar(im4, ax=ax4, label='Concentration')
+        
+        # Add center point and radius circles
+        ax4.plot(center_x_phys, center_y_phys, 'r+', markersize=10, markeredgewidth=2)
+        for r in [penetration_depths[-1], max_radius * dx]:
+            circle = plt.Circle((center_x_phys, center_y_phys), r, fill=False, 
+                              color='red', linestyle='--', alpha=0.7)
+            ax4.add_patch(circle)
+        
+        plt.tight_layout()
+        
+        # Save plot if requested
+        if save_plot and output_dir:
+            os.makedirs(output_dir, exist_ok=True)
+            filename = "nutrient_diffusion_analysis.png"
+            filepath = os.path.join(output_dir, filename)
+            plt.savefig(filepath, dpi=300, bbox_inches='tight')
+            print(f"Saved nutrient diffusion analysis plot to {filepath}")
+        
+        if show_plot:
+            plt.show()
+        else:
+            plt.close()
+        
+        # Print summary statistics
+        print(f"\nNutrient Diffusion Analysis Summary:")
+        print(f"Initial penetration depth: {penetration_depths[0]:.3f}")
+        print(f"Final penetration depth: {penetration_depths[-1]:.3f}")
+        print(f"Total change in penetration: {penetration_depths[-1] - penetration_depths[0]:.3f}")
+        if len(times) > 1:
+            print(f"Average penetration rate: {(penetration_depths[-1] - penetration_depths[0]) / (times[-1] - times[0]):.3f} units/time")
+        
+        return 
+    
+    def plot_nutrient_penetration_heatmap(self, simulation_data, output_dir=None, save_plot=False, 
+                                        show_plot=True, figsize=(12, 8), z_slice=None,
+                                        center_x=None, center_y=None, max_radius=None,
+                                        num_radial_bins=20, time_points=None):
+        """
+        Create a heatmap showing nutrient penetration depth over time and space.
+        
+        Args:
+            simulation_data: Dictionary containing simulation data
+            output_dir: Directory to save plots
+            save_plot: Whether to save the plots
+            show_plot: Whether to display the plots
+            figsize: Figure size tuple
+            z_slice: Z-slice to analyze (defaults to center)
+            center_x: Center x coordinate for analysis
+            center_y: Center y coordinate for analysis
+            max_radius: Maximum radius to analyze
+            num_radial_bins: Number of radial bins for averaging
+            time_points: List of time point indices to plot
+        """
+        # Get simulation metadata
+        saved_steps = simulation_data["metadata"]["saved_steps"]
+        saved_times = simulation_data["metadata"]["saved_times"]
+        grid_size = simulation_data["metadata"]["grid_size"]
+        dx = 1.0
+        
+        nx, ny, nz = grid_size
+        if z_slice is None:
+            z_slice = nz // 2
+        
+        # Set default center coordinates if not provided
+        if center_x is None:
+            center_x = nx // 2
+        if center_y is None:
+            center_y = ny // 2
+        
+        # Set default max radius
+        if max_radius is None:
+            max_radius = min(nx, ny) // 2
+        
+        # Set default time points
+        if time_points is None:
+            time_points = list(range(len(saved_steps)))
+        
+        # Create coordinate grids
+        x = np.arange(nx) * dx
+        y = np.arange(ny) * dx
+        X, Y = np.meshgrid(x, y, indexing='ij')
+        
+        # Calculate radial coordinates from center
+        center_x_phys = center_x * dx
+        center_y_phys = center_y * dx
+        R = np.sqrt((X - center_x_phys)**2 + (Y - center_y_phys)**2)
+        
+        # Create radial bins
+        radial_bins = np.linspace(0, max_radius * dx, num_radial_bins + 1)
+        radial_centers = (radial_bins[:-1] + radial_bins[1:]) / 2
+        
+        # Create time-radial heatmap data
+        heatmap_data = np.zeros((len(time_points), num_radial_bins))
+        
+        # Fill heatmap data
+        for i, time_idx in enumerate(time_points):
+            nutrient_field = simulation_data["field_data"]["nutrient_fields"][time_idx]
+            nutrient_slice = nutrient_field[:, :, z_slice]
+            
+            for j in range(num_radial_bins):
+                mask = (R >= radial_bins[j]) & (R < radial_bins[j + 1])
+                if np.any(mask):
+                    heatmap_data[i, j] = np.mean(nutrient_slice[mask])
+        
+        # Create the heatmap
+        fig, ax = plt.subplots(figsize=figsize)
+        
+        im = ax.imshow(heatmap_data, aspect='auto', cmap='viridis', 
+                      extent=[radial_centers[0], radial_centers[-1], 
+                             saved_times[time_points[0]], saved_times[time_points[-1]]],
+                      origin='lower')
+        
+        ax.set_xlabel('Radial Distance from Center')
+        ax.set_ylabel('Time')
+        ax.set_title('Nutrient Concentration Heatmap: Time vs. Radial Distance')
+        
+        # Add colorbar
+        cbar = plt.colorbar(im, ax=ax)
+        cbar.set_label('Nutrient Concentration')
+        
+        # Add contour lines for penetration depth
+        threshold = 0.1 * np.max(heatmap_data)
+        contour_levels = [threshold]
+        ax.contour(heatmap_data, levels=contour_levels, colors='red', 
+                  linewidths=2, alpha=0.8,
+                  extent=[radial_centers[0], radial_centers[-1], 
+                         saved_times[time_points[0]], saved_times[time_points[-1]]],
+                  origin='lower')
+        
+        plt.tight_layout()
+        
+        # Save plot if requested
+        if save_plot and output_dir:
+            os.makedirs(output_dir, exist_ok=True)
+            filename = "nutrient_penetration_heatmap.png"
+            filepath = os.path.join(output_dir, filename)
+            plt.savefig(filepath, dpi=300, bbox_inches='tight')
+            print(f"Saved nutrient penetration heatmap to {filepath}")
+        
+        if show_plot:
+            plt.show()
+        else:
+            plt.close()
+        
+        return heatmap_data
+    
+    def plot_nutrient_penetration_simple(self, step=0, z_slice=None, center_x=None, center_y=None, 
+                                       max_radius=None, num_radial_bins=20, output_dir=None, 
+                                       save_plot=False, show_plot=True, figsize=(12, 5)):
+        """
+        Simple function to plot current nutrient penetration depth for real-time analysis.
+        
+        Args:
+            step: Current simulation step for filename
+            z_slice: Z-slice to analyze (defaults to center)
+            center_x: Center x coordinate for analysis (defaults to domain center)
+            center_y: Center y coordinate for analysis (defaults to domain center)
+            max_radius: Maximum radius to analyze (defaults to half domain size)
+            num_radial_bins: Number of radial bins for averaging
+            output_dir: Directory to save plots
+            save_plot: Whether to save the plots
+            show_plot: Whether to display the plots
+            figsize: Figure size tuple
+        """
+        nx, ny, nz = self.grid
+        if z_slice is None:
+            z_slice = nz // 2
+        
+        # Set default center coordinates if not provided
+        if center_x is None:
+            center_x = nx // 2
+        if center_y is None:
+            center_y = ny // 2
+        
+        # Set default max radius
+        if max_radius is None:
+            max_radius = min(nx, ny) // 2
+        
+        # Create coordinate grids
+        x = np.arange(nx) * self.dx
+        y = np.arange(ny) * self.dx
+        X, Y = np.meshgrid(x, y, indexing='ij')
+        
+        # Calculate radial coordinates from center
+        center_x_phys = center_x * self.dx
+        center_y_phys = center_y * self.dx
+        R = np.sqrt((X - center_x_phys)**2 + (Y - center_y_phys)**2)
+        
+        # Create radial bins
+        radial_bins = np.linspace(0, max_radius * self.dx, num_radial_bins + 1)
+        radial_centers = (radial_bins[:-1] + radial_bins[1:]) / 2
+        
+        # Get current nutrient field
+        nutrient_slice = self.field_manager.nutrient_field[:, :, z_slice]
+        
+        # Calculate radial average of nutrient concentration
+        radial_nutrient = np.zeros(num_radial_bins)
+        for j in range(num_radial_bins):
+            mask = (R >= radial_bins[j]) & (R < radial_bins[j + 1])
+            if np.any(mask):
+                radial_nutrient[j] = np.mean(nutrient_slice[mask])
+        
+        # Calculate penetration depth (where nutrient concentration drops to 10% of maximum)
+        max_nutrient = np.max(nutrient_slice)
+        threshold = 0.1 * max_nutrient
+        
+        penetration_idx = np.where(radial_nutrient >= threshold)[0]
+        if len(penetration_idx) > 0:
+            penetration_depth = radial_centers[penetration_idx[-1]]
+        else:
+            penetration_depth = 0.0
+        
+        # Create the plot
+        fig, (ax1, ax2) = plt.subplots(1, 2, figsize=figsize)
+        
+        # 1. Radial nutrient profile
+        ax1.plot(radial_centers, radial_nutrient, 'b-', linewidth=2, label='Nutrient Concentration')
+        ax1.axhline(y=threshold, color='r', linestyle='--', alpha=0.7, label=f'Threshold ({threshold:.3f})')
+        ax1.axvline(x=penetration_depth, color='g', linestyle='--', alpha=0.7, 
+                   label=f'Penetration Depth ({penetration_depth:.3f})')
+        ax1.set_xlabel('Radial Distance from Center')
+        ax1.set_ylabel('Nutrient Concentration')
+        ax1.set_title(f'Radial Nutrient Profile (Step {step})')
+        ax1.legend()
+        ax1.grid(True, alpha=0.3)
+        
+        # 2. 2D cross-section with penetration depth overlay
+        im = ax2.imshow(nutrient_slice, extent=[x[0], x[-1], y[0], y[-1]], 
+                       origin='lower', cmap='viridis', aspect='equal')
+        ax2.set_title(f'Nutrient Distribution (z={z_slice})')
+        ax2.set_xlabel('X')
+        ax2.set_ylabel('Y')
+        plt.colorbar(im, ax=ax2, label='Concentration')
+        
+        # Add center point and penetration depth circle
+        ax2.plot(center_x_phys, center_y_phys, 'r+', markersize=10, markeredgewidth=2)
+        circle = plt.Circle((center_x_phys, center_y_phys), penetration_depth, fill=False, 
+                          color='red', linestyle='--', alpha=0.8, linewidth=2)
+        ax2.add_patch(circle)
+        
+        plt.tight_layout()
+        
+        # Save plot if requested
+        if save_plot and output_dir:
+            os.makedirs(output_dir, exist_ok=True)
+            filename = f"nutrient_penetration_step_{step:06d}.png"
+            filepath = os.path.join(output_dir, filename)
+            plt.savefig(filepath, dpi=300, bbox_inches='tight')
+            print(f"Saved nutrient penetration plot to {filepath}")
+        
+        if show_plot:
+            plt.show()
+        else:
+            plt.close()
+        
+        # Print penetration depth
+        print(f"Step {step}: Nutrient penetration depth = {penetration_depth:.3f}")
+        
+        return penetration_depth
+    
+    def plot_nutrient_time_series_at_depths(self, simulation_data, depths=None, output_dir=None, 
+                                          save_plot=False, show_plot=True, figsize=(12, 8),
+                                          z_slice=None, center_x=None, center_y=None):
+        """
+        Plot nutrient concentration time series at different radial depths.
+        
+        Args:
+            simulation_data: Dictionary containing simulation data
+            depths: List of radial depths to analyze (defaults to [0.1, 0.3, 0.5, 0.7, 0.9] of max radius)
+            output_dir: Directory to save plots
+            save_plot: Whether to save the plots
+            show_plot: Whether to display the plots
+            figsize: Figure size tuple
+            z_slice: Z-slice to analyze (defaults to center)
+            center_x: Center x coordinate for analysis
+            center_y: Center y coordinate for analysis
+        """
+        # Get simulation metadata
+        saved_steps = simulation_data["metadata"]["saved_steps"]
+        saved_times = simulation_data["metadata"]["saved_times"]
+        grid_size = simulation_data["metadata"]["grid_size"]
+        dx = 1.0
+        
+        nx, ny, nz = grid_size
+        if z_slice is None:
+            z_slice = nz // 2
+        
+        # Set default center coordinates if not provided
+        if center_x is None:
+            center_x = nx // 2
+        if center_y is None:
+            center_y = ny // 2
+        
+        # Set default depths
+        if depths is None:
+            max_radius = min(nx, ny) // 2 * dx
+            depths = [0.1 * max_radius, 0.3 * max_radius, 0.5 * max_radius, 
+                    0.7 * max_radius, 0.9 * max_radius]
+        
+        # Create coordinate grids
+        x = np.arange(nx) * dx
+        y = np.arange(ny) * dx
+        X, Y = np.meshgrid(x, y, indexing='ij')
+        
+        # Calculate radial coordinates from center
+        center_x_phys = center_x * dx
+        center_y_phys = center_y * dx
+        R = np.sqrt((X - center_x_phys)**2 + (Y - center_y_phys)**2)
+        
+        # Store time series data for each depth
+        time_series_data = {depth: [] for depth in depths}
+        
+        # Analyze each time point
+        for i, (step, time) in enumerate(zip(saved_steps, saved_times)):
+            # Get nutrient field for this time point
+            nutrient_field = simulation_data["field_data"]["nutrient_fields"][i]
+            nutrient_slice = nutrient_field[:, :, z_slice]
+            
+            # Calculate average nutrient concentration at each depth
+            for depth in depths:
+                # Find points within a small range around the target depth
+                depth_tolerance = 0.1 * dx  # Small tolerance for depth matching
+                mask = (R >= depth - depth_tolerance) & (R < depth + depth_tolerance)
+                
+                if np.any(mask):
+                    avg_concentration = np.mean(nutrient_slice[mask])
+                else:
+                    avg_concentration = 0.0
+                
+                time_series_data[depth].append(avg_concentration)
+        
+        # Create the plot
+        fig, (ax1, ax2) = plt.subplots(2, 1, figsize=figsize)
+        
+        # 1. Time series at different depths
+        colors = plt.cm.viridis(np.linspace(0, 1, len(depths)))
+        
+        for depth, color in zip(depths, colors):
+            ax1.plot(saved_times, time_series_data[depth], color=color, linewidth=2, 
+                    label=f'Depth = {depth:.2f}', marker='o', markersize=4)
+        
+        ax1.set_xlabel('Time')
+        ax1.set_ylabel('Nutrient Concentration')
+        ax1.set_title('Nutrient Concentration Time Series at Different Depths')
+        ax1.legend()
+        ax1.grid(True, alpha=0.3)
+        
+        # 2. Penetration depth over time (where concentration drops below threshold)
+        threshold = 0.1  # 10% of maximum concentration
+        penetration_depths = []
+        
+        for i, time in enumerate(saved_times):
+            # Find the deepest point where concentration is above threshold
+            max_penetration = 0.0
+            for depth in depths:
+                if time_series_data[depth][i] >= threshold:
+                    max_penetration = depth
+            
+            penetration_depths.append(max_penetration)
+        
+        ax2.plot(saved_times, penetration_depths, 'r-o', linewidth=2, markersize=6)
+        ax2.set_xlabel('Time')
+        ax2.set_ylabel('Penetration Depth')
+        ax2.set_title('Nutrient Penetration Depth Over Time')
+        ax2.grid(True, alpha=0.3)
+        
+        # Add trend line
+        if len(saved_times) > 1:
+            z = np.polyfit(saved_times, penetration_depths, 1)
+            p = np.poly1d(z)
+            ax2.plot(saved_times, p(saved_times), '--', color='red', alpha=0.7, 
+                    label=f'Trend: {z[0]:.3f}x + {z[1]:.3f}')
+            ax2.legend()
+        
+        plt.tight_layout()
+        
+        # Save plot if requested
+        if save_plot and output_dir:
+            os.makedirs(output_dir, exist_ok=True)
+            filename = "nutrient_time_series_at_depths.png"
+            filepath = os.path.join(output_dir, filename)
+            plt.savefig(filepath, dpi=300, bbox_inches='tight')
+            print(f"Saved nutrient time series plot to {filepath}")
+        
+        if show_plot:
+            plt.show()
+        else:
+            plt.close()
+        
+        return

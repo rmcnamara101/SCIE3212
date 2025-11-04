@@ -1,12 +1,66 @@
+"""
+
+Initial Conditions Module
+
+This module handles the initialization of simulation fields based on YAML configuration.
+It supports multiple initial condition types and configurable seeding densities.
+
+It supports the following initial condition types:
+- spherical
+- gaussian_random_blob
+- multiple_spheres
+- uniform
+- organoid_settling
+- main_spheroid_with_blobs
+- custom
+
+It also supports the following nutrient field initialization types:
+- natural
+- gradient
+- uniform
+
+It also supports the following seeding types:
+- uniform
+- gaussian noise
+
+To adjust initial conditions, simply modify the YAML configuration file.
+
+Example YAML configuration:
+
+initial_conditions:
+  type: gaussian_random_blob
+  radius: 7
+  center: [50, 50, 50]
+  deformation_strength: 0.3
+  seeding_densities:
+    Tumour: 0.7
+    Necrotic: 0.0
+  nutrient:
+    type: natural
+    concentration: 1.0
+    concentration_max: 1.0
+    concentration_min: 0.0
+
+Author: Riley Jae McNamara
+Date: 2025-10-27
+
+"""
+
+
+# -- Standard imports --
 import numpy as np
 from typing import Dict, List, Tuple, Optional, Union
 import yaml
 
 
+# -- Module definition --  
 class InitialConditions:
     """
-    Handles initialization of simulation fields based on configuration.
+    Handles initialization of simulation fields based on YAML configuration.
     Supports multiple initial condition types and configurable seeding densities.
+    Supports multiple nutrient field initialization types.
+    Supports multiple seeding types.
+    Supports multiple noise scales.
     """
     
     def __init__(self, cfg: Dict):

@@ -22,6 +22,14 @@ import copy
 import os
 import random
 import numpy as np
+try:
+    from openpyxl import Workbook
+    from openpyxl.utils.dataframe import dataframe_to_rows
+    from openpyxl.styles import Font, PatternFill, Alignment
+    OPENPYXL_AVAILABLE = True
+except ImportError:
+    OPENPYXL_AVAILABLE = False
+    print("Warning: openpyxl not available. Excel export will use xlsxwriter fallback.")
 
 # Add project root to path
 if sys.platform == "darwin":
@@ -144,6 +152,18 @@ def save_parameter_config(config, output_dir, run_id):
     return config_path
 
 
+def flatten_dict(d, parent_key='', sep='.'):
+    """Helper function to flatten nested dictionary."""
+    items = []
+    for k, v in d.items():
+        new_key = f"{parent_key}{sep}{k}" if parent_key else k
+        if isinstance(v, dict):
+            items.extend(flatten_dict(v, new_key, sep=sep).items())
+        else:
+            items.append((new_key, v))
+    return dict(items)
+
+
 def run_random_parameter_sweep(base_config_path, parameter_bounds_dict, num_samples, 
                               output_dir=None, total_steps=50, save_interval=1, 
                               threshold=0.1, random_seed=None):
@@ -222,17 +242,26 @@ def run_random_parameter_sweep(base_config_path, parameter_bounds_dict, num_samp
             yaml.dump(updated_config, f, default_flow_style=False, sort_keys=False)
         
         try:
-            # Run simulation with observables
+            # Run simulation with observables (this creates CSV with config already included)
             csv_path = run_simulation_with_observables(
                 config_path=str(temp_config_path),
                 output_dir=sweep_dir,
                 total_steps=total_steps,
                 save_interval=save_interval,
                 threshold=threshold,
-                parameter_values=param_combination
+                parameter_values=param_combination,
+                config=updated_config  # Pass full config for inclusion in CSV
             )
             
+            # The CSV already contains config and observables, but we need to rename it with run_id
             csv_files.append(csv_path)
+            
+            # Rename the CSV to include run_id for easy identification
+            combined_csv_path = sweep_dir / f"observables_run_{run_id:03d}.csv"
+            if csv_path != combined_csv_path:
+                import shutil
+                shutil.move(csv_path, combined_csv_path)
+                csv_path = combined_csv_path
             
             # Store run information
             run_info = {
@@ -256,6 +285,7 @@ def run_random_parameter_sweep(base_config_path, parameter_bounds_dict, num_samp
                 'parameter_combination': param_combination,
                 'config_path': str(config_path),
                 'csv_path': None,
+                'combined_csv_path': None,
                 'success': False,
                 'error': str(e)
             }
@@ -285,9 +315,7 @@ def run_random_parameter_sweep(base_config_path, parameter_bounds_dict, num_samp
     print(f"Summary saved to: {summary_path}")
     
     if csv_files:
-        print(f"CSV files generated:")
-        for csv_file in csv_files:
-            print(f"  - {csv_file}")
+        print(f"CSV files (with config and observables) generated: {len(csv_files)}")
     
     return csv_files, sweep_summary
 
@@ -371,7 +399,15 @@ def run_parameter_sweep(base_config_path, parameter_sweep_dict, output_dir=None,
                 parameter_values=param_combination
             )
             
+            # The CSV already contains config and observables, but we need to rename it with run_id
             csv_files.append(csv_path)
+            
+            # Rename the CSV to include run_id for easy identification
+            combined_csv_path = sweep_dir / f"observables_run_{run_id:03d}.csv"
+            if csv_path != combined_csv_path:
+                import shutil
+                shutil.move(csv_path, combined_csv_path)
+                csv_path = combined_csv_path
             
             # Store run information
             run_info = {
@@ -424,9 +460,7 @@ def run_parameter_sweep(base_config_path, parameter_sweep_dict, output_dir=None,
     print(f"Summary saved to: {summary_path}")
     
     if csv_files:
-        print(f"CSV files generated:")
-        for csv_file in csv_files:
-            print(f"  - {csv_file}")
+        print(f"CSV files (with config and observables) generated: {len(csv_files)}")
     
     return csv_files, sweep_summary
 
@@ -440,21 +474,27 @@ def main():
     # Define parameter bounds for random sampling
     parameter_bounds_dict = {
         # Tumor cell growth rate: random between 2.0 and 8.0
-        'populations.Tumour.dynamics.lambda': (2.0, 8.0),
+        'populations.Tumour.dynamics.lambda': (0.2, 8.0),
         # Tumor cell death rate: random between 0.2 and 2.0
-        'populations.Tumour.dynamics.mu': (0.2, 2.0),
+        'populations.Tumour.dynamics.mu': (0.2, 8.0),
         # Tumor cell mobility: random between 0.5 and 2.0
-        'populations.Tumour.dynamics.mobility': (0.5, 2.0),
-        # Nutrient diffusion: random between 0.01 and 0.1
-        'nutrient.dynamics.diffusion': (0.01, 0.1),
-        # Nutrient boundary value: random between 0.8 and 1.2
-        'nutrient.dynamics.boundary_value': (0.8, 1.2),
-        # Adhesion energy: random between 0.5 and 2.0
-        'physics.adhesion_energy.m': (0.5, 2.0)
+        'populations.Tumour.dynamics.mobility': (0.1, 1000.0),
+        # Tumor cell nutrient threshold: random between 0.1 and 1.0
+        'populations.Tumour.dynamics.nutrient_threshold': (0.1, 1.0),
+        # Tumor cell nutrient consumption: random between 0.01 and 0.1
+        'populations.Tumour.dynamics.nutrient_consumption': (0.01, 0.1),
+        # Tumor cell nutrient production: random between 0.01 and 0.1
+        'populations.Tumour.dynamics.nutrient_production': (0.01, 0.1),
+        # Necrotic cell beta_N: random between 0.00001 and 0.1
+        'populations.Necrotic.dynamics.beta_N': (0.00001, 0.1),
+        # Nutrient diffusion: random between 300 and 600
+        'nutrient.dynamics.diffusion': (300, 600),
+        # Adhesion energy: random between 0.1 and 1000.0
+        'physics.adhesion_energy.m': (0.1, 1000.0),
     }
     
     # Number of random samples to generate
-    num_samples = 3
+    num_samples = 100
     
     # Run random parameter sweep
     csv_files, summary = run_random_parameter_sweep(

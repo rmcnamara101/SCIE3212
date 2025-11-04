@@ -40,7 +40,14 @@ class SimPlotter:
     
     def plot_tumor_radius_evolution(self, output_dir=None, save_plot=False, show_plot=True,
                                    figsize=(12, 8), include_individual_populations=True,
-                                   threshold=0.1, method='contour'):
+                                   threshold=0.4, method='contour', 
+                                   include_inhibited_radius=True,
+                                   include_necrotic_radius=True,
+                                   growth_threshold=3.0,
+                                   use_adaptive_threshold=True,
+                                   threshold_type='percentile',
+                                   growth_threshold_percentile=75.0,
+                                   necrotic_threshold_percentile=25.0):
         """
         Plot tumor radius evolution over time.
         
@@ -52,10 +59,19 @@ class SimPlotter:
             include_individual_populations: Whether to plot individual population radii
             threshold: Density threshold for radius calculation
             method: Method for radius calculation ('contour' or 'mass')
+            include_inhibited_radius: Whether to include inhibited radius calculation
+            include_necrotic_radius: Whether to include necrotic radius calculation
+            growth_threshold: Absolute threshold for detecting proliferative cells (used if use_adaptive_threshold=False)
+            use_adaptive_threshold: Whether to use adaptive thresholds based on source term distribution
+            threshold_type: Type of adaptive threshold ('percentile', 'relative_max', 'relative_mean')
+            growth_threshold_percentile: Percentile for proliferative threshold (default 75.0)
+            necrotic_threshold_percentile: Percentile for necrotic threshold (default 25.0)
         """
         print("Calculating tumor radius evolution...")
         
         # Calculate radii for all populations
+        # NOTE: These are density-based radii - they show where cells of each population exist
+        # For necrotic population, this shows where necrotic material exists (physical extent)
         radii_data = {}
         for i, label in enumerate(self.labels):
             radii = []
@@ -73,11 +89,86 @@ class SimPlotter:
             radius = self.utils.calculate_radius(total_density, threshold=threshold, method=method)
             total_radii.append(radius)
         
+        # Calculate inhibited radius if requested and source terms are available
+        inhibited_radii = []
+        if include_inhibited_radius and "physics_data" in self.simulation_data:
+            physics_data = self.simulation_data["physics_data"]
+            if len(physics_data) > 0 and "source_terms" in physics_data[0]:
+                print("Calculating inhibited radius evolution...")
+                for step_idx in range(len(self.saved_steps)):
+                    phi_hat = self.field_data["phi_hat"][step_idx]
+                    total_density = np.sum(phi_hat, axis=0)
+                    source_terms = physics_data[step_idx]["source_terms"]
+                    
+                    # Calculate inhibited radius with adaptive threshold
+                    # Exclude necrotic population to avoid masking negative source terms
+                    inhibited_radius = self.utils.calculate_inhibited_radius(
+                        source_terms, total_density, 
+                        growth_threshold=growth_threshold, 
+                        density_threshold=threshold,
+                        method='radial_average',
+                        threshold_type=threshold_type,
+                        threshold_percentile=growth_threshold_percentile,
+                        use_adaptive_threshold=use_adaptive_threshold,
+                        exclude_necrotic=True
+                    )
+                    inhibited_radii.append(inhibited_radius)
+            else:
+                print("Warning: Source terms not available for inhibited radius calculation")
+                include_inhibited_radius = False
+        else:
+            include_inhibited_radius = False
+        
+        # Calculate necrotic radius if requested and source terms are available
+        # NOTE: This is source-term-based radius - shows where cells are actively dying/dead
+        # This is different from the necrotic population radius which shows physical extent
+        # The source-term method identifies the core boundary based on cell death activity
+        necrotic_radii = []
+        if include_necrotic_radius and "physics_data" in self.simulation_data:
+            physics_data = self.simulation_data["physics_data"]
+            if len(physics_data) > 0 and "source_terms" in physics_data[0]:
+                print("Calculating necrotic radius evolution (source-term based)...")
+                for step_idx in range(len(self.saved_steps)):
+                    phi_hat = self.field_data["phi_hat"][step_idx]
+                    total_density = np.sum(phi_hat, axis=0)
+                    source_terms = physics_data[step_idx]["source_terms"]
+                    
+                    # Calculate necrotic radius with adaptive threshold
+                    # Exclude necrotic population to avoid masking negative source terms
+                    necrotic_radius = self.utils.calculate_necrotic_radius(
+                        source_terms, total_density,
+                        necrotic_threshold=0.0,
+                        density_threshold=threshold,
+                        method='radial_average',
+                        threshold_type='zero_crossing' if use_adaptive_threshold else 'absolute',
+                        threshold_percentile=necrotic_threshold_percentile,
+                        use_adaptive_threshold=use_adaptive_threshold,
+                        exclude_necrotic=True
+                    )
+                    necrotic_radii.append(necrotic_radius)
+            else:
+                print("Warning: Source terms not available for necrotic radius calculation")
+                include_necrotic_radius = False
+        else:
+            include_necrotic_radius = False
+        
         # Create plot
         fig, ax = plt.subplots(figsize=figsize)
         
         # Plot total radius
         ax.plot(self.saved_times, total_radii, 'k-', linewidth=3, label='Total Tumor', marker='o', markersize=6)
+        
+        # Plot inhibited radius if available
+        if include_inhibited_radius:
+            ax.plot(self.saved_times, inhibited_radii, 'g--', linewidth=2, 
+                   label='Inhibited Radius', marker='^', markersize=5)
+        
+        # Plot necrotic radius if available
+        # NOTE: This is the source-term-based necrotic core boundary
+        # (Different from "Necrotic Cells" which is density-based physical extent)
+        if include_necrotic_radius:
+            ax.plot(self.saved_times, necrotic_radii, 'r--', linewidth=2, 
+                   label='Necrotic Core Radius (source-term)', marker='v', markersize=5)
         
         # Plot individual population radii if requested
         if include_individual_populations:
@@ -92,6 +183,24 @@ class SimPlotter:
         ax.legend()
         ax.grid(True, alpha=0.3)
         
+        # Add text box with information about thresholds
+        if include_inhibited_radius or include_necrotic_radius:
+            if use_adaptive_threshold:
+                info_text = f'Adaptive thresholds:\n'
+                if include_inhibited_radius:
+                    info_text += f'Inhibited: {threshold_type} ({growth_threshold_percentile}th percentile)\n'
+                if include_necrotic_radius:
+                    info_text += f'Necrotic: zero crossing'
+            else:
+                info_text = f'Absolute thresholds:\n'
+                if include_inhibited_radius:
+                    info_text += f'Inhibited: {growth_threshold}\n'
+                if include_necrotic_radius:
+                    info_text += f'Necrotic: 0.0'
+            ax.text(0.02, 0.98, info_text, transform=ax.transAxes, 
+                   verticalalignment='top', fontsize=9,
+                   bbox=dict(boxstyle='round', facecolor='lightgray', alpha=0.8))
+        
         plt.tight_layout()
         
         if save_plot and output_dir:
@@ -105,7 +214,13 @@ class SimPlotter:
         else:
             plt.close()
         
-        return
+        # Return data for use by plot_all_observables
+        return {
+            'total_radii': total_radii,
+            'population_radii': radii_data,
+            'inhibited_radii': inhibited_radii if include_inhibited_radius else None,
+            'necrotic_radii': necrotic_radii if include_necrotic_radius else None
+        } 
     
     def plot_population_density_evolution(self, output_dir=None, save_plot=False, show_plot=True,
                                         figsize=(12, 8), normalize_by_volume=False):
@@ -171,7 +286,11 @@ class SimPlotter:
         else:
             plt.close()
         
-        return
+        # Return data for use by plot_all_observables and export
+        return {
+            'total_densities': total_densities,
+            'population_densities': density_data
+        }
     
     def plot_tumor_shape_evolution(self, output_dir=None, save_plot=False, show_plot=True,
                                   figsize=(15, 10), threshold=0.1, max_plots=6):
@@ -350,7 +469,11 @@ class SimPlotter:
         else:
             plt.close()
         
-        return
+        # Return data for use by plot_all_observables and export
+        return {
+            'total_com': {'x': total_com_x, 'y': total_com_y, 'z': total_com_z},
+            'population_com': com_data
+        }
     
     def plot_compactness_evolution(self, output_dir=None, save_plot=False, show_plot=True,
                                  figsize=(12, 8), include_individual_populations=True):
@@ -416,10 +539,22 @@ class SimPlotter:
         else:
             plt.close()
         
-        return
+        # Return data for use by plot_all_observables and export
+        return {
+            'total_compactness': total_compactness,
+            'population_compactness': compactness_data
+        }
     
     def plot_all_observables(self, output_dir=None, save_plot=False, show_plot=True,
-                           figsize=(20, 15), threshold=0.1):
+                           figsize=(20, 15), threshold=0.1, 
+                           include_inhibited_radius=True,
+                           include_necrotic_radius=True,
+                           growth_threshold=0.01,
+                           use_adaptive_threshold=True,
+                           threshold_type='percentile',
+                           growth_threshold_percentile=75.0,
+                           necrotic_threshold_percentile=25.0,
+                           only_radii=False):
         """
         Create a comprehensive plot of all observables.
         
@@ -429,116 +564,150 @@ class SimPlotter:
             show_plot: Whether to display the plot
             figsize: Figure size
             threshold: Density threshold for radius calculation
+            include_inhibited_radius: Whether to include inhibited radius calculation
+            include_necrotic_radius: Whether to include necrotic radius calculation
+            growth_threshold: Absolute threshold for detecting proliferative cells (used if use_adaptive_threshold=False)
+            use_adaptive_threshold: Whether to use adaptive thresholds based on source term distribution
+            threshold_type: Type of adaptive threshold ('percentile', 'relative_max', 'relative_mean')
+            growth_threshold_percentile: Percentile for proliferative threshold (default 75.0)
+            necrotic_threshold_percentile: Percentile for necrotic threshold (default 25.0)
+            only_radii: If True, only calculate radius-related observables (for export)
         """
-        print("Creating comprehensive observables plot...")
+        if not only_radii:
+            print("Creating comprehensive observables plot...")
+        else:
+            print("Calculating radius observables...")
         
-        # Calculate all observables
+        # Calculate observables
         observables = {}
         
-        # Radius evolution
+        # Radius evolution (always calculated)
         radius_data = self.plot_tumor_radius_evolution(output_dir=None, save_plot=False, 
-                                                      show_plot=False, threshold=threshold)
+                                                      show_plot=False, threshold=threshold,
+                                                      include_inhibited_radius=include_inhibited_radius,
+                                                      include_necrotic_radius=include_necrotic_radius,
+                                                      growth_threshold=growth_threshold,
+                                                      use_adaptive_threshold=use_adaptive_threshold,
+                                                      threshold_type=threshold_type,
+                                                      growth_threshold_percentile=growth_threshold_percentile,
+                                                      necrotic_threshold_percentile=necrotic_threshold_percentile)
         observables['radius'] = radius_data
         
-        # Density evolution
-        density_data = self.plot_population_density_evolution(output_dir=None, save_plot=False, 
-                                                            show_plot=False)
-        observables['density'] = density_data
-        
-        # Center of mass evolution
-        com_data = self.plot_center_of_mass_evolution(output_dir=None, save_plot=False, 
-                                                     show_plot=False)
-        observables['center_of_mass'] = com_data
-        
-        # Compactness evolution
-        compactness_data = self.plot_compactness_evolution(output_dir=None, save_plot=False, 
+        # Only calculate other observables if not in export-only mode
+        if not only_radii:
+            # Density evolution
+            density_data = self.plot_population_density_evolution(output_dir=None, save_plot=False, 
+                                                                show_plot=False)
+            observables['density'] = density_data
+            
+            # Center of mass evolution
+            com_data = self.plot_center_of_mass_evolution(output_dir=None, save_plot=False, 
                                                          show_plot=False)
-        observables['compactness'] = compactness_data
+            observables['center_of_mass'] = com_data
+            
+            # Compactness evolution
+            compactness_data = self.plot_compactness_evolution(output_dir=None, save_plot=False, 
+                                                             show_plot=False)
+            observables['compactness'] = compactness_data
         
-        # Create subplot grid
-        fig, axes = plt.subplots(2, 3, figsize=figsize)
+        # Only create plots if not in export-only mode
+        if not only_radii:
+            # Create subplot grid
+            fig, axes = plt.subplots(2, 3, figsize=figsize)
+            
+            # Plot 1: Radius evolution
+            ax = axes[0, 0]
+            ax.plot(self.saved_times, radius_data['total_radii'], 'k-', linewidth=3, label='Total', marker='o', markersize=4)
+            colors = plt.cm.Set1(np.linspace(0, 1, len(self.labels)))
+            for i, (label, radii) in enumerate(radius_data['population_radii'].items()):
+                ax.plot(self.saved_times, radii, '--', color=colors[i], linewidth=2, label=f'{label}', marker='s', markersize=3)
+            
+            # Add inhibited radius if available
+            if include_inhibited_radius and radius_data.get('inhibited_radii') is not None:
+                ax.plot(self.saved_times, radius_data['inhibited_radii'], 'g--', linewidth=2, 
+                       label='Inhibited', marker='^', markersize=4)
+            
+            # Add necrotic radius if available
+            if include_necrotic_radius and radius_data.get('necrotic_radii') is not None:
+                ax.plot(self.saved_times, radius_data['necrotic_radii'], 'r--', linewidth=2, 
+                       label='Necrotic', marker='v', markersize=4)
+            
+            ax.set_xlabel('Time')
+            ax.set_ylabel('Radius')
+            ax.set_title('Tumor Radius')
+            ax.legend()
+            ax.grid(True, alpha=0.3)
+            
+            # Plot 2: Density evolution
+            ax = axes[0, 1]
+            ax.plot(self.saved_times, density_data['total_densities'], 'k-', linewidth=3, label='Total', marker='o', markersize=4)
+            for i, (label, densities) in enumerate(density_data['population_densities'].items()):
+                ax.plot(self.saved_times, densities, '--', color=colors[i], linewidth=2, label=f'{label}', marker='s', markersize=3)
+            ax.set_xlabel('Time')
+            ax.set_ylabel('Total Density')
+            ax.set_title('Population Density')
+            ax.legend()
+            ax.grid(True, alpha=0.3)
+            
+            # Plot 3: Center of mass X
+            ax = axes[0, 2]
+            ax.plot(self.saved_times, com_data['total_com']['x'], 'k-', linewidth=3, label='Total', marker='o', markersize=4)
+            for i, (label, com) in enumerate(com_data['population_com'].items()):
+                ax.plot(self.saved_times, com['x'], '--', color=colors[i], linewidth=2, label=f'{label}', marker='s', markersize=3)
+            ax.set_xlabel('Time')
+            ax.set_ylabel('X Coordinate')
+            ax.set_title('Center of Mass - X')
+            ax.legend()
+            ax.grid(True, alpha=0.3)
+            
+            # Plot 4: Center of mass Y
+            ax = axes[1, 0]
+            ax.plot(self.saved_times, com_data['total_com']['y'], 'k-', linewidth=3, label='Total', marker='o', markersize=4)
+            for i, (label, com) in enumerate(com_data['population_com'].items()):
+                ax.plot(self.saved_times, com['y'], '--', color=colors[i], linewidth=2, label=f'{label}', marker='s', markersize=3)
+            ax.set_xlabel('Time')
+            ax.set_ylabel('Y Coordinate')
+            ax.set_title('Center of Mass - Y')
+            ax.legend()
+            ax.grid(True, alpha=0.3)
+            
+            # Plot 5: Center of mass Z
+            ax = axes[1, 1]
+            ax.plot(self.saved_times, com_data['total_com']['z'], 'k-', linewidth=3, label='Total', marker='o', markersize=4)
+            for i, (label, com) in enumerate(com_data['population_com'].items()):
+                ax.plot(self.saved_times, com['z'], '--', color=colors[i], linewidth=2, label=f'{label}', marker='s', markersize=3)
+            ax.set_xlabel('Time')
+            ax.set_ylabel('Z Coordinate')
+            ax.set_title('Center of Mass - Z')
+            ax.legend()
+            ax.grid(True, alpha=0.3)
+            
+            # Plot 6: Compactness
+            ax = axes[1, 2]
+            ax.plot(self.saved_times, compactness_data['total_compactness'], 'k-', linewidth=3, label='Total', marker='o', markersize=4)
+            for i, (label, compactness) in enumerate(compactness_data['population_compactness'].items()):
+                ax.plot(self.saved_times, compactness, '--', color=colors[i], linewidth=2, label=f'{label}', marker='s', markersize=3)
+            ax.set_xlabel('Time')
+            ax.set_ylabel('Compactness')
+            ax.set_title('Tumor Compactness')
+            ax.legend()
+            ax.grid(True, alpha=0.3)
+            
+            plt.tight_layout()
+            
+            if save_plot and output_dir:
+                os.makedirs(output_dir, exist_ok=True)
+                filename = 'all_observables_comprehensive.png'
+                plt.savefig(os.path.join(output_dir, filename), dpi=300, bbox_inches='tight')
+                print(f"Comprehensive observables plot saved to {output_dir}/{filename}")
+            
+            if show_plot:
+                plt.show()
+            else:
+                plt.close()
         
-        # Plot 1: Radius evolution
-        ax = axes[0, 0]
-        ax.plot(self.saved_times, radius_data['total_radii'], 'k-', linewidth=3, label='Total', marker='o', markersize=4)
-        colors = plt.cm.Set1(np.linspace(0, 1, len(self.labels)))
-        for i, (label, radii) in enumerate(radius_data['population_radii'].items()):
-            ax.plot(self.saved_times, radii, '--', color=colors[i], linewidth=2, label=f'{label}', marker='s', markersize=3)
-        ax.set_xlabel('Time')
-        ax.set_ylabel('Radius')
-        ax.set_title('Tumor Radius')
-        ax.legend()
-        ax.grid(True, alpha=0.3)
-        
-        # Plot 2: Density evolution
-        ax = axes[0, 1]
-        ax.plot(self.saved_times, density_data['total_densities'], 'k-', linewidth=3, label='Total', marker='o', markersize=4)
-        for i, (label, densities) in enumerate(density_data['population_densities'].items()):
-            ax.plot(self.saved_times, densities, '--', color=colors[i], linewidth=2, label=f'{label}', marker='s', markersize=3)
-        ax.set_xlabel('Time')
-        ax.set_ylabel('Total Density')
-        ax.set_title('Population Density')
-        ax.legend()
-        ax.grid(True, alpha=0.3)
-        
-        # Plot 3: Center of mass X
-        ax = axes[0, 2]
-        ax.plot(self.saved_times, com_data['total_com']['x'], 'k-', linewidth=3, label='Total', marker='o', markersize=4)
-        for i, (label, com) in enumerate(com_data['population_com'].items()):
-            ax.plot(self.saved_times, com['x'], '--', color=colors[i], linewidth=2, label=f'{label}', marker='s', markersize=3)
-        ax.set_xlabel('Time')
-        ax.set_ylabel('X Coordinate')
-        ax.set_title('Center of Mass - X')
-        ax.legend()
-        ax.grid(True, alpha=0.3)
-        
-        # Plot 4: Center of mass Y
-        ax = axes[1, 0]
-        ax.plot(self.saved_times, com_data['total_com']['y'], 'k-', linewidth=3, label='Total', marker='o', markersize=4)
-        for i, (label, com) in enumerate(com_data['population_com'].items()):
-            ax.plot(self.saved_times, com['y'], '--', color=colors[i], linewidth=2, label=f'{label}', marker='s', markersize=3)
-        ax.set_xlabel('Time')
-        ax.set_ylabel('Y Coordinate')
-        ax.set_title('Center of Mass - Y')
-        ax.legend()
-        ax.grid(True, alpha=0.3)
-        
-        # Plot 5: Center of mass Z
-        ax = axes[1, 1]
-        ax.plot(self.saved_times, com_data['total_com']['z'], 'k-', linewidth=3, label='Total', marker='o', markersize=4)
-        for i, (label, com) in enumerate(com_data['population_com'].items()):
-            ax.plot(self.saved_times, com['z'], '--', color=colors[i], linewidth=2, label=f'{label}', marker='s', markersize=3)
-        ax.set_xlabel('Time')
-        ax.set_ylabel('Z Coordinate')
-        ax.set_title('Center of Mass - Z')
-        ax.legend()
-        ax.grid(True, alpha=0.3)
-        
-        # Plot 6: Compactness
-        ax = axes[1, 2]
-        ax.plot(self.saved_times, compactness_data['total_compactness'], 'k-', linewidth=3, label='Total', marker='o', markersize=4)
-        for i, (label, compactness) in enumerate(compactness_data['population_compactness'].items()):
-            ax.plot(self.saved_times, compactness, '--', color=colors[i], linewidth=2, label=f'{label}', marker='s', markersize=3)
-        ax.set_xlabel('Time')
-        ax.set_ylabel('Compactness')
-        ax.set_title('Tumor Compactness')
-        ax.legend()
-        ax.grid(True, alpha=0.3)
-        
-        plt.tight_layout()
-        
-        if save_plot and output_dir:
-            os.makedirs(output_dir, exist_ok=True)
-            filename = 'all_observables_comprehensive.png'
-            plt.savefig(os.path.join(output_dir, filename), dpi=300, bbox_inches='tight')
-            print(f"Comprehensive observables plot saved to {output_dir}/{filename}")
-        
-        if show_plot:
-            plt.show()
-        else:
-            plt.close()
-        
-        return
+        # Return observables data
+        return observables
     
     def plot_nutrient_field_evolution(self, output_dir=None, save_plot=False, show_plot=True,
                                     figsize=(15, 10), z_slice=None, cmap="viridis", 
@@ -757,7 +926,11 @@ class SimPlotter:
         else:
             plt.close()
         
+        # Return data for use by plot_all_observables and export
         return {
+            'total_densities': total_densities,
+            'population_densities': density_data
+,
             'times': self.saved_times,
             'min_concentrations': min_concentrations,
             'max_concentrations': max_concentrations,
@@ -882,7 +1055,10 @@ class SimPlotter:
         else:
             plt.close()
         
+        # Return data for use by plot_all_observables and export
         return {
+            'total_densities': total_densities,
+            'population_densities': density_data,
             'times': self.saved_times,
             'correlations': correlations,
             'tumor_mean_nutrients': tumor_mean_nutrients,
@@ -1156,7 +1332,10 @@ class SimPlotter:
         else:
             plt.close()
         
+        # Return data for use by plot_all_observables and export
         return {
+            'total_densities': total_densities,
+            'population_densities': density_data,
             'times': self.saved_times,
             'min_sources': min_sources,
             'max_sources': max_sources,
@@ -1291,7 +1470,11 @@ class SimPlotter:
         else:
             plt.close()
         
+        # Return data for use by plot_all_observables and export
         return {
+            'total_densities': total_densities,
+            'population_densities': density_data,
+            
             'times': self.saved_times,
             'correlations': correlations,
             'tumor_mean_sources': tumor_mean_sources,
@@ -1300,7 +1483,8 @@ class SimPlotter:
     
     def export_observables_data(self, output_dir, filename='observables_data.csv'):
         """
-        Export all observables data to CSV files.
+        Export observables data to CSV file.
+        Currently only exports radius data (Total_Radius, Inhibited_Radius, Necrotic_Core_Radius).
         
         Args:
             output_dir: Directory to save data
@@ -1310,8 +1494,16 @@ class SimPlotter:
         
         os.makedirs(output_dir, exist_ok=True)
         
-        # Calculate all observables
-        observables = self.plot_all_observables(output_dir=None, save_plot=False, show_plot=False)
+        # Calculate only radius observables for export
+        observables = self.plot_all_observables(
+            output_dir=None, 
+            save_plot=False, 
+            show_plot=False,
+            include_inhibited_radius=True,
+            include_necrotic_radius=True,
+            use_adaptive_threshold=True,
+            only_radii=True  # Only calculate radius data
+        )
         
         # Create time series data
         import pandas as pd
@@ -1324,48 +1516,11 @@ class SimPlotter:
         for label, radii in observables['radius']['population_radii'].items():
             data[f'{label}_Radius'] = radii
         
-        # Add density data
-        data['Total_Density'] = observables['density']['total_densities']
-        for label, densities in observables['density']['population_densities'].items():
-            data[f'{label}_Density'] = densities
-        
-        # Add center of mass data
-        data['Total_COM_X'] = observables['center_of_mass']['total_com']['x']
-        data['Total_COM_Y'] = observables['center_of_mass']['total_com']['y']
-        data['Total_COM_Z'] = observables['center_of_mass']['total_com']['z']
-        for label, com in observables['center_of_mass']['population_com'].items():
-            data[f'{label}_COM_X'] = com['x']
-            data[f'{label}_COM_Y'] = com['y']
-            data[f'{label}_COM_Z'] = com['z']
-        
-        # Add compactness data
-        data['Total_Compactness'] = observables['compactness']['total_compactness']
-        for label, compactness in observables['compactness']['population_compactness'].items():
-            data[f'{label}_Compactness'] = compactness
-        
-        # Add nutrient data if available
-        if "nutrient_fields" in self.field_data:
-            nutrient_stats = self.plot_nutrient_statistics_evolution(
-                output_dir=None, save_plot=False, show_plot=False
-            )
-            data['Nutrient_Min'] = nutrient_stats['min_concentrations']
-            data['Nutrient_Max'] = nutrient_stats['max_concentrations']
-            data['Nutrient_Mean'] = nutrient_stats['mean_concentrations']
-            data['Nutrient_Total'] = nutrient_stats['total_concentrations']
-        
-        # Add source data if available
-        if "physics_data" in self.simulation_data:
-            physics_data = self.simulation_data["physics_data"]
-            if len(physics_data) > 0 and "source_terms" in physics_data[0]:
-                source_stats = self.plot_source_statistics_evolution(
-                    output_dir=None, save_plot=False, show_plot=False
-                )
-                data['Source_Min'] = source_stats['min_sources']
-                data['Source_Max'] = source_stats['max_sources']
-                data['Source_Mean'] = source_stats['mean_sources']
-                data['Source_Total'] = source_stats['total_sources']
-                data['Source_Positive'] = source_stats['positive_sources']
-                data['Source_Negative'] = source_stats['negative_sources']
+        # Add inhibited and necrotic radii if available
+        if observables['radius'].get('inhibited_radii') is not None:
+            data['Inhibited_Radius'] = observables['radius']['inhibited_radii']
+        if observables['radius'].get('necrotic_radii') is not None:
+            data['Necrotic_Core_Radius'] = observables['radius']['necrotic_radii']
         
         # Create DataFrame and save
         df = pd.DataFrame(data)
@@ -1374,3 +1529,209 @@ class SimPlotter:
         print(f"Observables data exported to {filepath}")
         
         return df
+    
+    def plot_source_term_diagnostic(self, output_dir=None, save_plot=False, show_plot=True,
+                                   figsize=(20, 12), z_slice=None, step_idx=-1,
+                                   exclude_necrotic=True):
+        """
+        Diagnostic plot to investigate source term contributions and identify why
+        source terms might always be positive.
+        
+        This plot helps understand:
+        - Which populations contribute positively vs negatively
+        - Whether necrotic population is masking negative source terms
+        - Distribution of source terms across different populations
+        
+        Args:
+            output_dir: Directory to save plot
+            save_plot: Whether to save the plot
+            show_plot: Whether to display the plot
+            figsize: Figure size
+            z_slice: Z-slice to analyze (defaults to center)
+            step_idx: Time step index to analyze (default -1 for last step)
+            exclude_necrotic: Whether to show analysis with/without necrotic population
+        """
+        print("Creating source term diagnostic plot...")
+        
+        # Check if source fields are available
+        if "physics_data" not in self.simulation_data:
+            print("Warning: No physics data found in simulation data.")
+            return
+        
+        physics_data = self.simulation_data["physics_data"]
+        if len(physics_data) == 0 or "source_terms" not in physics_data[0]:
+            print("Warning: No source terms found in physics data.")
+            return
+        
+        # Set default z_slice
+        if z_slice is None:
+            z_slice = self.grid_size[2] // 2
+        
+        # Get source terms and density for selected time step
+        source_terms = physics_data[step_idx]["source_terms"]  # (M, nx, ny, nz)
+        phi_hat = self.field_data["phi_hat"][step_idx]
+        total_density = np.sum(phi_hat, axis=0)
+        
+        # Create subplots
+        fig, axes = plt.subplots(3, 3, figsize=figsize)
+        
+        # Get 2D slices
+        source_slice = source_terms[:, :, :, z_slice]  # (M, nx, ny)
+        density_slice = total_density[:, :, z_slice]  # (nx, ny)
+        
+        # Plot 1: Total source terms (all populations)
+        ax = axes[0, 0]
+        total_source_all = np.sum(source_slice, axis=0)
+        im = ax.imshow(total_source_all, origin='lower', cmap='RdBu_r', aspect='equal')
+        ax.set_title('Total Source Terms (All Populations)')
+        ax.set_xlabel('X')
+        ax.set_ylabel('Y')
+        plt.colorbar(im, ax=ax, label='Source Term')
+        
+        # Plot 2: Total source terms (viable only, excluding necrotic)
+        ax = axes[0, 1]
+        if source_slice.shape[0] > 1 and exclude_necrotic:
+            total_source_viable = np.sum(source_slice[:-1], axis=0)
+            title = 'Total Source Terms (Viable Only)'
+        else:
+            total_source_viable = total_source_all
+            title = 'Total Source Terms'
+        vmin = np.min(total_source_viable)
+        vmax = np.max(total_source_viable)
+        # Ensure symmetric colormap if both positive and negative
+        if vmin < 0 and vmax > 0:
+            abs_max = max(abs(vmin), abs(vmax))
+            vmin, vmax = -abs_max, abs_max
+        im = ax.imshow(total_source_viable, origin='lower', cmap='RdBu_r', 
+                      aspect='equal', vmin=vmin, vmax=vmax)
+        ax.set_title(title)
+        ax.set_xlabel('X')
+        ax.set_ylabel('Y')
+        plt.colorbar(im, ax=ax, label='Source Term')
+        
+        # Plot 3: Source term difference (all - viable)
+        ax = axes[0, 2]
+        if source_slice.shape[0] > 1:
+            necrotic_contribution = source_slice[-1]
+            im = ax.imshow(necrotic_contribution, origin='lower', cmap='Reds', 
+                          aspect='equal')
+            ax.set_title('Necrotic Population Contribution')
+            ax.set_xlabel('X')
+            ax.set_ylabel('Y')
+            plt.colorbar(im, ax=ax, label='Source Term')
+        else:
+            ax.text(0.5, 0.5, 'No necrotic\npopulation', 
+                   ha='center', va='center', transform=ax.transAxes)
+            ax.set_title('Necrotic Contribution')
+        
+        # Plot 4-6: Individual population source terms
+        num_pops = min(3, source_slice.shape[0])
+        for i in range(num_pops):
+            ax = axes[1, i]
+            pop_source = source_slice[i]
+            vmin = np.min(pop_source)
+            vmax = np.max(pop_source)
+            if vmin < 0 and vmax > 0:
+                abs_max = max(abs(vmin), abs(vmax))
+                vmin, vmax = -abs_max, abs_max
+            im = ax.imshow(pop_source, origin='lower', cmap='RdBu_r', 
+                          aspect='equal', vmin=vmin, vmax=vmax)
+            pop_label = self.labels[i] if i < len(self.labels) else f'Population {i}'
+            ax.set_title(f'{pop_label} Source Terms')
+            ax.set_xlabel('X')
+            ax.set_ylabel('Y')
+            plt.colorbar(im, ax=ax, label='Source Term')
+        
+        # Plot 7: Statistics comparison
+        ax = axes[2, 0]
+        if source_slice.shape[0] > 1 and exclude_necrotic:
+            viable_source = np.sum(source_slice[:-1], axis=0)
+            all_source = total_source_all
+            stats_labels = ['All Populations', 'Viable Only']
+            data = [all_source.flatten(), viable_source.flatten()]
+        else:
+            stats_labels = ['All Populations']
+            data = [total_source_all.flatten()]
+        
+        bp = ax.boxplot(data, labels=stats_labels, patch_artist=True)
+        ax.axhline(y=0, color='k', linestyle='--', alpha=0.5)
+        ax.set_ylabel('Source Term Value')
+        ax.set_title('Source Term Distribution')
+        ax.grid(True, alpha=0.3)
+        for patch in bp['boxes']:
+            patch.set_facecolor('lightblue')
+        
+        # Plot 8: Source term histogram
+        ax = axes[2, 1]
+        if source_slice.shape[0] > 1 and exclude_necrotic:
+            viable_source = np.sum(source_slice[:-1], axis=0)
+            ax.hist(viable_source.flatten(), bins=50, alpha=0.7, label='Viable Only', color='green')
+            ax.hist(total_source_all.flatten(), bins=50, alpha=0.7, label='All Populations', color='blue')
+            ax.legend()
+        else:
+            ax.hist(total_source_all.flatten(), bins=50, alpha=0.7, color='blue')
+        ax.axvline(x=0, color='k', linestyle='--', alpha=0.5)
+        ax.set_xlabel('Source Term Value')
+        ax.set_ylabel('Frequency')
+        ax.set_title('Source Term Histogram')
+        ax.grid(True, alpha=0.3)
+        
+        # Plot 9: Statistics table
+        ax = axes[2, 2]
+        ax.axis('off')
+        
+        # Calculate statistics
+        if source_slice.shape[0] > 1 and exclude_necrotic:
+            viable_source = np.sum(source_slice[:-1], axis=0)
+            stats_text = "Source Term Statistics:\n\n"
+            stats_text += "All Populations:\n"
+            stats_text += f"  Min: {np.min(total_source_all):.4f}\n"
+            stats_text += f"  Max: {np.max(total_source_all):.4f}\n"
+            stats_text += f"  Mean: {np.mean(total_source_all):.4f}\n"
+            stats_text += f"  Std: {np.std(total_source_all):.4f}\n"
+            stats_text += f"  Negative values: {np.sum(total_source_all < 0)} ({100*np.sum(total_source_all < 0)/total_source_all.size:.1f}%)\n"
+            stats_text += f"  Zero values: {np.sum(total_source_all == 0)} ({100*np.sum(total_source_all == 0)/total_source_all.size:.1f}%)\n\n"
+            stats_text += "Viable Only:\n"
+            stats_text += f"  Min: {np.min(viable_source):.4f}\n"
+            stats_text += f"  Max: {np.max(viable_source):.4f}\n"
+            stats_text += f"  Mean: {np.mean(viable_source):.4f}\n"
+            stats_text += f"  Std: {np.std(viable_source):.4f}\n"
+            stats_text += f"  Negative values: {np.sum(viable_source < 0)} ({100*np.sum(viable_source < 0)/viable_source.size:.1f}%)\n"
+            stats_text += f"  Zero values: {np.sum(viable_source == 0)} ({100*np.sum(viable_source == 0)/viable_source.size:.1f}%)\n"
+        else:
+            stats_text = "Source Term Statistics:\n\n"
+            stats_text += f"Min: {np.min(total_source_all):.4f}\n"
+            stats_text += f"Max: {np.max(total_source_all):.4f}\n"
+            stats_text += f"Mean: {np.mean(total_source_all):.4f}\n"
+            stats_text += f"Std: {np.std(total_source_all):.4f}\n"
+            stats_text += f"Negative values: {np.sum(total_source_all < 0)} ({100*np.sum(total_source_all < 0)/total_source_all.size:.1f}%)\n"
+            stats_text += f"Zero values: {np.sum(total_source_all == 0)} ({100*np.sum(total_source_all == 0)/total_source_all.size:.1f}%)\n"
+        
+        ax.text(0.1, 0.9, stats_text, transform=ax.transAxes, 
+               verticalalignment='top', fontsize=10, family='monospace',
+               bbox=dict(boxstyle='round', facecolor='lightgray', alpha=0.8))
+        
+        fig.suptitle(f'Source Term Diagnostic (Step {self.saved_steps[step_idx]}, t={self.saved_times[step_idx]:.2f}, z={z_slice})', 
+                     fontsize=14)
+        plt.tight_layout()
+        
+        if save_plot and output_dir:
+            os.makedirs(output_dir, exist_ok=True)
+            filename = f'source_term_diagnostic_step{self.saved_steps[step_idx]}_z{z_slice}.png'
+            plt.savefig(os.path.join(output_dir, filename), dpi=300, bbox_inches='tight')
+            print(f"Source term diagnostic plot saved to {output_dir}/{filename}")
+        
+        if show_plot:
+            plt.show()
+        else:
+            plt.close()
+        
+        # Return data for use by plot_all_observables and export
+        return {
+            'total_densities': total_densities,
+            'population_densities': density_data,
+            'total_source_all': total_source_all,
+            'total_source_viable': total_source_viable if (source_slice.shape[0] > 1 and exclude_necrotic) else None,
+            'source_per_population': {self.labels[i] if i < len(self.labels) else f'Pop {i}': source_slice[i] 
+                                     for i in range(source_slice.shape[0])}
+        }

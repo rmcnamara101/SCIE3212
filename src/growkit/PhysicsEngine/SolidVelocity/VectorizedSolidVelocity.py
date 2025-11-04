@@ -18,6 +18,21 @@ Date: 2025-02-19
 import numpy as np
 from functools import lru_cache
 from src.growkit.MathEngine.Operators import isotropic_gradient, isotropic_gradient_components
+
+def safe_float32_cast(arr, safety_factor=0.1):
+    """
+    Safely cast array to float32 by clipping extreme values to prevent overflow.
+    
+    Args:
+        arr: Input array
+        safety_factor: Fraction of max float32 value to use as clipping limit
+    
+    Returns:
+        Array safely cast to float32
+    """
+    max_val = np.finfo(np.float32).max * safety_factor
+    clipped_arr = np.clip(arr, -max_val, max_val)
+    return clipped_arr.astype(np.float32)
 from src.growkit.Integrator.PressureSolver import PressureSolver
 
 
@@ -266,9 +281,10 @@ class VectorizedSolidVelocity:
         
         # Store velocity in field manager if available
         if self.field_manager is not None:
-            self.field_manager.velocity[0] = ux
-            self.field_manager.velocity[1] = uy
-            self.field_manager.velocity[2] = uz
+            # Use safe casting to prevent overflow
+            self.field_manager.velocity[0] = safe_float32_cast(ux, safety_factor=0.1)
+            self.field_manager.velocity[1] = safe_float32_cast(uy, safety_factor=0.1)
+            self.field_manager.velocity[2] = safe_float32_cast(uz, safety_factor=0.1)
 
         return ux, uy, uz
     
