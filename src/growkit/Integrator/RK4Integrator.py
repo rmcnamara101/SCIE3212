@@ -103,7 +103,7 @@ class RK4Integrator:
         phi_hat_new = self.step(phi_hat, nutrient_field, dx, dynamics_function)
         
         # Update nutrient field (could also use RK4 if needed)
-        nutrient_field_new = nutrient_function(phi_hat_new, nutrient_field, dx)
+        nutrient_field_new = nutrient_function(phi_hat_new, nutrient_field, dx, self.dt)
         
         return phi_hat_new, nutrient_field_new
     

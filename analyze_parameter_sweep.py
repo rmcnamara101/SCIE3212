@@ -147,7 +147,7 @@ class ParameterSweepAnalyzer:
             'Total_Density': ['Density', 'density', 'total_density', 'Total_Density'],
             'Volume': ['Volume', 'volume', 'vol', 'V'],
             'Inhibited_Radius': ['Inhibited_Radius', 'inhibited_radius', 'inhibited', 'quiescent'],
-            'Necrotic_Core_Radius': ['Necrotic_Core_Radius', 'necrotic_radius', 'necrotic', 'necrotic_core']
+            'Necrotic_Radius': ['Necrotic_Radius', 'Necrotic_Core_Radius', 'necrotic_radius', 'necrotic', 'necrotic_core']
         }
         
         mapped_data = {}
@@ -186,7 +186,7 @@ class ParameterSweepAnalyzer:
             'total_radius': ['radius', 'r', 'total radius', 'tumor radius'],
             'total_density': ['density', 'cell density', 'total density'],
             'inhibited_radius': ['inhibited', 'quiescent', 'inhibited radius'],
-            'necrotic_core_radius': ['necrotic', 'necrotic radius', 'necrotic core']
+            'necrotic_radius': ['necrotic', 'necrotic radius', 'necrotic core', 'necrotic_core_radius']
         }
         
         for key, possible_names in possible_mappings.items():
@@ -309,7 +309,7 @@ class ParameterSweepAnalyzer:
                 'Total_Radius',
                 'Total_Density',
                 'Inhibited_Radius',
-                'Necrotic_Core_Radius'
+                'Necrotic_Radius'
             ]
         
         # Get available observables from first simulation
@@ -346,7 +346,7 @@ class ParameterSweepAnalyzer:
                 'Total_Radius',
                 'Total_Density',
                 'Inhibited_Radius',
-                'Necrotic_Core_Radius'
+                'Necrotic_Radius'
             ]
         
         # Get available observables from first simulation
@@ -502,7 +502,7 @@ def main():
     # If None, defaults to Browning paper data
     VALIDATION_DATA_PATH = None
     
-    # Observables to plot (None = use default: Total_Radius, Inhibited_Radius, Necrotic_Core_Radius)
+    # Observables to plot (None = use default: Total_Radius, Inhibited_Radius, Necrotic_Radius)
     # Can also specify a list like: ['Total_Radius', 'Inhibited_Radius']
     OBSERVABLES = None
     

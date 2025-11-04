@@ -218,7 +218,7 @@ class TumorGrowthSimulator:
         """
         return self.cell_dynamics.compute_dynamics(phi_hat, nutrient_field, dx, source_terms)
     
-    def nutrient_function(self, phi_hat, nutrient_field, dx):
+    def nutrient_function(self, phi_hat, nutrient_field, dx, dt):
         """
         Compute nutrient field update using the nutrient manager.
         
@@ -226,11 +226,12 @@ class TumorGrowthSimulator:
             phi_hat: Cell fraction fields
             nutrient_field: Current nutrient field
             dx: Grid spacing
+            dt: Time step
             
         Returns:
             nutrient_field_new: Updated nutrient field
         """
-        return self.nutrient_manager.compute_nutrient_update(phi_hat, nutrient_field, dx)
+        return self.nutrient_manager.compute_nutrient_update(phi_hat, nutrient_field, dx, dt)
     
     def step_debug(self, step: int):
         """
@@ -275,7 +276,7 @@ class TumorGrowthSimulator:
             if success:
                 self.profiler.start_timer("nutrient_update")
                 nutrient_field_new = self.nutrient_function(
-                    phi_hat_new, nutrient_field, self.field_manager.dx
+                    phi_hat_new, nutrient_field, self.field_manager.dx, dt_used
                 )
                 self.profiler.end_timer("nutrient_update")
                 print(f"Nutrient update completed")
@@ -385,7 +386,7 @@ class TumorGrowthSimulator:
             
             if success:
                 nutrient_field_new = self.nutrient_function(
-                    phi_hat_new, nutrient_field, self.field_manager.dx
+                    phi_hat_new, nutrient_field, self.field_manager.dx, dt_used
                 )
         elif isinstance(self.integrator, AdaptiveGridRK4Integrator):
             phi_hat_new, nutrient_field_new = self.integrator.step_with_nutrient_update(

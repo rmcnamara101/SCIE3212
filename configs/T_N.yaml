@@ -6,22 +6,22 @@ simulation:
 
 domain:
   shape: 100 # integer defining the number of grid points in each dimension
-  dx: 100 # float defining the spacing of the grid (in μm)
+  dx: 200 # float defining the spacing of the grid (in μm)
 
 time:
   steps: 100 # integer defining the number of steps to run the simulation for
-  dt: 0.4 # Reduced from 0.5 to improve numerical stability
+  dt: 1.0 # Reduced from 0.5 to improve numerical stability
 
 populations:
   Tumour:
     label: Tumour Cells
     color: Green
     dynamics:
-      lambda: 4 # float
-      mu: 1 # float
+      lambda: 20 # float
+      mu: 20 # float
       mobility: 1.0 # float
-      nutrient_threshold: 0.5 # float
-      nutrient_consumption: 0.05 # float
+      nutrient_threshold: 0.2 # float
+      nutrient_consumption: 0.2 # float
       nutrient_production: 0.2 # float
     
     
@@ -42,9 +42,9 @@ nutrient:
   label: General nutrient
   color: Orange
   dynamics:
-    diffusion: 450 # float
-    boundary_value: 1.0 # float defining the value of the nutrient at the boundary
-    k: 1.0 # float defining the steepness of the nutrient switch 
+    diffusion: 90000 # float
+    #boundary_value: 1.0 # float defining the value of the nutrient at the boundary
+    k: 10.0 # float defining the steepness of the nutrient switch 
 
 physics:
   adhesion_energy:

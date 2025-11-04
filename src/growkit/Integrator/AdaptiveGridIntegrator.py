@@ -334,7 +334,7 @@ class AdaptiveGridRK4Integrator:
         phi_hat_new, nutrient_field_temp = self.step(phi_hat, nutrient_field, dx, dynamics_function)
         
         # Update nutrient field (could also use adaptive grid approach)
-        nutrient_field_new = nutrient_function(phi_hat_new, nutrient_field, dx)
+        nutrient_field_new = nutrient_function(phi_hat_new, nutrient_field, dx, self.dt)
         
         return phi_hat_new, nutrient_field_new
     

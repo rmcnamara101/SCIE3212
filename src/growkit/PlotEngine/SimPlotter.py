@@ -69,11 +69,13 @@ class SimPlotter:
         """
         print("Calculating tumor radius evolution...")
         
-        # Calculate radii for all populations
+        # Calculate radii for viable populations only (exclude necrotic)
         # NOTE: These are density-based radii - they show where cells of each population exist
-        # For necrotic population, this shows where necrotic material exists (physical extent)
+        # We exclude the necrotic population since we use source-term-based necrotic radius instead
         radii_data = {}
-        for i, label in enumerate(self.labels):
+        # Necrotic population is the last one (index M-1)
+        viable_populations = self.labels[:-1] if len(self.labels) > 1 else self.labels
+        for i, label in enumerate(viable_populations):
             radii = []
             for step_idx in range(len(self.saved_steps)):
                 phi_hat = self.field_data["phi_hat"][step_idx]
@@ -121,13 +123,12 @@ class SimPlotter:
         
         # Calculate necrotic radius if requested and source terms are available
         # NOTE: This is source-term-based radius - shows where cells are actively dying/dead
-        # This is different from the necrotic population radius which shows physical extent
-        # The source-term method identifies the core boundary based on cell death activity
+        # We use source terms from viable populations only to identify the necrotic core boundary
         necrotic_radii = []
         if include_necrotic_radius and "physics_data" in self.simulation_data:
             physics_data = self.simulation_data["physics_data"]
             if len(physics_data) > 0 and "source_terms" in physics_data[0]:
-                print("Calculating necrotic radius evolution (source-term based)...")
+                print("Calculating necrotic radius evolution...")
                 for step_idx in range(len(self.saved_steps)):
                     phi_hat = self.field_data["phi_hat"][step_idx]
                     total_density = np.sum(phi_hat, axis=0)
@@ -165,10 +166,9 @@ class SimPlotter:
         
         # Plot necrotic radius if available
         # NOTE: This is the source-term-based necrotic core boundary
-        # (Different from "Necrotic Cells" which is density-based physical extent)
         if include_necrotic_radius:
             ax.plot(self.saved_times, necrotic_radii, 'r--', linewidth=2, 
-                   label='Necrotic Core Radius (source-term)', marker='v', markersize=5)
+                   label='Necrotic Radius', marker='v', markersize=5)
         
         # Plot individual population radii if requested
         if include_individual_populations:
@@ -1484,7 +1484,7 @@ class SimPlotter:
     def export_observables_data(self, output_dir, filename='observables_data.csv'):
         """
         Export observables data to CSV file.
-        Currently only exports radius data (Total_Radius, Inhibited_Radius, Necrotic_Core_Radius).
+        Currently only exports radius data (Total_Radius, Inhibited_Radius, Necrotic_Radius).
         
         Args:
             output_dir: Directory to save data
@@ -1520,7 +1520,7 @@ class SimPlotter:
         if observables['radius'].get('inhibited_radii') is not None:
             data['Inhibited_Radius'] = observables['radius']['inhibited_radii']
         if observables['radius'].get('necrotic_radii') is not None:
-            data['Necrotic_Core_Radius'] = observables['radius']['necrotic_radii']
+            data['Necrotic_Radius'] = observables['radius']['necrotic_radii']
         
         # Create DataFrame and save
         df = pd.DataFrame(data)

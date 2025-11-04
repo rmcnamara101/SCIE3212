@@ -205,7 +205,7 @@ class NutrientField:
         
         return nutrient_field
     
-    def compute_nutrient_update(self, phi_hat, nutrient_field, dx):
+    def compute_nutrient_update(self, phi_hat, nutrient_field, dx, dt):
         """
         Compute nutrient field update due to diffusion and consumption.
         
@@ -213,26 +213,58 @@ class NutrientField:
             phi_hat: Stacked cell fraction fields (M, nx, ny, nz)
             nutrient_field: Current nutrient concentration field
             dx: Grid spacing
+            dt: Time step
             
         Returns:
             nutrient_field_new: Updated nutrient concentration field
         """
         
-        # Extract consumption rates as a simple array for Numba compatibility
-        consumption_rates = np.array([self.population_consumption_rates[label] for label in self.labels], dtype=np.float32)
-        nutrient_threshold = np.array([self.nutrient_threshold[self.labels.index(label)] for label in self.labels], dtype=np.float32)
-        production_rate = np.array([self.production_rate[self.labels.index(label)] for label in self.labels], dtype=np.float32)
+        # Check stability constraint for explicit diffusion
+        # For 3D explicit diffusion: D * dt / dx^2 < 1/6 for stability
+        max_stable_diffusion = (dx**2) / (6.0 * dt)
         
-        # Compute nutrient update using Numba-optimized function
-        return compute_nutrient_update_numba(
-            nutrient_field, phi_hat, dx,
-            self.diffusion_coeff, production_rate, consumption_rates, nutrient_threshold,
-            self.lambda_rates, self.mu_rates, np.float32(self.k_switch)
-        )
+        if self.diffusion_coeff > max_stable_diffusion:
+            # Use sub-stepping to maintain stability
+            # The stability condition is: D * dt_sub / dx^2 < 1/6
+            # So we need: dt_sub < dx^2 / (6 * D)
+            # And dt = num_substeps * dt_sub, so:
+            # num_substeps = ceil(6 * D * dt / dx^2)
+            num_substeps = int(np.ceil(6.0 * self.diffusion_coeff * dt / (dx**2)))
+            dt_substep = dt / num_substeps
+            
+            # Apply diffusion in multiple sub-steps (keep same D, use smaller dt)
+            current_nutrient = nutrient_field.copy()
+            for substep in range(num_substeps):
+                # Extract consumption rates as a simple array for Numba compatibility
+                consumption_rates = np.array([self.population_consumption_rates[label] for label in self.labels], dtype=np.float32)
+                nutrient_threshold = np.array([self.nutrient_threshold[self.labels.index(label)] for label in self.labels], dtype=np.float32)
+                production_rate = np.array([self.production_rate[self.labels.index(label)] for label in self.labels], dtype=np.float32)
+                
+                # Compute nutrient update with sub-stepped dt (keep same diffusion coefficient)
+                current_nutrient = compute_nutrient_update_numba(
+                    current_nutrient, phi_hat, dx, dt_substep,
+                    self.diffusion_coeff, production_rate, consumption_rates, nutrient_threshold,
+                    self.lambda_rates, self.mu_rates, np.float32(self.k_switch)
+                )
+            
+            return current_nutrient
+        else:
+            # Diffusion is stable, proceed normally
+            # Extract consumption rates as a simple array for Numba compatibility
+            consumption_rates = np.array([self.population_consumption_rates[label] for label in self.labels], dtype=np.float32)
+            nutrient_threshold = np.array([self.nutrient_threshold[self.labels.index(label)] for label in self.labels], dtype=np.float32)
+            production_rate = np.array([self.production_rate[self.labels.index(label)] for label in self.labels], dtype=np.float32)
+            
+            # Compute nutrient update using Numba-optimized function
+            return compute_nutrient_update_numba(
+                nutrient_field, phi_hat, dx, dt,
+                self.diffusion_coeff, production_rate, consumption_rates, nutrient_threshold,
+                self.lambda_rates, self.mu_rates, np.float32(self.k_switch)
+            )
 
 
 @njit
-def compute_nutrient_update_numba(nutrient_field, phi_hat, dx, 
+def compute_nutrient_update_numba(nutrient_field, phi_hat, dx, dt,
                                 diffusion_coeff, production_rate, consumption_rates, nutrient_threshold,
                                 lambda_rates, mu_rates, k_switch):
     """
@@ -243,7 +275,8 @@ def compute_nutrient_update_numba(nutrient_field, phi_hat, dx,
         phi_T: Total cell density field
         phi_hat: Stacked cell fraction fields (M, nx, ny, nz)
         dx: Grid spacing
-        diffusion_coeff: Nutrient diffusion coefficient
+        dt: Time step
+        diffusion_coeff: Nutrient diffusion coefficient (in units of length^2/time)
         consumption_rate: Base nutrient consumption rate
         production_rate: Base nutrient production rate
         consumption_rates: Array of consumption rates per population
@@ -285,10 +318,10 @@ def compute_nutrient_update_numba(nutrient_field, phi_hat, dx,
                     (nutrient_field[i, j+1, k-1] - 2*nutrient_field[i, j, k] + nutrient_field[i, j-1, k+1])
                 ) / (2.0 * dx**2) * 0.1  # Small weight for diagonal terms
                 
-                diffusion_field[i, j, k] = diffusion_coeff * (lap_axis + lap_diag)
+                # Scale diffusion by dt for proper time integration
+                diffusion_field[i, j, k] = diffusion_coeff * dt * (lap_axis + lap_diag)
     
-    # Boundary points have zero diffusion (Neumann conditions for diffusion operator)
-    # This is correct - diffusion operator should have zero flux at boundaries
+    # Boundary points: compute diffusion but will enforce Dirichlet conditions after
     diffusion_field[0, :, :] = 0.0
     diffusion_field[-1, :, :] = 0.0
     diffusion_field[:, 0, :] = 0.0
@@ -296,26 +329,37 @@ def compute_nutrient_update_numba(nutrient_field, phi_hat, dx,
     diffusion_field[:, :, 0] = 0.0
     diffusion_field[:, :, -1] = 0.0
     
+    # Boundary value for Dirichlet conditions
+    boundary_value = 1.0
+    
     for i in range(nx):
         for j in range(ny):
             for k in range(nz):
-                diffusion = diffusion_field[i, j, k]
+                # Check if we're on a boundary
+                is_boundary = (i == 0 or i == nx-1 or j == 0 or j == ny-1 or k == 0 or k == nz-1)
                 
-                # Compute consumption term tied to proliferation activity
-                consumption = 0.0
-                production = 0.0
-                local_n = nutrient_field[i, j, k]
-                for m in range(M):
-                    s_grow = 0.5 * (1.0 + np.tanh(k_switch * (local_n - nutrient_threshold[m])))
-                    s_death = 1.0 - s_grow
-                    consumption += consumption_rates[m] * lambda_rates[m] * s_grow * phi_hat[m, i, j, k]
-                    production += 0 #production_rate[m] * mu_rates[m] * s_death * phi_hat[m, i, j, k] * (1.0 - local_n)
+                if is_boundary:
+                    # Dirichlet boundary condition: fixed nutrient concentration at boundaries
+                    nutrient_field_new[i, j, k] = boundary_value
+                else:
+                    # Interior points: compute diffusion, consumption, and production
+                    diffusion = diffusion_field[i, j, k]
+                    
+                    # Compute consumption term tied to proliferation activity
+                    consumption = 0.0
+                    production = 0.0
+                    local_n = nutrient_field[i, j, k]
+                    for m in range(M):
+                        s_grow = 0.5 * (1.0 + np.tanh(k_switch * (local_n - nutrient_threshold[m])))
+                        s_death = 1.0 - s_grow
+                        consumption += consumption_rates[m] * phi_hat[m, i, j, k] * dt
+                        production += production_rate[m] * phi_hat[m, i, j, k] * (1.0 - local_n) * dt
 
-                # Update nutrient field 
-                nutrient_field_new[i, j, k] = nutrient_field[i, j, k] + diffusion - consumption + production
-                
-                # Ensure non-negative nutrient concentration
-                nutrient_field_new[i, j, k] = max(0.0, nutrient_field_new[i, j, k])
+                    # Update nutrient field with proper time scaling
+                    nutrient_field_new[i, j, k] = nutrient_field[i, j, k] + diffusion - consumption + production
+                    
+                    # Ensure non-negative nutrient concentration
+                    nutrient_field_new[i, j, k] = max(0.0, nutrient_field_new[i, j, k])
     
     return nutrient_field_new
 

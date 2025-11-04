@@ -95,8 +95,8 @@ class SourceConstructor:
             n_thresh = self.nutrient_thresholds[i]
             # Smooth Heaviside function: 0.5 * (1 + tanh(k * (nutrient - threshold)))
             # Apply to each spatial location
-            Theta[i] = 0.5 * (1 - np.tanh(k * (nutrient_field - n_thresh)))
-        
+            Theta[i] = 0.5 * (1 + np.tanh(k * (nutrient_field - n_thresh)))
+            
         return Theta
     
     def _compute_necrotic_feedback(self, phi_hat):
@@ -157,9 +157,12 @@ class SourceConstructor:
         alpha_hat = self._compute_proliferation_weighted_populations(phi_hat)
         
         # Apply nutrient modulation to death matrix
+        # Death should happen when nutrient is BELOW threshold (inverse of growth switch)
+        # So we use (1 - Theta) instead of Theta for death
         D_modulated = self.D.copy()
         for i in range(self.M):
-            D_modulated[i, i] *= Theta[i]
+            D_modulated[i, i] *= (1.0 - Theta[i])
+            D_modulated[self.M-1, i] *= (1.0 - Theta[i])  # Also modulate flow into necrotic
         
         # Compute source vector components
         # Growth term: G_N * n * P * alpha_hat
@@ -205,9 +208,11 @@ class SourceConstructor:
                 growth_terms += G_N * nutrient_field * self.P[i, i] * alpha_hat[i]
         
         # Death: sum over all populations of their absolute death (excluding necrotic)
+        # Death should happen when nutrient is BELOW threshold (inverse of growth switch)
+        # So we use (1 - Theta) instead of Theta for death
         death_terms = np.zeros_like(nutrient_field)
         for i in range(self.M - 1):  # Exclude necrotic population
-            death_terms += self.mu[i] * Theta[i] * phi_hat[i]
+            death_terms += self.mu[i] * (1.0 - Theta[i]) * phi_hat[i]
         
         # Pressure source is net growth minus net death
         pressure_source = growth_terms - death_terms
@@ -249,9 +254,11 @@ class SourceConstructor:
                 growth_terms += G_N * nutrient_field * self.P[i, i] * alpha_hat[:, i]
         
         # Death: only absolute death rates (excluding necrotic)
+        # Death should happen when nutrient is BELOW threshold (inverse of growth switch)
+        # So we use (1 - Theta) instead of Theta for death
         death_terms = np.zeros_like(nutrient_field)
         for i in range(self.M - 1):  # Exclude necrotic population
-            death_terms += self.mu[i] * np.mean(Theta[:, i]) * phi_hat[:, i]
+            death_terms += self.mu[i] * np.mean(1.0 - Theta[:, i]) * phi_hat[:, i]
         
         # Pressure source is net growth minus net death
         pressure_source = growth_terms + death_terms
@@ -282,11 +289,13 @@ class SourceConstructor:
         alpha_hat = self.lambda_[:, None, None, None] * phi_hat  # (M, nx, ny, nz)
         
         # Apply nutrient modulation to death matrix (spatially varying)
-        # D_modulated[i,j] = D[i,j] * Theta[j] for each spatial location
+        # Death should happen when nutrient is BELOW threshold (inverse of growth switch)
+        # So we use (1 - Theta) instead of Theta for death
+        # D_modulated[i,j] = D[i,j] * (1 - Theta[j]) for each spatial location
         D_modulated = np.zeros((M, M, *nutrient_field.shape), dtype=np.float32)
         for i in range(M):
             for j in range(M):
-                D_modulated[i, j] = self.D[i, j] * Theta[j]
+                D_modulated[i, j] = self.D[i, j] * (1.0 - Theta[j])
         
         # Compute source vector
         # Growth term: G_N * n * P * alpha_hat
@@ -340,10 +349,12 @@ class SourceConstructor:
         alpha_hat = self.lambda_[:, None, None, None] * phi_hat
         
         # Apply nutrient modulation to death matrix
+        # Death should happen when nutrient is BELOW threshold (inverse of growth switch)
+        # So we use (1 - Theta) instead of Theta for death
         D_modulated = np.zeros((M, M, *nutrient_field.shape), dtype=np.float32)
         for i in range(M):
             for j in range(M):
-                D_modulated[i, j] = self.D[i, j] * Theta[j]
+                D_modulated[i, j] = self.D[i, j] * (1.0 - Theta[j])
         
         # Compute growth and death terms
         growth_term = G_N * nutrient_field[None, :, :, :] * np.tensordot(self.P, alpha_hat, axes=([1], [0]))
@@ -430,7 +441,9 @@ def compute_source_vector_numba(phi_hat, nutrient_field, lambda_, mu, nutrient_t
                             A_hat[i, x, y, z] += G_N * nutrient_field[x, y, z] * P[i, j] * alpha_hat[j, x, y, z]
                         
                         # Death term contribution (spatially varying)
-                        A_hat[i, x, y, z] -= D[i, j] * Theta[j, x, y, z] * phi_hat[j, x, y, z]
+                        # Death should happen when nutrient is BELOW threshold (inverse of growth switch)
+                        # So we use (1 - Theta) instead of Theta for death
+                        A_hat[i, x, y, z] -= D[i, j] * (1.0 - Theta[j, x, y, z]) * phi_hat[j, x, y, z]
     
     return A_hat
 
@@ -491,10 +504,12 @@ def compute_pressure_source_vector_numba(phi_hat, nutrient_field, lambda_, mu, n
                         pressure_source[x, y, z] += G_N * nutrient_field[x, y, z] * P[i, i] * alpha_hat[i, x, y, z]
     
     # Death: only absolute death rates (excluding necrotic)
+    # Death should happen when nutrient is BELOW threshold (inverse of growth switch)
+    # So we use (1 - Theta) instead of Theta for death
     for i in range(M - 1):  # Exclude necrotic population
         for x in range(shape[0]):
             for y in range(shape[1]):
                 for z in range(shape[2]):
-                    pressure_source[x, y, z] -= mu[i] * Theta[i, x, y, z] * phi_hat[i, x, y, z]
+                    pressure_source[x, y, z] -= mu[i] * (1.0 - Theta[i, x, y, z]) * phi_hat[i, x, y, z]
     
     return pressure_source

@@ -104,7 +104,7 @@ class ForwardEulerIntegrator:
         phi_hat_new = self.step(phi_hat, nutrient_field, dx, dynamics_function)
         
         # Update nutrient field
-        nutrient_field_new = nutrient_function(phi_hat_new, nutrient_field, dx)
+        nutrient_field_new = nutrient_function(phi_hat_new, nutrient_field, dx, self.dt)
         
         return phi_hat_new, nutrient_field_new
     
@@ -262,7 +262,7 @@ class AdaptiveForwardEulerIntegrator(ForwardEulerIntegrator):
             phi_hat_new = self.step(phi_hat, nutrient_field, dx, dynamics_function)
         
         # Update nutrient field
-        nutrient_field_new = nutrient_function(phi_hat_new, nutrient_field, dx)
+        nutrient_field_new = nutrient_function(phi_hat_new, nutrient_field, dx, self.dt)
         
         return phi_hat_new, nutrient_field_new
 
