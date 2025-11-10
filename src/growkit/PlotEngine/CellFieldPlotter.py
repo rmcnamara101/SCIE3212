@@ -1,5 +1,6 @@
 import numpy as np
 import matplotlib.pyplot as plt
+import matplotlib.colors as mcolors
 import os
 from pathlib import Path
 from mpl_toolkits.mplot3d import Axes3D
@@ -714,6 +715,297 @@ class CellFieldPlotter:
             filename = f'3d_tumor_field_step_{step:06d}.png'
             plt.savefig(os.path.join(output_dir, filename), dpi=300, bbox_inches='tight')
             print(f"3D tumor field plot saved to {output_dir}/{filename}")
+        
+        if show_plot:
+            plt.show()
+        else:
+            plt.close()
+    
+    def plot_3d_populations(self, simulation_data, step_idx=0, isosurface_level=0.1,
+                           population_colors=None, output_dir=None, save_plot=False, 
+                           show_plot=True, figsize=(12, 8), alpha=0.6, title_suffix="",
+                           population_indices=None, s=20, cutout_center=None, 
+                           cutout_angle=90, cutout_azimuth_start=0, cutout_buffer=5.0):
+        """
+        Plot 3D visualization of different cell populations with distinct colors.
+        
+        Transparency is proportional to density: higher density = more opaque,
+        lower density = more transparent. This helps visualize interior structures
+        like necrotic cores.
+        
+        Args:
+            simulation_data: Dictionary containing simulation data
+            step_idx: Index of the saved step to use for plotting
+            isosurface_level: Density level for isosurface (single value or dict per population)
+            population_colors: List of colors for each population (default: auto-generated)
+            output_dir: Directory to save plot
+            save_plot: Whether to save the plot
+            show_plot: Whether to display the plot
+            figsize: Figure size
+            alpha: Maximum transparency of the scatter points (min is 0.1 for visibility)
+            title_suffix: Additional text for the title
+            population_indices: List of population indices to plot (None for all)
+            s: Size of scatter points
+            cutout_center: Center point for wedge cutout [x, y, z] (None = grid center)
+            cutout_angle: Angular width of wedge to remove in degrees (default: 90 = quarter)
+            cutout_azimuth_start: Starting azimuth angle for cutout in degrees (0 = +X axis)
+            cutout_buffer: Additional angular buffer around cutout edge in degrees (default: 5.0)
+                          Applied to tumor cells to prevent edge occlusion of necrotic core
+        """
+        # Get step information
+        step = simulation_data["metadata"]["saved_steps"][step_idx]
+        time = simulation_data["metadata"]["saved_times"][step_idx]
+        
+        print(f"Creating 3D population visualization for step {step} (time={time:.3f})...")
+        if cutout_angle > 0:
+            print(f"  Applying wedge cutout: {cutout_angle}° starting at {cutout_azimuth_start}°")
+        
+        # Get phi_hat for the specified step
+        phi_hat = simulation_data["field_data"]["phi_hat"][step_idx]
+        
+        # Determine which populations to plot
+        if population_indices is None:
+            population_indices = list(range(self.M))
+        
+        print(f"Plotting populations: {population_indices} (indices), {[self.labels[i] for i in population_indices]} (labels)")
+        
+        # Set default colors if not provided
+        if population_colors is None:
+            # Use a distinct color palette
+            default_colors = ['red', 'blue', 'green', 'orange', 'purple', 'cyan', 'magenta', 'yellow']
+            population_colors = [default_colors[i % len(default_colors)] for i in range(self.M)]
+        elif len(population_colors) < len(population_indices):
+            # Extend colors if not enough provided
+            default_colors = ['red', 'blue', 'green', 'orange', 'purple', 'cyan', 'magenta', 'yellow']
+            for i in range(len(population_colors), len(population_indices)):
+                population_colors.append(default_colors[i % len(default_colors)])
+        
+        # Handle isosurface_level (can be single value or dict per population)
+        if isinstance(isosurface_level, (int, float)):
+            isosurface_levels = {idx: isosurface_level for idx in population_indices}
+        else:
+            isosurface_levels = isosurface_level
+        
+        # Create 3D coordinate grids
+        nx, ny, nz = self.grid
+        x = np.arange(nx) * self.dx
+        y = np.arange(ny) * self.dx
+        z = np.arange(nz) * self.dx
+        X, Y, Z = np.meshgrid(x, y, z, indexing='ij')
+        
+        # Set cutout center if not provided
+        if cutout_center is None:
+            cutout_center = [x[nx//2], y[ny//2], z[nz//2]]
+        else:
+            # Convert to physical coordinates if needed
+            if cutout_center[0] < x.max() / 10:  # Likely in grid units
+                cutout_center = [cutout_center[0] * self.dx, 
+                                cutout_center[1] * self.dx,
+                                cutout_center[2] * self.dx]
+        
+        # Convert angles to radians
+        cutout_azimuth_start_rad = np.deg2rad(cutout_azimuth_start)
+        cutout_angle_rad = np.deg2rad(cutout_angle)
+        cutout_azimuth_end_rad = cutout_azimuth_start_rad + cutout_angle_rad
+        
+        # Create figure
+        fig = plt.figure(figsize=figsize)
+        ax = fig.add_subplot(111, projection='3d')
+        
+        # Plot each population
+        # Reverse order so that later populations (like necrotic cells in the core) are plotted on top
+        # This ensures they appear on top of earlier populations
+        legend_handles = []
+        print(f"\nPopulation density diagnostics:")
+        # Process in normal order for diagnostics, but plot in reverse order
+        # First collect all data, then plot in reverse
+        plot_data_list = []
+        
+        # First pass: collect all data and diagnostics
+        for i, pop_idx in enumerate(population_indices):
+            if pop_idx >= self.M:
+                print(f"Warning: Population index {pop_idx} out of range (0-{self.M-1}), skipping...")
+                continue
+            
+            # Get density for this population
+            population_density = phi_hat[pop_idx, :, :, :]
+            
+            # Get isosurface level for this population
+            level = isosurface_levels.get(pop_idx, 0.1)
+            
+            # Print diagnostic information
+            density_min = np.min(population_density)
+            density_max = np.max(population_density)
+            density_mean = np.mean(population_density)
+            density_nonzero = np.count_nonzero(population_density)
+            total_voxels = population_density.size
+            print(f"  {self.labels[pop_idx]} (index {pop_idx}):")
+            print(f"    Density range: [{density_min:.6f}, {density_max:.6f}], mean: {density_mean:.6f}")
+            print(f"    Non-zero voxels: {density_nonzero}/{total_voxels} ({100*density_nonzero/total_voxels:.2f}%)")
+            print(f"    Threshold: {level:.6f}")
+            
+            # Find voxels above the threshold
+            pop_mask = population_density >= level
+            voxels_above_threshold = np.count_nonzero(pop_mask)
+            print(f"    Voxels above threshold: {voxels_above_threshold} ({100*voxels_above_threshold/total_voxels:.2f}%)")
+            
+            if np.any(pop_mask):
+                # Extract coordinates and density values for this population
+                pop_x = X[pop_mask]
+                pop_y = Y[pop_mask]
+                pop_z = Z[pop_mask]
+                pop_values = population_density[pop_mask]
+                
+                # Apply wedge cutout: remove points within the specified angular range
+                # For tumor cells (first population), expand the cutout with a buffer to prevent edge occlusion
+                # For necrotic cells (later populations), use the original cutout so they're fully visible
+                buffer_rad = np.deg2rad(cutout_buffer) if i == 0 else 0.0  # Only apply buffer to first population
+                
+                # Calculate azimuthal angle relative to cutout center
+                dx_rel = pop_x - cutout_center[0]
+                dy_rel = pop_y - cutout_center[1]
+                
+                # Calculate azimuthal angle (in radians, 0 = +X axis, increasing counterclockwise)
+                azimuth_angles = np.arctan2(dy_rel, dx_rel)
+                # Normalize to [0, 2π]
+                azimuth_angles = np.mod(azimuth_angles, 2 * np.pi)
+                
+                # Normalize cutout angles to [0, 2π] and apply buffer for tumor cells
+                start_angle = np.mod(cutout_azimuth_start_rad - buffer_rad, 2 * np.pi)
+                end_angle = np.mod(cutout_azimuth_end_rad + buffer_rad, 2 * np.pi)
+                
+                # Create mask for points to keep (outside the cutout wedge + buffer)
+                if end_angle > start_angle:
+                    # Normal case: cutout doesn't cross 0/2π boundary
+                    keep_mask = ~((azimuth_angles >= start_angle) & (azimuth_angles <= end_angle))
+                else:
+                    # Cutout crosses 0/2π boundary
+                    keep_mask = ~((azimuth_angles >= start_angle) | (azimuth_angles <= end_angle))
+                
+                # Apply cutout mask
+                pop_x = pop_x[keep_mask]
+                pop_y = pop_y[keep_mask]
+                pop_z = pop_z[keep_mask]
+                pop_values = pop_values[keep_mask]
+                
+                # Store plot data for later (we'll plot in reverse order)
+                if len(pop_x) > 0:
+                    # Get color for this population
+                    color = population_colors[i % len(population_colors)]
+                    
+                    # Calculate alpha values proportional to density
+                    alpha_min = 0.1
+                    alpha_max = alpha
+                    
+                    if pop_values.max() > pop_values.min():
+                        normalized_alpha = alpha_min + (alpha_max - alpha_min) * (
+                            (pop_values - pop_values.min()) / (pop_values.max() - pop_values.min())
+                        )
+                    else:
+                        normalized_alpha = np.full_like(pop_values, (alpha_min + alpha_max) / 2)
+                    
+                    base_rgba = mcolors.to_rgba(color)
+                    colors_with_alpha = np.column_stack([
+                        np.full(len(normalized_alpha), base_rgba[0]),
+                        np.full(len(normalized_alpha), base_rgba[1]),
+                        np.full(len(normalized_alpha), base_rgba[2]),
+                        normalized_alpha
+                    ])
+                    
+                    # Store for later plotting
+                    plot_data_list.append({
+                        'x': pop_x, 'y': pop_y, 'z': pop_z,
+                        'colors': colors_with_alpha,
+                        'label': f'{self.labels[pop_idx]} (density ≥ {level:.2f})',
+                        'color_name': color,
+                        'count': len(pop_x)
+                    })
+                    
+                    print(f"    ✅ Prepared: {len(pop_x)} voxels with color {color}")
+                else:
+                    print(f"    ❌ No voxels remaining after cutout")
+            else:
+                print(f"  {self.labels[pop_idx]}: No voxels above threshold {level:.2f}")
+        
+        # Plot in normal order, but make tumor cells VERY transparent and sample fewer points
+        # Plot necrotic cells last with full opacity so they're visible through the tumor
+        print(f"\nPlotting populations...")
+        for idx, plot_data in enumerate(plot_data_list):
+            adjusted_colors = plot_data['colors'].copy()
+            
+            if idx == 0:
+                # First population (tumor): Make it VERY transparent and sample fewer points
+                # Reduce alpha to 10-15% of original to let necrotic show through
+                adjusted_colors[:, 3] = adjusted_colors[:, 3] * 0.15  # Very transparent (15% of original)
+                adjusted_s = s
+                
+                # Sample every 2nd point to reduce occlusion while keeping structure visible
+                sample_rate = 2
+                if len(plot_data['x']) > 1000:  # Only sample if we have many points
+                    plot_x = plot_data['x'][::sample_rate]
+                    plot_y = plot_data['y'][::sample_rate]
+                    plot_z = plot_data['z'][::sample_rate]
+                    plot_colors = adjusted_colors[::sample_rate]
+                    print(f"  Plotting {plot_data['color_name']} (tumor): Very transparent (15% alpha), sampling every {sample_rate} points ({len(plot_x)}/{len(plot_data['x'])} points)")
+                else:
+                    plot_x = plot_data['x']
+                    plot_y = plot_data['y']
+                    plot_z = plot_data['z']
+                    plot_colors = adjusted_colors
+                    print(f"  Plotting {plot_data['color_name']} (tumor): Very transparent (15% alpha)")
+            else:
+                # Later populations (necrotic): Full opacity and larger size - plot ALL points
+                adjusted_colors[:, 3] = 1.0  # Full opacity for necrotic
+                adjusted_s = s * 2.5  # 2.5x larger for necrotic cells
+                plot_x = plot_data['x']
+                plot_y = plot_data['y']
+                plot_z = plot_data['z']
+                plot_colors = adjusted_colors
+                print(f"  Plotting {plot_data['color_name']} (necrotic): Full opacity, larger size (2.5x)")
+            
+            print(f"    {len(plot_x)} points, size={adjusted_s:.1f}, alpha_range=[{plot_colors[:, 3].min():.2f}, {plot_colors[:, 3].max():.2f}]")
+            
+            scatter = ax.scatter(plot_x, plot_y, plot_z, 
+                               c=plot_colors, s=adjusted_s,
+                               label=plot_data['label'], depthshade=False)
+            legend_handles.append(scatter)
+            print(f"  ✅ Plotted: {len(plot_x)} voxels")
+        
+        # Add legend
+        if legend_handles:
+            ax.legend(handles=legend_handles, loc='upper left')
+        else:
+            print("\n⚠️  WARNING: No populations were plotted! Check thresholds and density ranges above.")
+        
+        # Print summary
+        print(f"\nSummary: {len(legend_handles)}/{len(population_indices)} populations plotted")
+        
+        # Set labels and title
+        ax.set_xlabel('X (μm)')
+        ax.set_ylabel('Y (μm)')
+        ax.set_zlabel('Z (μm)')
+        title = f'3D Cell Populations - Step {step} (t={time:.2f})'
+        if cutout_angle > 0:
+            title += f' [Wedge Cutout: {cutout_angle}°]'
+        title += title_suffix
+        ax.set_title(title)
+        
+        # Set equal aspect ratio
+        max_range = np.array([X.max()-X.min(), Y.max()-Y.min(), Z.max()-Z.min()]).max() / 2.0
+        mid_x = (X.max()+X.min()) * 0.5
+        mid_y = (Y.max()+Y.min()) * 0.5
+        mid_z = (Z.max()+Z.min()) * 0.5
+        ax.set_xlim(mid_x - max_range, mid_x + max_range)
+        ax.set_ylim(mid_y - max_range, mid_y + max_range)
+        ax.set_zlim(mid_z - max_range, mid_z + max_range)
+        
+        plt.tight_layout()
+        
+        if save_plot and output_dir:
+            os.makedirs(output_dir, exist_ok=True)
+            filename = f'3d_populations_step_{step:06d}.png'
+            plt.savefig(os.path.join(output_dir, filename), dpi=300, bbox_inches='tight')
+            print(f"3D populations plot saved to {output_dir}/{filename}")
         
         if show_plot:
             plt.show()

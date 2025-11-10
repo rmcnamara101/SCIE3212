@@ -203,10 +203,11 @@ def _isotropic_upwind_divergence(ux, uy, uz, phi, dx):
     flux_z = uz * phi
     
     # Compute divergence of the flux using isotropic scheme
+    # Match the weights used in gradient computation for consistency
     inv_2dx = 1.0 / (2.0 * dx)
     inv_2sqrt2dx = 1.0 / (2.0 * np.sqrt(2.0) * dx)
-    w_axis = 1.0
-    w_diag = 0.10  # diagonal blend weight
+    w_axis = 0.7  # Match gradient weights: 70% axis-aligned
+    w_diag = 0.3  # Match gradient weights: 30% diagonal (0.075 * 4 diagonals)
     
     # Interior points with isotropic stencil
     for i in range(1, nx-1):

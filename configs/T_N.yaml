@@ -6,11 +6,11 @@ simulation:
 
 domain:
   shape: 100 # integer defining the number of grid points in each dimension
-  dx: 200 # float defining the spacing of the grid (in μm)
+  dx: 100 # float defining the spacing of the grid (in μm)
 
 time:
   steps: 100 # integer defining the number of steps to run the simulation for
-  dt: 1.0 # Reduced from 0.5 to improve numerical stability
+  dt: 0.05 # Reduced from 0.5 to improve numerical stability
 
 populations:
   Tumour:
@@ -19,9 +19,9 @@ populations:
     dynamics:
       lambda: 20 # float
       mu: 20 # float
-      mobility: 1.0 # float
-      nutrient_threshold: 0.2 # float
-      nutrient_consumption: 0.2 # float
+      mobility: 10000.0 # float
+      nutrient_threshold: 0.4 # float
+      nutrient_consumption: 0.4 # float
       nutrient_production: 0.2 # float
     
     
@@ -35,22 +35,23 @@ populations:
       nutrient_threshold: 0.0 # float
       nutrient_consumption: 0.0 # float
       nutrient_production: 0.0 # float
-      beta_N: 0.00001 # float
+      beta_N: 0.01 # float
 
 nutrient:
   name: General
   label: General nutrient
   color: Orange
   dynamics:
-    diffusion: 90000 # float
+    diffusion: 20000 # float
     #boundary_value: 1.0 # float defining the value of the nutrient at the boundary
-    k: 10.0 # float defining the steepness of the nutrient switch 
+    k: 6.0 # float defining the steepness of the nutrient switch 
 
 physics:
   adhesion_energy:
     m: 10.0  # Reduced from 100.0 to prevent numerical overflow
   disable_pressure: False
   pressure_solver: original_cg  # Options: "original_cg", "improved_cg", "gmres", "multigrid", "pyamg"
+  pressure_constant: 1.0 # float defining the pressure scale factor
   
   # Numerical stability settings
   max_magnitude: 1e6  # Maximum magnitude for mass flux to prevent overflow

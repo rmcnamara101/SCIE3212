@@ -55,7 +55,7 @@ class VectorizedSolidVelocity:
         self.labels = list(populations.keys())
         self.M = len(self.labels)
         self.field_manager = field_manager
-        
+        self.pressure_constant = cfg.get("physics", {}).get("pressure_constant", 1.0)
         # Check if pressure solver should be disabled
         self.disable_pressure = cfg.get("physics", {}).get("disable_pressure", False)
         
@@ -259,9 +259,9 @@ class VectorizedSolidVelocity:
         # Compute velocity: u = -(∇p + (δE/δφ_T) ∇φ_T)
         # Note: pressure returned by solver is -p, so grad_p_* = -∂p/∂*
         # Therefore u = grad_p_* - energy_deriv * grad_C_*
-        ux = (grad_p_x - energy_deriv * grad_C_x)
-        uy = (grad_p_y - energy_deriv * grad_C_y)
-        uz = (grad_p_z - energy_deriv * grad_C_z)
+        ux = self.pressure_constant * (grad_p_x - energy_deriv * grad_C_x)
+        uy = self.pressure_constant *(grad_p_y - energy_deriv * grad_C_y)
+        uz = self.pressure_constant *(grad_p_z - energy_deriv * grad_C_z)
         
         # Add gravity contribution if enabled
         if self.gravity_enabled:

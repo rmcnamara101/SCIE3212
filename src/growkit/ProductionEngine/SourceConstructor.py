@@ -207,15 +207,13 @@ class SourceConstructor:
             if i < self.P.shape[0] and i < self.P.shape[1]:
                 growth_terms += G_N * nutrient_field * self.P[i, i] * alpha_hat[i]
         
-        # Death: sum over all populations of their absolute death (excluding necrotic)
-        # Death should happen when nutrient is BELOW threshold (inverse of growth switch)
-        # So we use (1 - Theta) instead of Theta for death
-        death_terms = np.zeros_like(nutrient_field)
-        for i in range(self.M - 1):  # Exclude necrotic population
-            death_terms += self.mu[i] * (1.0 - Theta[i]) * phi_hat[i]
+        # Death terms are excluded from pressure source because:
+        # - All death from viable populations flows into necrotic (via death matrix D)
+        # - The necrotic pathway is a transfer term (net mass conserved)
+        # - Transfer terms should not contribute to pressure
+        # Therefore, pressure source only includes growth terms
         
-        # Pressure source is net growth minus net death
-        pressure_source = growth_terms - death_terms
+        pressure_source = growth_terms
         
         return pressure_source
     
@@ -253,15 +251,13 @@ class SourceConstructor:
             if i < self.P.shape[0] and i < self.P.shape[1]:
                 growth_terms += G_N * nutrient_field * self.P[i, i] * alpha_hat[:, i]
         
-        # Death: only absolute death rates (excluding necrotic)
-        # Death should happen when nutrient is BELOW threshold (inverse of growth switch)
-        # So we use (1 - Theta) instead of Theta for death
-        death_terms = np.zeros_like(nutrient_field)
-        for i in range(self.M - 1):  # Exclude necrotic population
-            death_terms += self.mu[i] * np.mean(1.0 - Theta[:, i]) * phi_hat[:, i]
+        # Death terms are excluded from pressure source because:
+        # - All death from viable populations flows into necrotic (via death matrix D)
+        # - The necrotic pathway is a transfer term (net mass conserved)
+        # - Transfer terms should not contribute to pressure
+        # Therefore, pressure source only includes growth terms
         
-        # Pressure source is net growth minus net death
-        pressure_source = growth_terms + death_terms
+        pressure_source = growth_terms
         
         return pressure_source.squeeze()
     
@@ -503,13 +499,10 @@ def compute_pressure_source_vector_numba(phi_hat, nutrient_field, lambda_, mu, n
                     for z in range(shape[2]):
                         pressure_source[x, y, z] += G_N * nutrient_field[x, y, z] * P[i, i] * alpha_hat[i, x, y, z]
     
-    # Death: only absolute death rates (excluding necrotic)
-    # Death should happen when nutrient is BELOW threshold (inverse of growth switch)
-    # So we use (1 - Theta) instead of Theta for death
-    for i in range(M - 1):  # Exclude necrotic population
-        for x in range(shape[0]):
-            for y in range(shape[1]):
-                for z in range(shape[2]):
-                    pressure_source[x, y, z] -= mu[i] * (1.0 - Theta[i, x, y, z]) * phi_hat[i, x, y, z]
+    # Death terms are excluded from pressure source because:
+    # - All death from viable populations flows into necrotic (via death matrix D)
+    # - The necrotic pathway is a transfer term (net mass conserved)
+    # - Transfer terms should not contribute to pressure
+    # Therefore, pressure source only includes growth terms
     
     return pressure_source
