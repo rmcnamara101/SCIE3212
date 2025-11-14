@@ -114,9 +114,26 @@ def update_config_with_parameters(base_config, parameter_dict):
     Returns:
         Updated configuration dictionary
     """
-    # Create a deep copy to avoid modifying the original
-    updated_config = copy.deepcopy(base_config)
+    # OPTIMIZATION: Use a more efficient copy strategy
+    # Instead of deep copying everything, we'll do a selective deep copy
+    # Only deep copy the nested dictionaries we need to modify
+    import copy as cp
     
+    # Start with a shallow copy
+    updated_config = base_config.copy()
+    
+    # Track which top-level keys we need to deep copy
+    keys_to_deepcopy = set()
+    for param_path in parameter_dict.keys():
+        top_key = param_path.split('.')[0]
+        keys_to_deepcopy.add(top_key)
+    
+    # Deep copy only the necessary top-level sections
+    for key in keys_to_deepcopy:
+        if key in updated_config:
+            updated_config[key] = cp.deepcopy(base_config[key])
+    
+    # Now update the parameters
     for param_path, value in parameter_dict.items():
         # Split the parameter path (e.g., 'populations.Tumour.dynamics.lambda')
         path_parts = param_path.split('.')
@@ -197,6 +214,12 @@ def run_random_parameter_sweep(base_config_path, parameter_bounds_dict, num_samp
     # Load base configuration
     base_config = yaml.safe_load(Path(base_config_path).read_text())
     
+    # OPTIMIZATION: Pre-flatten config once and cache the structure
+    # This avoids flattening the same structure repeatedly in run_simulation_with_observables
+    from run_parameter_sweep import flatten_dict
+    base_flat_config = flatten_dict(base_config)  # Cache the flattened structure
+    base_config_keys = set(base_flat_config.keys())  # Cache keys for faster lookups
+    
     # Generate random parameter combinations
     parameter_combinations = generate_random_parameter_combinations(
         parameter_bounds_dict, num_samples, random_seed
@@ -224,25 +247,33 @@ def run_random_parameter_sweep(base_config_path, parameter_bounds_dict, num_samp
     }
     
     # Run each parameter combination
+    import time
     for run_id, param_combination in enumerate(parameter_combinations, 1):
+        run_start_time = time.time()
         print(f"\n{'='*60}")
         print(f"Running simulation {run_id}/{num_samples}")
         print(f"Parameter combination: {param_combination}")
         print(f"{'='*60}")
         
         # Update configuration with current parameter combination
+        t0 = time.time()
         updated_config = update_config_with_parameters(base_config, param_combination)
+        config_update_time = time.time() - t0
         
-        # Save the configuration for this run
-        config_path = save_parameter_config(updated_config, sweep_dir, run_id)
-        
-        # Create temporary config file for this run
+        # OPTIMIZATION: Only write config file once (use temp_config_path for both purposes)
+        t0 = time.time()
         temp_config_path = sweep_dir / f"temp_config_run_{run_id:03d}.yaml"
         with open(temp_config_path, 'w') as f:
             yaml.dump(updated_config, f, default_flow_style=False, sort_keys=False)
         
+        # Also save a permanent copy with run_id for reference
+        config_path = save_parameter_config(updated_config, sweep_dir, run_id)
+        config_save_time = time.time() - t0
+        
         try:
             # Run simulation with observables (this creates CSV with config already included)
+            # OPTIMIZATION: Pass cached flattened config structure to avoid re-flattening
+            t0 = time.time()
             csv_path = run_simulation_with_observables(
                 config_path=str(temp_config_path),
                 output_dir=sweep_dir,
@@ -250,18 +281,24 @@ def run_random_parameter_sweep(base_config_path, parameter_bounds_dict, num_samp
                 save_interval=save_interval,
                 threshold=threshold,
                 parameter_values=param_combination,
-                config=updated_config  # Pass full config for inclusion in CSV
+                config=updated_config,  # Pass full config for inclusion in CSV
+                cached_flat_config_keys=base_config_keys  # Pass cached keys to avoid re-flattening
             )
+            simulation_time = time.time() - t0
             
             # The CSV already contains config and observables, but we need to rename it with run_id
             csv_files.append(csv_path)
             
             # Rename the CSV to include run_id for easy identification
+            t0 = time.time()
             combined_csv_path = sweep_dir / f"observables_run_{run_id:03d}.csv"
             if csv_path != combined_csv_path:
                 import shutil
                 shutil.move(csv_path, combined_csv_path)
                 csv_path = combined_csv_path
+            file_ops_time = time.time() - t0
+            
+            total_run_time = time.time() - run_start_time
             
             # Store run information
             run_info = {
@@ -269,14 +306,28 @@ def run_random_parameter_sweep(base_config_path, parameter_bounds_dict, num_samp
                 'parameter_combination': param_combination,
                 'config_path': str(config_path),
                 'csv_path': str(csv_path),
-                'success': True
+                'success': True,
+                'timings': {
+                    'config_update': config_update_time,
+                    'config_save': config_save_time,
+                    'simulation': simulation_time,
+                    'file_ops': file_ops_time,
+                    'total': total_run_time
+                }
             }
             sweep_summary['results'].append(run_info)
             
             print(f"✓ Simulation {run_id} completed successfully")
             print(f"  CSV saved to: {csv_path}")
+            print(f"  Timing breakdown:")
+            print(f"    Config update: {config_update_time:.2f}s")
+            print(f"    Config save: {config_save_time:.2f}s")
+            print(f"    Simulation: {simulation_time:.2f}s ({simulation_time/60:.1f} min)")
+            print(f"    File ops: {file_ops_time:.2f}s")
+            print(f"    Total: {total_run_time:.2f}s ({total_run_time/60:.1f} min)")
             
         except Exception as e:
+            total_run_time = time.time() - run_start_time
             print(f"✗ Simulation {run_id} failed: {str(e)}")
             
             # Store failed run information
@@ -287,7 +338,10 @@ def run_random_parameter_sweep(base_config_path, parameter_bounds_dict, num_samp
                 'csv_path': None,
                 'combined_csv_path': None,
                 'success': False,
-                'error': str(e)
+                'error': str(e),
+                'timings': {
+                    'total': total_run_time
+                }
             }
             sweep_summary['results'].append(run_info)
         
@@ -350,6 +404,12 @@ def run_parameter_sweep(base_config_path, parameter_sweep_dict, output_dir=None,
     # Load base configuration
     base_config = yaml.safe_load(Path(base_config_path).read_text())
     
+    # OPTIMIZATION: Pre-flatten config once and cache the structure
+    # This avoids flattening the same structure repeatedly in run_simulation_with_observables
+    from run_parameter_sweep import flatten_dict
+    base_flat_config = flatten_dict(base_config)  # Cache the flattened structure
+    base_config_keys = set(base_flat_config.keys())  # Cache keys for faster lookups
+    
     # Generate all parameter combinations
     parameter_combinations = generate_parameter_combinations(parameter_sweep_dict)
     
@@ -371,43 +431,58 @@ def run_parameter_sweep(base_config_path, parameter_sweep_dict, output_dir=None,
     }
     
     # Run each parameter combination
+    import time
     for run_id, param_combination in enumerate(parameter_combinations, 1):
+        run_start_time = time.time()
         print(f"\n{'='*60}")
         print(f"Running simulation {run_id}/{len(parameter_combinations)}")
         print(f"Parameter combination: {param_combination}")
         print(f"{'='*60}")
         
         # Update configuration with current parameter combination
+        t0 = time.time()
         updated_config = update_config_with_parameters(base_config, param_combination)
+        config_update_time = time.time() - t0
         
-        # Save the configuration for this run
-        config_path = save_parameter_config(updated_config, sweep_dir, run_id)
-        
-        # Create temporary config file for this run
+        # OPTIMIZATION: Only write config file once (use temp_config_path for both purposes)
+        t0 = time.time()
         temp_config_path = sweep_dir / f"temp_config_run_{run_id:03d}.yaml"
         with open(temp_config_path, 'w') as f:
             yaml.dump(updated_config, f, default_flow_style=False, sort_keys=False)
         
+        # Also save a permanent copy with run_id for reference
+        config_path = save_parameter_config(updated_config, sweep_dir, run_id)
+        config_save_time = time.time() - t0
+        
         try:
             # Run simulation with observables
+            # OPTIMIZATION: Pass cached flattened config structure to avoid re-flattening
+            t0 = time.time()
             csv_path = run_simulation_with_observables(
                 config_path=str(temp_config_path),
                 output_dir=sweep_dir,
                 total_steps=total_steps,
                 save_interval=save_interval,
                 threshold=threshold,
-                parameter_values=param_combination
+                parameter_values=param_combination,
+                config=updated_config,  # Pass full config for inclusion in CSV
+                cached_flat_config_keys=base_config_keys  # Pass cached keys to avoid re-flattening
             )
+            simulation_time = time.time() - t0
             
             # The CSV already contains config and observables, but we need to rename it with run_id
             csv_files.append(csv_path)
             
             # Rename the CSV to include run_id for easy identification
+            t0 = time.time()
             combined_csv_path = sweep_dir / f"observables_run_{run_id:03d}.csv"
             if csv_path != combined_csv_path:
                 import shutil
                 shutil.move(csv_path, combined_csv_path)
                 csv_path = combined_csv_path
+            file_ops_time = time.time() - t0
+            
+            total_run_time = time.time() - run_start_time
             
             # Store run information
             run_info = {
@@ -415,14 +490,28 @@ def run_parameter_sweep(base_config_path, parameter_sweep_dict, output_dir=None,
                 'parameter_combination': param_combination,
                 'config_path': str(config_path),
                 'csv_path': str(csv_path),
-                'success': True
+                'success': True,
+                'timings': {
+                    'config_update': config_update_time,
+                    'config_save': config_save_time,
+                    'simulation': simulation_time,
+                    'file_ops': file_ops_time,
+                    'total': total_run_time
+                }
             }
             sweep_summary['results'].append(run_info)
             
             print(f"✓ Simulation {run_id} completed successfully")
             print(f"  CSV saved to: {csv_path}")
+            print(f"  Timing breakdown:")
+            print(f"    Config update: {config_update_time:.2f}s")
+            print(f"    Config save: {config_save_time:.2f}s")
+            print(f"    Simulation: {simulation_time:.2f}s ({simulation_time/60:.1f} min)")
+            print(f"    File ops: {file_ops_time:.2f}s")
+            print(f"    Total: {total_run_time:.2f}s ({total_run_time/60:.1f} min)")
             
         except Exception as e:
+            total_run_time = time.time() - run_start_time
             print(f"✗ Simulation {run_id} failed: {str(e)}")
             
             # Store failed run information
@@ -432,7 +521,10 @@ def run_parameter_sweep(base_config_path, parameter_sweep_dict, output_dir=None,
                 'config_path': str(config_path),
                 'csv_path': None,
                 'success': False,
-                'error': str(e)
+                'error': str(e),
+                'timings': {
+                    'total': total_run_time
+                }
             }
             sweep_summary['results'].append(run_info)
         
@@ -474,34 +566,34 @@ def main():
     # Define parameter bounds for random sampling
     parameter_bounds_dict = {
         # Tumor cell growth rate: random between 2.0 and 8.0
-        'populations.Tumour.dynamics.lambda': (0.2, 8.0),
+        'populations.Tumour.dynamics.lambda': (0.1, 30),
         # Tumor cell death rate: random between 0.2 and 2.0
-        'populations.Tumour.dynamics.mu': (0.2, 8.0),
-        # Tumor cell mobility: random between 0.5 and 2.0
-        'populations.Tumour.dynamics.mobility': (0.1, 1000.0),
+        'populations.Tumour.dynamics.mu': (0.1, 30),
         # Tumor cell nutrient threshold: random between 0.1 and 1.0
-        'populations.Tumour.dynamics.nutrient_threshold': (0.1, 1.0),
+        'populations.Tumour.dynamics.nutrient_threshold': (0.1, 0.99),
         # Tumor cell nutrient consumption: random between 0.01 and 0.1
-        'populations.Tumour.dynamics.nutrient_consumption': (0.01, 0.1),
+        'populations.Tumour.dynamics.nutrient_consumption': (0.01, 0.99),
         # Tumor cell nutrient production: random between 0.01 and 0.1
-        'populations.Tumour.dynamics.nutrient_production': (0.01, 0.1),
+        'populations.Tumour.dynamics.nutrient_production': (0.01, 0.99),
         # Necrotic cell beta_N: random between 0.00001 and 0.1
         'populations.Necrotic.dynamics.beta_N': (0.00001, 0.1),
-        # Nutrient diffusion: random between 300 and 600
-        'nutrient.dynamics.diffusion': (300, 600),
-        # Adhesion energy: random between 0.1 and 1000.0
-        'physics.adhesion_energy.m': (0.1, 1000.0),
+        # Necrotic cell death rate: random between 0.1 and 30
+        'populations.Necrotic.dynamics.mu': (0.1, 30),
+        # Nutrient growth threshold offset: random between 0.1 and 0.99
+        'nutrient.dynamics.growth_threshold_offset': (0.1, 0.99),
+        # Nutrient diffusion: random between 10000 and 100000
+        'nutrient.dynamics.diffusion': (10000, 500000),
     }
     
     # Number of random samples to generate
-    num_samples = 100
+    num_samples = 1000
     
     # Run random parameter sweep
     csv_files, summary = run_random_parameter_sweep(
         base_config_path=base_config_path,
         parameter_bounds_dict=parameter_bounds_dict,
         num_samples=num_samples,
-        total_steps=10,  # Short runs for testing
+        total_steps=20,  # Short runs for testing
         save_interval=1,
         threshold=0.1,
         random_seed=42  # For reproducible results

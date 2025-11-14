@@ -493,7 +493,7 @@ def main():
     # ============================================================================
     
     # Path to parameter sweep directory containing CSV files
-    SWEEP_DIR = "/Users/rileymcnamara/CODE/2025/silicokit/laboratory/parameter_sweeps/random_parameter_sweep_20251103_182304"
+    SWEEP_DIR = "/Users/rileymcnamara/CODE/2025/silicokit/laboratory/parameter_sweeps/random_parameter_sweep_20251113_230054"
     
     # Whether to compare with validation data (set to False if validation data structure is unknown)
     USE_VALIDATION_DATA = False

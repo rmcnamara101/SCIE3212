@@ -468,15 +468,15 @@ class ObservableUtils:
                                    exclude_necrotic=True,
                                    drop_fraction=0.5):
         """
-        Calculate the inhibited radius - where viable source terms drop significantly from maximum.
+        Calculate the inhibited radius - the boundary where necrotic source terms become positive.
         
-        This represents the radius where viable source terms drop to a significant fraction of the 
-        maximum value (moving inward from outer edge). The boundary marks where growth becomes
-        significantly inhibited, separating the highly proliferative outer layer from the 
-        growth-inhibited inner region.
+        This represents the outer boundary of necrosis death caused by lack of nutrient. The inhibited
+        radius is where necrotic source terms cross from zero/negative to positive (moving outward from center),
+        marking the outer extent of the hypoxic region where necrosis is actively occurring. This should
+        be further out than the necrotic core radius, as it marks where necrotic processes become active.
         
         Args:
-            source_terms: Source term field (M, nx, ny, nz) or aggregated (nx, ny, nz)
+            source_terms: Source term field (M, nx, ny, nz) - must have at least one population
             density_field: Cell density field for tumor center detection
             growth_threshold: Deprecated parameter (kept for backward compatibility, not used)
             density_threshold: Minimum density to consider as tumor region (default 0.1)
@@ -484,111 +484,105 @@ class ObservableUtils:
             threshold_type: Deprecated parameter (kept for backward compatibility, not used)
             threshold_percentile: Deprecated parameter (kept for backward compatibility, not used)
             use_adaptive_threshold: Deprecated parameter (kept for backward compatibility, not used)
-            exclude_necrotic: If True, exclude necrotic population (last population) when aggregating source terms.
-                             This is important because necrotic population has positive source terms
-                             from mass flow, which can mask negative source terms from dying viable cells.
-            drop_fraction: Fraction of maximum source term to use as threshold (default 0.5 = 50% of max)
+            exclude_necrotic: Deprecated parameter (kept for backward compatibility, not used - now uses necrotic source terms)
+            drop_fraction: Deprecated parameter (kept for backward compatibility, not used)
             
         Returns:
-            inhibited_radius: Radius where viable source terms drop to drop_fraction of maximum value
+            inhibited_radius: Radius where necrotic source terms cross from zero/negative to positive (from center outward)
         """
-        # Aggregate source terms - only use viable populations
+        # Extract necrotic source terms (last population) - this is the boundary of positive necrotic source terms
         if source_terms.ndim == 4:
-            if exclude_necrotic and source_terms.shape[0] > 1:
-                # Sum source terms across viable populations only (exclude last population, which is necrotic)
-                viable_source_terms = np.sum(source_terms[:-1], axis=0)
-            else:
-                # If not excluding necrotic, still sum all populations
-                viable_source_terms = np.sum(source_terms, axis=0)
+            if source_terms.shape[0] == 0:
+                return 0.0
+            # Get necrotic population source terms (last population)
+            necrotic_source_terms = source_terms[-1]
         else:
-            # If already aggregated, assume it's viable source terms
-            viable_source_terms = source_terms
+            # If already 3D, assume it's necrotic source terms
+            necrotic_source_terms = source_terms
         
         # Find tumor center using density field
         com = self.calculate_center_of_mass(density_field)
         center_point = np.array([com[0], com[1], com[2]])
         
         # Calculate total tumor radius to ensure inhibited radius is within tumor boundary
-        # Use 'contour' method for total radius calculation (radial_average is not a valid method for calculate_radius)
         radius_method = method if method in ['contour', 'mass', 'gyration'] else 'contour'
         total_radius = self.calculate_radius(density_field, threshold=density_threshold, method=radius_method)
         
-        # Find maximum source term value in tumor region
+        # Check if there are any positive necrotic source terms in tumor region
         tumor_mask = density_field > density_threshold
         if not np.any(tumor_mask):
             return 0.0
         
-        max_source_term = np.max(viable_source_terms[tumor_mask])
-        if max_source_term <= 0:
-            # No positive source terms found, return 0
+        # Find maximum positive necrotic source term value in tumor region
+        max_necrotic_source = np.max(necrotic_source_terms[tumor_mask])
+        if max_necrotic_source <= 0:
+            # No positive necrotic source terms found, return 0 (no active necrosis)
             return 0.0
         
-        # Calculate threshold as fraction of maximum
-        threshold = drop_fraction * max_source_term
+        # Use zero crossing with small tolerance to find where necrotic source terms become positive
+        # Use a small absolute tolerance to account for numerical noise
+        zero_tolerance = max(1e-6, 0.01 * max_necrotic_source)  # Small tolerance for zero crossing
         
         # Calculate radial distances from center
         r_squared = (self.X - com[0])**2 + (self.Y - com[1])**2 + (self.Z - com[2])**2
         radial_distances = np.sqrt(r_squared)
         
         if method == 'radial_average':
-            # Bin data by radial distance and find where source terms cross zero
+            # Bin data by radial distance and find where necrotic source terms become positive
             max_radius = np.max(radial_distances)
             num_bins = max(10, min(200, int(max_radius / self.dx)))
             radial_bins = np.linspace(0, max_radius, num_bins + 1)
-
-            # Calculate average source term and density in each radial bin
-            avg_source_terms = np.zeros(num_bins)
+            
+            # Calculate average necrotic source terms and density in each radial bin
+            avg_necrotic_sources = np.zeros(num_bins)
             avg_density = np.zeros(num_bins)
-
+            
             for i in range(num_bins):
                 r_min = radial_bins[i]
                 r_max = radial_bins[i + 1]
                 mask = (radial_distances >= r_min) & (radial_distances < r_max)
-
+                
                 if np.any(mask):
-                    avg_source_terms[i] = np.mean(viable_source_terms[mask])
+                    avg_necrotic_sources[i] = np.mean(necrotic_source_terms[mask])
                     avg_density[i] = np.mean(density_field[mask])
-
+            
             # Work only where tumor density is present
             viable_mask = avg_density > density_threshold
             if not np.any(viable_mask):
                 return 0.0
-
+            
             radial_centers = (radial_bins[:-1] + radial_bins[1:]) / 2
-
+            
             # Simple 3-point moving average smoothing within viable region to reduce jitter
-            smoothed = avg_source_terms.copy()
+            smoothed = avg_necrotic_sources.copy()
             for i in range(1, num_bins - 1):
                 if viable_mask[i - 1] or viable_mask[i] or viable_mask[i + 1]:
-                    smoothed[i] = (avg_source_terms[i - 1] + avg_source_terms[i] + avg_source_terms[i + 1]) / 3.0
-
-            # Find where source terms drop below threshold moving inward from outer edge
-            # Look for crossing from above threshold to below threshold (moving inward)
+                    smoothed[i] = (avg_necrotic_sources[i - 1] + avg_necrotic_sources[i] + avg_necrotic_sources[i + 1]) / 3.0
+            
+            # Find first crossing from zero/negative (<= tolerance) to positive (> tolerance) moving outward from center
+            # This marks the outer boundary where necrotic source terms become positive (active necrosis)
             inhibited_radius = 0.0
             found = False
-            
-            # Iterate from outside (larger indices) to inside (smaller indices)
-            # Find first crossing from above threshold to below threshold
-            for i in range(num_bins - 1, 0, -1):
-                if not (viable_mask[i] and viable_mask[i - 1]):
+            for i in range(1, num_bins):
+                if not (viable_mask[i - 1] and viable_mask[i]):
                     continue
-                # Find crossing from above threshold to below threshold (moving inward)
+                # Find crossing from zero/negative to positive (moving outward)
                 # Only consider crossings within the tumor boundary
-                if (smoothed[i] >= threshold) and (smoothed[i - 1] < threshold) and (radial_centers[i] <= total_radius):
-                    # Use the point where it crosses below threshold
-                    inhibited_radius = radial_centers[i - 1]
+                if (np.abs(smoothed[i - 1]) <= zero_tolerance or smoothed[i - 1] < 0) and (smoothed[i] > zero_tolerance) and (radial_centers[i] <= total_radius):
+                    inhibited_radius = radial_centers[i]
                     found = True
                     break
-
+            
             if not found:
-                # No crossing found - check if all values are above threshold
-                above_threshold = (avg_source_terms >= threshold) & viable_mask
-                if np.any(above_threshold):
-                    # All viable bins are above threshold, no inhibition found
+                # Fallback logic
+                positive_mask = (avg_necrotic_sources > zero_tolerance) & viable_mask
+                if np.any(positive_mask):
+                    # There are positive necrotic source terms, but no crossing found
+                    # This means the center itself is positive (no hypoxic core)
                     # Return 0 since inhibited radius starts at the center
                     inhibited_radius = 0.0
                 else:
-                    # All viable bins are below threshold, inhibited radius is at the center
+                    # All viable bins are zero or negative, so no active necrosis
                     inhibited_radius = 0.0
             
             # Ensure inhibited radius is within tumor boundary
@@ -596,28 +590,28 @@ class ObservableUtils:
                 inhibited_radius = 0.0
                 
         elif method == 'contour':
-            # Use contour method: find boundary where source terms drop below threshold
-            # Find points where source terms are above threshold (highly proliferative region)
-            above_threshold_mask = (viable_source_terms >= threshold) & (density_field > density_threshold)
+            # Use contour method: find minimum distance to points where necrotic source terms are positive
+            # Find points where necrotic source terms are positive
+            positive_mask = (necrotic_source_terms > zero_tolerance) & (density_field > density_threshold)
             
-            if not np.any(above_threshold_mask):
-                # No points above threshold found, return 0
+            if not np.any(positive_mask):
+                # No positive necrotic source terms found, return 0
                 return 0.0
             
-            # Find all points above threshold (highly proliferative region)
-            above_threshold_coords = np.where(above_threshold_mask)
-            above_threshold_points = np.column_stack([
-                above_threshold_coords[0] * self.dx,
-                above_threshold_coords[1] * self.dx,
-                above_threshold_coords[2] * self.dx
+            # Find all points where necrotic source terms are positive
+            positive_coords = np.where(positive_mask)
+            positive_points = np.column_stack([
+                positive_coords[0] * self.dx,
+                positive_coords[1] * self.dx,
+                positive_coords[2] * self.dx
             ])
             
-            # Calculate distances from center to all points above threshold
-            distances = cdist([center_point], above_threshold_points)[0]
+            # Calculate distances from center to all points with positive necrotic source terms
+            distances = cdist([center_point], positive_points)[0]
             
-            # The inhibited radius is the maximum distance to highly proliferative region
-            # This marks the inner boundary where source terms drop below threshold (moving inward)
-            inhibited_radius = np.max(distances) if len(distances) > 0 else 0.0
+            # The inhibited radius is the minimum distance to points with positive necrotic source terms
+            # This marks the inner boundary where necrotic source terms become positive (moving outward from center)
+            inhibited_radius = np.min(distances) if len(distances) > 0 else 0.0
             
             # Ensure inhibited radius is within tumor boundary
             if inhibited_radius > total_radius:

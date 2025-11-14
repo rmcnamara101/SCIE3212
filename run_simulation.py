@@ -18,4 +18,4 @@ from src.growkit.Simulator import TumorGrowthSimulator
 cfg = proj / "configs" / "T_N.yaml"
 simulator = TumorGrowthSimulator(str(cfg))
 
-simulator.run_and_save_simulation(total_steps=22, save_interval=1, save_physics_fields=True, output_dir=output_dir)
+simulator.run_and_save_simulation(total_steps=20, save_interval=1, save_physics_fields=True, output_dir=output_dir)

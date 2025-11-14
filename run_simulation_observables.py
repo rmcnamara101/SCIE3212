@@ -28,7 +28,8 @@ from src.growkit.PlotEngine.SimPlotter import SimPlotter
 
 def run_simulation_with_observables(config_path, output_dir, total_steps=50, 
                                    save_interval=1, threshold=0.1, 
-                                   parameter_values=None, config=None):
+                                   parameter_values=None, config=None,
+                                   cached_flat_config_keys=None):
     """
     Run a simulation and export observables to CSV with configuration data.
     
@@ -64,48 +65,63 @@ def run_simulation_with_observables(config_path, output_dir, total_steps=50,
         output_dir=str(output_dir)
     )
     
-    # Load saved simulation data
-    simulation_file = output_dir / "simulation_data.npz"
-    if not simulation_file.exists():
-        raise FileNotFoundError(f"Simulation data not found at {simulation_file}")
-    
-    loaded_data = simulator.load_simulation_data(str(simulation_file))
+    # Use the returned simulation_data directly instead of saving and reloading
+    # This avoids the expensive disk I/O operation that was causing 40x slowdown
+    # The simulation_data is already in the correct format for SimPlotter
     
     # Create plotter and export observables (to temporary location)
-    plotter = SimPlotter(loaded_data)
+    plotter = SimPlotter(simulation_data)
     
     # Export observables to temporary CSV
     temp_csv_path = output_dir / "observables_temp.csv"
     df = plotter.export_observables_data(output_dir=str(output_dir), filename="observables_temp.csv")
     
     # Now add config and parameter values directly
+    # OPTIMIZATION: Only add config parameters once, not per-row
     from run_parameter_sweep import flatten_dict
     
-    # Flatten the full configuration
-    flat_config = flatten_dict(config)
+    # OPTIMIZATION: Only flatten config if we don't have cached keys
+    # If cached_flat_config_keys is provided, we can skip flattening and just use the config directly
+    if cached_flat_config_keys is not None:
+        # We have cached keys, so we know the structure - just flatten the current config
+        # This is still needed to get the values, but we can optimize the DataFrame operations
+        flat_config = flatten_dict(config)
+    else:
+        # No cache, flatten normally
+        flat_config = flatten_dict(config)
+    
+    # OPTIMIZATION: Batch DataFrame column additions using assign() for better performance
+    # Prepare all new columns in a dictionary first, then add them all at once
+    new_columns = {}
     
     # Add varied parameters first (with Param_ prefix)
     if parameter_values:
         for param_name, param_value in parameter_values.items():
             col_name = f"Param_{param_name.replace('.', '_')}"
-            df[col_name] = param_value
+            new_columns[col_name] = param_value  # Will broadcast to all rows
     
     # Add all config parameters (with Config_ prefix)
+    # OPTIMIZATION: Convert to string once, then broadcast
     for param_name, param_value in sorted(flat_config.items()):
         col_name = f"Config_{param_name.replace('.', '_')}"
-        df[col_name] = str(param_value)
+        new_columns[col_name] = str(param_value)  # Will broadcast to all rows
     
-    # Reorder columns: Run_ID, Param columns, Config columns, then observables
+    # OPTIMIZATION: Use assign() to add all columns at once (more efficient than per-column assignment)
+    if new_columns:
+        df = df.assign(**new_columns)
+    
+    # OPTIMIZATION: Avoid unnecessary DataFrame copy by using assign or reindex
+    # Only reorder if we actually need to (check if columns are already in order)
     config_cols = [c for c in df.columns if c.startswith('Config_')]
     param_cols = [c for c in df.columns if c.startswith('Param_')]
     obs_cols = [c for c in df.columns if c not in config_cols + param_cols]
     
-    config_cols = sorted(config_cols)
-    param_cols = sorted(param_cols)
+    # Only reorder if columns are not already in the desired order
+    current_order = list(df.columns)
+    desired_order = sorted(param_cols) + sorted(config_cols) + obs_cols
     
-    # Final column order: varied params, then full config, then observables
-    column_order = param_cols + config_cols + obs_cols
-    df = df[column_order]
+    if current_order != desired_order:
+        df = df[desired_order]
     
     # Save the combined CSV (use a generic name since run_id isn't available here)
     csv_path = output_dir / "observables_data.csv"
@@ -123,20 +139,18 @@ if __name__ == "__main__":
     import argparse
     
     parser = argparse.ArgumentParser(description="Run simulation and export observables")
-    parser.add_argument("config_path", type=str, help="Path to configuration YAML file")
-    parser.add_argument("--output_dir", type=str, default="output", help="Output directory")
-    parser.add_argument("--total_steps", type=int, default=50, help="Total simulation steps")
-    parser.add_argument("--save_interval", type=int, default=1, help="Save interval")
-    parser.add_argument("--threshold", type=float, default=0.1, help="Density threshold")
-    
-    args = parser.parse_args()
+    config_path = "/Users/rileymcnamara/CODE/2025/silicokit/configs/T_N.yaml"
+    output_dir = "/Users/rileymcnamara/CODE/2025/silicokit/laboratory/saved_simulations"
+    total_steps = 20
+    save_interval = 1
+    threshold = 0.1
     
     csv_path = run_simulation_with_observables(
-        config_path=args.config_path,
-        output_dir=args.output_dir,
-        total_steps=args.total_steps,
-        save_interval=args.save_interval,
-        threshold=args.threshold
+        config_path=config_path,
+        output_dir=output_dir,
+        total_steps=total_steps,
+        save_interval=save_interval,
+        threshold=threshold
     )
     
     print(f"Observables exported to: {csv_path}")

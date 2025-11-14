@@ -29,6 +29,17 @@ from functools import lru_cache
 from src.growkit.MathEngine.Operators import isotropic_gradient_components, isotropic_laplacian
 from src.growkit.ProductionEngine.SourceConstructor import SourceConstructor
 
+# --- Memory management ---
+
+def clear_pressure_solver_caches():
+    """
+    Clear all LRU caches in the pressure solver to free memory.
+    Call this periodically during long simulations to prevent memory bloat.
+    """
+    create_improved_preconditioner.cache_clear()
+    get_cached_operator.cache_clear()
+    create_dx_aware_preconditioner.cache_clear()
+
 # --- Solver functions ---
 
 def solve_pressure_poisson_optimized(phi_T, S_T, energy_deriv, dx, shape, rtol=1e-6, maxiter=2000, solver_type="improved_cg"):
@@ -44,7 +55,10 @@ def solve_pressure_poisson_optimized(phi_T, S_T, energy_deriv, dx, shape, rtol=1
     - Vectorized operations
     
     Args:
-        solver_type: Type of solver to use ("improved_cg", "gmres", "original_cg")
+        solver_type: Type of solver to use ("improved_cg", "original_cg", "fast_cg")
+            - "fast_cg": Uses simple laplacian (no diagonal contributions) for speed
+            - "improved_cg": Uses isotropic operators with adaptive parameters
+            - "original_cg": Uses isotropic operators with simpler parameters
     """
     
     # Input validation and cleaning
@@ -52,7 +66,11 @@ def solve_pressure_poisson_optimized(phi_T, S_T, energy_deriv, dx, shape, rtol=1
     S_T = np.nan_to_num(S_T, nan=0.0, posinf=0.0, neginf=0.0)
     energy_deriv = np.nan_to_num(energy_deriv, nan=0.0, posinf=0.0, neginf=0.0)
     
-    # Compute the divergence term using isotropic operators
+    # Route to fast solver if requested (uses simple operators, no diagonal contributions)
+    if solver_type == "fast_cg":
+        return _solve_fast_cg(phi_T, S_T, energy_deriv, dx, shape, rhs_flat=None)
+    
+    # Compute the divergence term using isotropic operators (slower but more accurate)
     grad_C_x, grad_C_y, grad_C_z = isotropic_gradient_components(phi_T, dx)
     grad_energy_x, grad_energy_y, grad_energy_z = isotropic_gradient_components(energy_deriv, dx)
     laplace_phi = isotropic_laplacian(phi_T, dx)
@@ -84,6 +102,91 @@ def solve_pressure_poisson_optimized(phi_T, S_T, energy_deriv, dx, shape, rtol=1
     else:
         print(f"Warning: Unknown solver type '{solver_type}', using improved_cg")
         return _solve_improved_cg(phi_T, S_T, energy_deriv, dx, shape, rtol, maxiter, rhs_flat)
+
+
+def _solve_fast_cg(phi_T, S_T, energy_deriv, dx, shape, rhs_flat=None):
+    """
+    Fast CG solver based on the old implementation.
+    Uses simple laplacian (no diagonal contributions) for maximum speed.
+    This is the recommended solver for parameter sweeps.
+    """
+    from src.growkit.MathEngine.Operators import laplacian as simple_laplacian, gradient as simple_gradient, laplacian_neumann
+    
+    # Compute RHS if not provided
+    if rhs_flat is None:
+        # Use simple operators (no diagonal contributions) for speed
+        grad_C_x, grad_C_y, grad_C_z = simple_gradient(phi_T, dx)
+        grad_energy_x, grad_energy_y, grad_energy_z = simple_gradient(energy_deriv, dx)
+        laplace_phi = simple_laplacian(phi_T, dx)
+        
+        divergence_term = (grad_energy_x * grad_C_x +
+                          grad_energy_y * grad_C_y +
+                          grad_energy_z * grad_C_z +
+                          energy_deriv * laplace_phi)
+        
+        # Clean divergence term and clip extreme values to prevent instability
+        divergence_term = np.nan_to_num(divergence_term, nan=0.0, posinf=0.0, neginf=0.0)
+        # Clip divergence term to prevent numerical explosion
+        max_div = np.abs(S_T).max() * 10.0  # Limit divergence to reasonable scale
+        divergence_term = np.clip(divergence_term, -max_div, max_div)
+        
+        rhs = S_T - divergence_term
+        rhs_flat = rhs.flatten().astype(np.float64, copy=False)
+        rhs_flat = np.nan_to_num(rhs_flat, nan=0.0, posinf=0.0, neginf=0.0)
+        
+        # Clip RHS to prevent numerical explosion
+        max_rhs = 1e6  # Reasonable upper bound
+        rhs_flat = np.clip(rhs_flat, -max_rhs, max_rhs)
+    
+    # Check if RHS is effectively zero (but use a more lenient threshold)
+    rhs_norm = np.linalg.norm(rhs_flat)
+    if rhs_norm < 1e-10:
+        # Return zeros if RHS is truly zero, but print warning if it's suspiciously small
+        if rhs_norm > 1e-15:  # Very small but not zero - might indicate an issue
+            print(f"Warning: Fast CG solver RHS is very small (norm={rhs_norm:.2e}), returning zero pressure")
+        return np.zeros(shape)
+    
+    # Add minimal regularization to stabilize the solver
+    # The Laplacian with Neumann BCs is singular (null space = constants), so we need regularization
+    dx_factor = 1.0 / (dx * dx)
+    epsilon = max(1e-10, min(rhs_norm * 1e-8, 1e-6))  # Adaptive but small regularization
+    
+    # Create regularized negative laplacian operator: -∇² + εI
+    # The equation is -∇²p = rhs, so we solve (-∇² + εI)p = rhs
+    N = np.prod(shape)
+    def matvec(p_flat):
+        # Return -laplacian + regularization to match the equation (-∇² + εI)p = rhs
+        lap_result = -laplacian_neumann(p_flat, shape, dx)
+        return lap_result + epsilon * p_flat
+    
+    A = LinearOperator((N, N), matvec=matvec, dtype=np.float64)
+    
+    # Create simple diagonal preconditioner for better convergence
+    # Use the diagonal of the operator as preconditioner
+    diag_estimate = -6.0 / (dx * dx) + epsilon  # Approximate diagonal for interior points
+    preconditioner_diag = 1.0 / max(abs(diag_estimate), 1e-12)
+    M = diags([np.full(N, preconditioner_diag)], [0], shape=(N, N), dtype=np.float64)
+    
+    # Solve (-∇² + εI)p = rhs with preconditioning
+    try:
+        p_flat, info = cg(A, rhs_flat, M=M, rtol=1e-4, maxiter=200, atol=1e-10)
+        if info != 0:
+            # Try with more relaxed parameters
+            p_flat, info2 = cg(A, rhs_flat, M=M, rtol=1e-2, maxiter=1000, atol=1e-8)
+            if info2 != 0:
+                # If still not converging, try without preconditioner
+                p_flat, info3 = cg(A, rhs_flat, rtol=1e-2, maxiter=2000, atol=1e-8)
+                if info3 != 0:
+                    print(f"Warning: Fast CG solver did not converge after all attempts (info={info3}), RHS norm={rhs_norm:.2e}")
+                    # Return best guess
+    except Exception as e:
+        print(f"Error in Fast CG solver: {e}, RHS norm={rhs_norm:.2e}")
+        p_flat = np.zeros_like(rhs_flat)
+    
+    # Clean any NaN/Inf values
+    p_flat = np.nan_to_num(p_flat, nan=0.0, posinf=0.0, neginf=0.0)
+    
+    return p_flat.reshape(shape)
 
 
 def _solve_improved_cg(phi_T, S_T, energy_deriv, dx, shape, rtol, maxiter, rhs_flat):
@@ -260,7 +363,7 @@ def create_gaussian_initial_guess(shape, dx, radius_factor=0.1):
     return gaussian.flatten().astype(np.float32)
 
 
-@lru_cache(maxsize=32)
+@lru_cache(maxsize=4)  # Reduced from 32 to prevent memory bloat
 def create_improved_preconditioner(shape, dx, epsilon):
     """
     Creates an improved preconditioner for the regularized Laplacian.
@@ -313,7 +416,7 @@ def create_improved_preconditioner(shape, dx, epsilon):
     return diags([preconditioner_diag], [0], shape=(N, N), dtype=np.float32)
 
 
-@lru_cache(maxsize=32)
+@lru_cache(maxsize=4)  # Reduced from 32 to prevent memory bloat
 def get_cached_operator(shape, dx, epsilon):
     """
     Creates a cached SciPy LinearOperator for (-∇² + εI) using scipy.ndimage.
@@ -343,7 +446,7 @@ def get_cached_operator(shape, dx, epsilon):
     return LinearOperator((N, N), matvec=matvec, dtype=np.float32)
 
 
-@lru_cache(maxsize=32)
+@lru_cache(maxsize=4)  # Reduced from 32 to prevent memory bloat
 def create_dx_aware_preconditioner(shape, dx, epsilon):
     """
     Create dx-aware preconditioner that scales better with small dx.

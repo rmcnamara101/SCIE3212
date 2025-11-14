@@ -668,9 +668,10 @@ class TumorGrowthSimulator:
         # Initialize storage for saved data
         saved_steps = [0]  # Start with step 0
         saved_times = [0.0]  # Start with time 0.0
-        saved_phi_hat = [phi_hat_initial.copy()]  # Save initial conditions
-        saved_nutrient_fields = [nutrient_field_initial.copy()]  # Save initial nutrient field
-        saved_host_fields = [host_field_initial.copy()]  # Save initial host field
+        # Use float32 to reduce memory footprint (halves memory usage)
+        saved_phi_hat = [phi_hat_initial.copy().astype(np.float32)]  # Save initial conditions
+        saved_nutrient_fields = [nutrient_field_initial.copy().astype(np.float32)]  # Save initial nutrient field
+        saved_host_fields = [host_field_initial.copy().astype(np.float32)]  # Save initial host field
         saved_physics_data = []
         
         # Save initial physics data if requested
@@ -678,11 +679,11 @@ class TumorGrowthSimulator:
             # Initialize physics fields for step 0
             self.field_manager.update_physics_fields(phi_hat_initial, nutrient_field_initial, self.cell_dynamics)
             initial_physics_data = {
-                "pressure": self.field_manager.pressure.copy(),
-                "velocity": self.field_manager.velocity.copy(),
-                "energy_derivative": self.field_manager.energy_derivative.copy(),
-                "mass_flux": self.field_manager.mass_flux.copy(),
-                "source_terms": self.field_manager.source_terms.copy()
+                "pressure": self.field_manager.pressure.copy().astype(np.float32),
+                "velocity": self.field_manager.velocity.copy().astype(np.float32),
+                "energy_derivative": self.field_manager.energy_derivative.copy().astype(np.float32),
+                "mass_flux": self.field_manager.mass_flux.copy().astype(np.float32),
+                "source_terms": self.field_manager.source_terms.copy().astype(np.float32)
             }
             saved_physics_data.append(initial_physics_data)
         
@@ -706,23 +707,31 @@ class TumorGrowthSimulator:
                     # Get current fields
                     phi_hat, nutrient_field, host_field = self.field_manager.get_cell_fields()
                     
-                    # Store basic data
+                    # Store basic data (use copy to avoid reference issues, but optimize memory)
                     saved_steps.append(step)
                     saved_times.append(self.time)
-                    saved_phi_hat.append(phi_hat.copy())
-                    saved_nutrient_fields.append(nutrient_field.copy())
-                    saved_host_fields.append(host_field.copy())
+                    # Use float32 to reduce memory footprint
+                    saved_phi_hat.append(phi_hat.copy().astype(np.float32))
+                    saved_nutrient_fields.append(nutrient_field.copy().astype(np.float32))
+                    saved_host_fields.append(host_field.copy().astype(np.float32))
                     
                     # Store physics data if requested
                     if save_physics_fields:
                         physics_data = {
-                            "pressure": self.field_manager.pressure.copy(),
-                            "velocity": self.field_manager.velocity.copy(),
-                            "energy_derivative": self.field_manager.energy_derivative.copy(),
-                            "mass_flux": self.field_manager.mass_flux.copy(),
-                            "source_terms": self.field_manager.source_terms.copy()
+                            "pressure": self.field_manager.pressure.copy().astype(np.float32),
+                            "velocity": self.field_manager.velocity.copy().astype(np.float32),
+                            "energy_derivative": self.field_manager.energy_derivative.copy().astype(np.float32),
+                            "mass_flux": self.field_manager.mass_flux.copy().astype(np.float32),
+                            "source_terms": self.field_manager.source_terms.copy().astype(np.float32)
                         }
                         saved_physics_data.append(physics_data)
+                    
+                    # Periodic memory cleanup: clear LRU caches every 10 steps to prevent memory bloat
+                    if step % 10 == 0:
+                        from src.growkit.Integrator.PressureSolver import clear_pressure_solver_caches
+                        clear_pressure_solver_caches()
+                        import gc
+                        gc.collect()  # Force garbage collection
                     
                     # Save plots if requested
                     if save_plots and output_dir is not None:
@@ -851,54 +860,106 @@ class TumorGrowthSimulator:
                 print(f"Physics data keys: {list(simulation_data['physics_data'][0].keys()) if simulation_data['physics_data'] else 'Empty'}")
             raise
     
-    def load_simulation_data(self, filepath):
+    def load_simulation_data(self, filepath, use_memory_map=True):
         """
-        Load simulation data from saved file.
+        Load simulation data from saved file with memory-efficient loading.
         
         Args:
             filepath: Path to the saved simulation data file
+            use_memory_map: If True, use memory mapping to avoid loading all data at once
             
         Returns:
             simulation_data: Dictionary containing loaded simulation data
         """
         print(f"Loading simulation data from {filepath}...")
         
-        # Load data
-        data = np.load(filepath, allow_pickle=True)
+        # Use memory mapping to avoid loading everything into memory at once
+        if use_memory_map:
+            data = np.load(filepath, allow_pickle=True, mmap_mode='r')  # Read-only memory mapping
+        else:
+            data = np.load(filepath, allow_pickle=True)
         
-        # Load metadata from pickle bytes
+        # Load metadata from pickle bytes (this is small, load it fully)
         import pickle
         metadata_bytes = data["metadata"].tobytes()
         metadata = pickle.loads(metadata_bytes)
         
+        # Get array shapes without loading full arrays
+        num_steps = data["phi_hat"].shape[0]
+        
         # Reconstruct simulation data structure
+        # Use memory-mapped arrays directly - they'll be loaded on-demand
         simulation_data = {
             "metadata": metadata,
             "field_data": {
-                "phi_hat": data["phi_hat"],
-                "nutrient_fields": data["nutrient_fields"],
-                "host_fields": data["host_fields"]
+                "phi_hat": data["phi_hat"],  # Memory-mapped, loads on access
+                "nutrient_fields": data["nutrient_fields"],  # Memory-mapped
+                "host_fields": data["host_fields"]  # Memory-mapped
             },
             "performance": {
-                "step_times": data["step_times"],
-                "total_cells": data["total_cells"]
-            }
+                "step_times": data["step_times"],  # Small array, load fully
+                "total_cells": data["total_cells"]  # Small array, load fully
+            },
+            "_npz_file": data  # Keep reference to prevent garbage collection
         }
         
-        # Add physics data if available
+        # Add physics data if available - use lazy loading
         if "pressure" in data:
-            simulation_data["physics_data"] = []
-            for i in range(len(data["pressure"])):
-                physics_data = {
-                    "pressure": data["pressure"][i],
-                    "velocity": data["velocity"][i],
-                    "energy_derivative": data["energy_derivative"][i],
-                    "mass_flux": data["mass_flux"][i]
-                }
-                # Add source terms if available
-                if "source_terms" in data:
-                    physics_data["source_terms"] = data["source_terms"][i]
-                simulation_data["physics_data"].append(physics_data)
+            # Don't load all physics data at once - create a lazy accessor
+            class LazyPhysicsData:
+                def __init__(self, npz_data, num_steps):
+                    self.npz_data = npz_data
+                    self.num_steps = num_steps
+                    self._cache = {}  # Cache loaded steps
+                    self._max_cache_size = 3  # Cache only last 3 accessed steps (reduced for memory)
+                    self._access_order = []  # Track access order for LRU eviction
+                
+                def __len__(self):
+                    return self.num_steps
+                
+                def clear_cache(self):
+                    """Clear the cache to free memory."""
+                    self._cache.clear()
+                    self._access_order.clear()
+                    import gc
+                    gc.collect()
+                
+                def __getitem__(self, idx):
+                    # Normalize index (support negative indexing)
+                    if idx < 0:
+                        idx = self.num_steps + idx
+                    
+                    # Cache management: if cache is full, remove least recently used
+                    if len(self._cache) >= self._max_cache_size and idx not in self._cache:
+                        # Remove least recently used entry
+                        if self._access_order:
+                            lru_key = self._access_order.pop(0)
+                            if lru_key in self._cache:
+                                del self._cache[lru_key]
+                    
+                    if idx not in self._cache:
+                        # Load this step's physics data on demand
+                        # Use memory-mapped access and convert to float32 immediately
+                        physics_data = {
+                            "pressure": np.array(self.npz_data["pressure"][idx], dtype=np.float32, copy=False),
+                            "velocity": np.array(self.npz_data["velocity"][idx], dtype=np.float32, copy=False),
+                            "energy_derivative": np.array(self.npz_data["energy_derivative"][idx], dtype=np.float32, copy=False),
+                            "mass_flux": np.array(self.npz_data["mass_flux"][idx], dtype=np.float32, copy=False)
+                        }
+                        # Add source terms if available
+                        if "source_terms" in self.npz_data:
+                            physics_data["source_terms"] = np.array(self.npz_data["source_terms"][idx], dtype=np.float32, copy=False)
+                        
+                        self._cache[idx] = physics_data
+                    
+                    # Update access order (move to end if already in cache)
+                    if idx in self._access_order:
+                        self._access_order.remove(idx)
+                    self._access_order.append(idx)
+                    
+                    return self._cache[idx]
+            
+            simulation_data["physics_data"] = LazyPhysicsData(data, num_steps)
         
-        print(f"Loaded simulation data with {len(simulation_data['field_data']['phi_hat'])} saved steps")
+        print(f"Loaded simulation data with {num_steps} saved steps (using memory mapping: {use_memory_map})")
         return simulation_data

@@ -294,29 +294,46 @@ def compute_nutrient_update_numba(nutrient_field, phi_hat, dx, dt,
     nutrient_field_new = np.zeros_like(nutrient_field, dtype=np.float32)
     
     # Compute diffusion term using isotropic laplacian
-    # Since this is a Numba function, we'll compute a simplified isotropic laplacian inline
+    # Since this is a Numba function, we'll compute the proper isotropic laplacian inline
+    # This matches the implementation in Operators.isotropic_laplacian
     diffusion_field = np.zeros_like(nutrient_field, dtype=np.float32)
+    dx2 = dx * dx
     
-    # Compute isotropic laplacian for interior points
+    # Compute isotropic laplacian for interior points using proper weights
+    # Standard Cartesian directions (70% weight) + Diagonal directions (30% weight total, 0.075 each)
     for i in range(1, nx-1):
         for j in range(1, ny-1):
             for k in range(1, nz-1):
-                # Axis-aligned components
-                lap_axis = (
-                    (nutrient_field[i+1, j, k] - 2*nutrient_field[i, j, k] + nutrient_field[i-1, j, k]) +
-                    (nutrient_field[i, j+1, k] - 2*nutrient_field[i, j, k] + nutrient_field[i, j-1, k]) +
-                    (nutrient_field[i, j, k+1] - 2*nutrient_field[i, j, k] + nutrient_field[i, j, k-1])
-                ) / dx**2
+                # Axis-aligned components (70% weight)
+                lap_axis = 0.7 * (
+                    (nutrient_field[i+1, j, k] + nutrient_field[i-1, j, k] +
+                     nutrient_field[i, j+1, k] + nutrient_field[i, j-1, k] +
+                     nutrient_field[i, j, k+1] + nutrient_field[i, j, k-1] -
+                     6.0 * nutrient_field[i, j, k])
+                ) / dx2
                 
-                # Diagonal components for isotropy (simplified)
-                lap_diag = (
-                    (nutrient_field[i+1, j+1, k] - 2*nutrient_field[i, j, k] + nutrient_field[i-1, j-1, k]) +
-                    (nutrient_field[i+1, j-1, k] - 2*nutrient_field[i, j, k] + nutrient_field[i-1, j+1, k]) +
-                    (nutrient_field[i+1, j, k+1] - 2*nutrient_field[i, j, k] + nutrient_field[i-1, j, k-1]) +
-                    (nutrient_field[i+1, j, k-1] - 2*nutrient_field[i, j, k] + nutrient_field[i-1, j, k+1]) +
-                    (nutrient_field[i, j+1, k+1] - 2*nutrient_field[i, j, k] + nutrient_field[i, j-1, k-1]) +
-                    (nutrient_field[i, j+1, k-1] - 2*nutrient_field[i, j, k] + nutrient_field[i, j-1, k+1])
-                ) / (2.0 * dx**2) * 0.1  # Small weight for diagonal terms
+                # Diagonal components for isotropy (0.075 weight each, 6 diagonals = 0.45 total)
+                # Diagonal in xy plane
+                lap_diag = 0.075 * (
+                    (nutrient_field[i+1, j+1, k] + nutrient_field[i-1, j-1, k] - 2.0 * nutrient_field[i, j, k]) / (dx2 * 2.0)
+                )
+                lap_diag += 0.075 * (
+                    (nutrient_field[i+1, j-1, k] + nutrient_field[i-1, j+1, k] - 2.0 * nutrient_field[i, j, k]) / (dx2 * 2.0)
+                )
+                # Diagonal in xz plane
+                lap_diag += 0.075 * (
+                    (nutrient_field[i+1, j, k+1] + nutrient_field[i-1, j, k-1] - 2.0 * nutrient_field[i, j, k]) / (dx2 * 2.0)
+                )
+                lap_diag += 0.075 * (
+                    (nutrient_field[i+1, j, k-1] + nutrient_field[i-1, j, k+1] - 2.0 * nutrient_field[i, j, k]) / (dx2 * 2.0)
+                )
+                # Diagonal in yz plane
+                lap_diag += 0.075 * (
+                    (nutrient_field[i, j+1, k+1] + nutrient_field[i, j-1, k-1] - 2.0 * nutrient_field[i, j, k]) / (dx2 * 2.0)
+                )
+                lap_diag += 0.075 * (
+                    (nutrient_field[i, j+1, k-1] + nutrient_field[i, j-1, k+1] - 2.0 * nutrient_field[i, j, k]) / (dx2 * 2.0)
+                )
                 
                 # Scale diffusion by dt for proper time integration
                 diffusion_field[i, j, k] = diffusion_coeff * dt * (lap_axis + lap_diag)

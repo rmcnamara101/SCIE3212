@@ -2,11 +2,11 @@
 
 simulation:
   name: T-N Model
-  seed: 1345
+  seed: 13234
 
 domain:
   shape: 100 # integer defining the number of grid points in each dimension
-  dx: 100 # float defining the spacing of the grid (in μm)
+  dx: 300 # float defining the spacing of the grid (in μm)
 
 time:
   steps: 100 # integer defining the number of steps to run the simulation for
@@ -17,12 +17,12 @@ populations:
     label: Tumour Cells
     color: Green
     dynamics:
-      lambda: 20 # float
-      mu: 20 # float
+      lambda: 10 # float
+      mu: 12 # float
       mobility: 10000.0 # float
-      nutrient_threshold: 0.4 # float
-      nutrient_consumption: 0.4 # float
-      nutrient_production: 0.2 # float
+      nutrient_threshold: 0.55 # float (death stops above this)
+      nutrient_consumption: 0.6 # float
+      nutrient_production: 0.6 # float
     
     
   Necrotic:
@@ -35,22 +35,27 @@ populations:
       nutrient_threshold: 0.0 # float
       nutrient_consumption: 0.0 # float
       nutrient_production: 0.0 # float
-      beta_N: 0.01 # float
+      beta_N: 0.0005 # float
 
 nutrient:
   name: General
   label: General nutrient
   color: Orange
   dynamics:
-    diffusion: 20000 # float
+    diffusion: 300000 # float
     #boundary_value: 1.0 # float defining the value of the nutrient at the boundary
-    k: 6.0 # float defining the steepness of the nutrient switch 
+    k: 15.0 # float defining the steepness of the nutrient switch
+    # Growth threshold offset: creates hypoxic gap between death and growth
+    # Death stops when nutrient > nutrient_threshold
+    # Growth starts when nutrient > (nutrient_threshold + growth_threshold_offset)
+    # The gap between them is the hypoxic band with zero source terms
+    growth_threshold_offset: 0.2 # float, offset added to nutrient_threshold for growth switch 
 
 physics:
   adhesion_energy:
     m: 10.0  # Reduced from 100.0 to prevent numerical overflow
   disable_pressure: False
-  pressure_solver: original_cg  # Options: "original_cg", "improved_cg", "gmres", "multigrid", "pyamg"
+  pressure_solver: fast_cg  # Options: "fast_cg" (fastest, recommended for sweeps), "original_cg", "improved_cg", "gmres", "multigrid", "pyamg"
   pressure_constant: 1.0 # float defining the pressure scale factor
   
   # Numerical stability settings
@@ -62,12 +67,12 @@ physics:
   
   bowl_potential_enabled: False  # Enable bowl-shaped potential (parabolic well)
   bowl_potential_strength: 0.05  # Spring constant k for parabolic potential V = k*r²
-  bowl_center: [50, 50, 50]  # Center coordinates of the bowl (defaults to domain center)
+  bowl_center: [60, 60, 60]  # Center coordinates of the bowl (defaults to domain center)
 
 initial_conditions:
 
   type: gaussian_random_blob
-  radius: 6
+  radius: 8
   center: [50, 50, 50]
   deformation_strength: 0.3 # How much to deform (0.0=sphere, 0.5=very deformed, optional, defaults to 0.3)
 
@@ -101,7 +106,7 @@ initial_conditions:
     concentration_min: 0.0 # For gradient nutrient field (optional, defaults to 0.0)
 
 integrator:
-  type: forward_euler # Options: "rk4", "adaptive_grid", "rk4_adaptive", "forward_euler", "forward_euler_adaptive", "improved_euler"
+  type: rk4 # Options: "rk4", "adaptive_grid", "rk4_adaptive", "forward_euler", "forward_euler_adaptive", "improved_euler"
   padding: 16 # Number of grid points to pad around active regions (default: 5)
   threshold: 1e-9 # Minimum cell density to consider a point active (default: 1e-6)
   min_sub_grid_size: 10 # Minimum size of sub-grid to use adaptive approach (default: 10)

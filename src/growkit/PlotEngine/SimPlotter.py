@@ -37,6 +37,101 @@ class SimPlotter:
         
         # Initialize observable utilities
         self.utils = ObservableUtils(self.grid_size, self.dx)
+        
+        # Memory optimization: ensure field_data uses memory-mapped arrays if available
+        # Convert to float32 views to reduce memory if data is float64
+        self._optimize_field_data_memory()
+    
+    def _optimize_field_data_memory(self):
+        """Optimize field data memory usage by converting to float32 if needed."""
+        # Check if data is already memory-mapped (has _npz_file reference)
+        if "_npz_file" in self.simulation_data:
+            # Data is memory-mapped, no need to convert
+            return
+        
+        # If data is loaded in memory, ensure it's float32 to save space
+        for key in ["phi_hat", "nutrient_fields", "host_fields"]:
+            if key in self.field_data and self.field_data[key] is not None:
+                arr = self.field_data[key]
+                # Handle both list of arrays (from run_and_save_simulation) and numpy arrays (from disk)
+                if isinstance(arr, list):
+                    # Data is a list of arrays - arrays are already float32 from run_and_save_simulation
+                    # No optimization needed
+                    continue
+                elif hasattr(arr, 'dtype') and arr.dtype == np.float64:
+                    # Convert to float32 to save memory (if not memory-mapped)
+                    try:
+                        self.field_data[key] = arr.astype(np.float32, copy=False)
+                    except (ValueError, TypeError):
+                        # Can't convert in-place, skip
+                        pass
+    
+    def _get_field_slice(self, field_name, step_idx):
+        """
+        Get a field slice for a specific step, ensuring memory efficiency.
+        Returns a view or minimal copy to avoid memory bloat.
+        """
+        field = self.field_data[field_name]
+        if field is None:
+            return None
+        
+        # Get the slice - for memory-mapped arrays, this loads the slice into memory
+        # We want to minimize memory usage, so we'll work with the slice directly
+        # and let Python's GC handle cleanup
+        slice_data = field[step_idx]
+        
+        # If data is already float32, return as-is (no conversion needed)
+        if hasattr(slice_data, 'dtype') and slice_data.dtype == np.float32:
+            return slice_data
+        
+        # If data is float64 and we're not memory-mapped, convert to float32 to save memory
+        # Note: We avoid conversion for memory-mapped arrays to prevent loading full array
+        if hasattr(slice_data, 'dtype') and slice_data.dtype == np.float64:
+            if "_npz_file" not in self.simulation_data:
+                # Not memory-mapped, safe to convert
+                return np.array(slice_data, dtype=np.float32, copy=False)
+            else:
+                # Memory-mapped - return as-is to avoid creating unnecessary copies
+                # The memory-mapped slice will be freed when it goes out of scope
+                return slice_data
+        
+        return slice_data
+    
+    def _process_steps_in_batches(self, num_steps, batch_size=5, callback=None):
+        """
+        Process simulation steps in batches to reduce memory usage.
+        
+        Args:
+            num_steps: Total number of steps to process
+            batch_size: Number of steps to process before clearing memory
+            callback: Function to call for each step_idx, should return result
+        
+        Returns:
+            List of results from callback
+        """
+        results = []
+        for batch_start in range(0, num_steps, batch_size):
+            batch_end = min(batch_start + batch_size, num_steps)
+            batch_results = []
+            
+            for step_idx in range(batch_start, batch_end):
+                if callback:
+                    result = callback(step_idx)
+                    batch_results.append(result)
+            
+            results.extend(batch_results)
+            
+            # Clear memory after each batch
+            import gc
+            gc.collect()
+            
+            # Clear physics cache if available
+            if "physics_data" in self.simulation_data:
+                physics_data = self.simulation_data["physics_data"]
+                if hasattr(physics_data, 'clear_cache'):
+                    physics_data.clear_cache()
+        
+        return results
     
     def plot_tumor_radius_evolution(self, output_dir=None, save_plot=False, show_plot=True,
                                    figsize=(12, 8), include_individual_populations=True,
@@ -62,7 +157,7 @@ class SimPlotter:
             include_individual_populations: Whether to plot individual population radii
             threshold: Density threshold for radius calculation
             method: Method for radius calculation ('contour' or 'mass')
-            include_inhibited_radius: Whether to include inhibited radius calculation (finds where viable source terms drop significantly from maximum)
+            include_inhibited_radius: Whether to include inhibited radius calculation (finds where necrotic source terms become positive, marking outer boundary of necrosis)
             include_necrotic_radius: Whether to include necrotic radius calculation (uses density thresholding)
             include_hypoxic_radius: Whether to include hypoxic radius calculation (finds outer boundary where necrotic source terms become non-zero)
             growth_threshold: Deprecated parameter (kept for backward compatibility, not used)
@@ -84,34 +179,57 @@ class SimPlotter:
         for i, label in enumerate(viable_populations):
             radii = []
             for step_idx in range(len(self.saved_steps)):
-                phi_hat = self.field_data["phi_hat"][step_idx]
+                phi_hat = self._get_field_slice("phi_hat", step_idx)
                 radius = self.utils.calculate_radius(phi_hat[i], threshold=threshold, method=method)
                 radii.append(radius)
+                # Explicitly delete reference to allow GC
+                del phi_hat
+                # Clean up memory more frequently for large datasets
+                if step_idx % 5 == 0:
+                    import gc
+                    gc.collect()
             radii_data[label] = radii
         
         # Calculate total tumor radius
         total_radii = []
         for step_idx in range(len(self.saved_steps)):
-            phi_hat = self.field_data["phi_hat"][step_idx]
+            phi_hat = self._get_field_slice("phi_hat", step_idx)
             total_density = np.sum(phi_hat, axis=0)
             radius = self.utils.calculate_radius(total_density, threshold=threshold, method=method)
             total_radii.append(radius)
+            # Explicitly delete references to allow GC
+            del phi_hat, total_density
+            # Clean up memory more frequently for large datasets
+            if step_idx % 5 == 0:
+                import gc
+                gc.collect()
         
         # Calculate inhibited radius if requested and source terms are available
-        # NOTE: This finds where viable source terms drop significantly from maximum (drop_fraction of max)
-        # This marks the boundary between highly proliferative outer layer and growth-inhibited inner region
+        # NOTE: This finds where necrotic source terms cross from zero/negative to positive (moving outward from center)
+        # This marks the outer boundary of necrosis death caused by lack of nutrient, representing the outer extent
+        # of the hypoxic region where necrosis is actively occurring. This should be further out than the necrotic core radius.
         inhibited_radii = []
         if include_inhibited_radius and "physics_data" in self.simulation_data:
             physics_data = self.simulation_data["physics_data"]
             if len(physics_data) > 0 and "source_terms" in physics_data[0]:
                 print("Calculating inhibited radius evolution...")
+                # Clear physics cache periodically to save memory
+                if hasattr(physics_data, 'clear_cache'):
+                    physics_data.clear_cache()
                 for step_idx in range(len(self.saved_steps)):
-                    phi_hat = self.field_data["phi_hat"][step_idx]
+                    phi_hat = self._get_field_slice("phi_hat", step_idx)
                     total_density = np.sum(phi_hat, axis=0)
                     source_terms = physics_data[step_idx]["source_terms"]
+                    # Clean up memory periodically
+                    if step_idx % 5 == 0:
+                        import gc
+                        gc.collect()
+                        # Clear physics cache if it's getting large
+                        if hasattr(physics_data, 'clear_cache') and step_idx % 10 == 0:
+                            physics_data.clear_cache()
                     
-                    # Calculate inhibited radius (where source terms drop to drop_fraction of max)
-                    # Exclude necrotic population to only look at viable source terms
+                    # Calculate inhibited radius (where necrotic source terms become positive from center)
+                    # This uses necrotic source terms to find the boundary of positive necrotic source terms
                     inhibited_radius = self.utils.calculate_inhibited_radius(
                         source_terms, total_density, 
                         growth_threshold=growth_threshold,  # Deprecated but kept for backward compatibility
@@ -120,8 +238,8 @@ class SimPlotter:
                         threshold_type=threshold_type,  # Deprecated but kept for backward compatibility
                         threshold_percentile=growth_threshold_percentile,  # Deprecated but kept for backward compatibility
                         use_adaptive_threshold=use_adaptive_threshold,  # Deprecated but kept for backward compatibility
-                        exclude_necrotic=True,
-                        drop_fraction=drop_fraction
+                        exclude_necrotic=True,  # Deprecated but kept for backward compatibility
+                        drop_fraction=drop_fraction  # Deprecated but kept for backward compatibility
                     )
                     inhibited_radii.append(inhibited_radius)
             else:
@@ -140,7 +258,7 @@ class SimPlotter:
                 print("Calculating necrotic radius evolution...")
                 necrotic_pop_idx = len(self.labels) - 1  # Last population is necrotic
                 for step_idx in range(len(self.saved_steps)):
-                    phi_hat = self.field_data["phi_hat"][step_idx]
+                    phi_hat = self._get_field_slice("phi_hat", step_idx)
                     # Calculate necrotic radius using density thresholding
                     necrotic_radius = self.utils.calculate_radius(
                         phi_hat[necrotic_pop_idx], 
@@ -148,6 +266,10 @@ class SimPlotter:
                         method=method
                     )
                     necrotic_radii.append(necrotic_radius)
+                    # Clean up memory periodically
+                    if step_idx % 5 == 0:
+                        import gc
+                        gc.collect()
             else:
                 print("Warning: No necrotic population found (need at least 2 populations)")
                 include_necrotic_radius = False
@@ -165,10 +287,19 @@ class SimPlotter:
                 # Check if we have a necrotic population (last population)
                 if len(self.labels) > 1:
                     print("Calculating hypoxic radius evolution...")
+                    # Clear physics cache before starting
+                    if hasattr(physics_data, 'clear_cache'):
+                        physics_data.clear_cache()
                     for step_idx in range(len(self.saved_steps)):
-                        phi_hat = self.field_data["phi_hat"][step_idx]
+                        phi_hat = self._get_field_slice("phi_hat", step_idx)
                         total_density = np.sum(phi_hat, axis=0)
                         source_terms = physics_data[step_idx]["source_terms"]
+                        # Clean up memory periodically
+                        if step_idx % 5 == 0:
+                            import gc
+                            gc.collect()
+                            if hasattr(physics_data, 'clear_cache') and step_idx % 10 == 0:
+                                physics_data.clear_cache()
                         
                         # Calculate hypoxic radius (outer boundary where necrotic source terms become non-zero)
                         hypoxic_radius = self.utils.calculate_hypoxic_radius(
@@ -236,7 +367,7 @@ class SimPlotter:
             info_text = f'Thresholds:\n'
             info_text += f'Density threshold: {threshold} (used for all radii)\n'
             if include_inhibited_radius:
-                info_text += f'Inhibited: {drop_fraction*100:.0f}% of max source term\n'
+                info_text += f'Inhibited: source terms >= 5% of max (from center)\n'
             if include_necrotic_radius:
                 info_text += f'Necrotic: density threshold ({threshold})\n'
             if include_hypoxic_radius:
@@ -1789,10 +1920,269 @@ class SimPlotter:
         
         # Return data for use by plot_all_observables and export
         return {
-            'total_densities': total_densities,
-            'population_densities': density_data,
             'total_source_all': total_source_all,
             'total_source_viable': total_source_viable if (source_slice.shape[0] > 1 and exclude_necrotic) else None,
             'source_per_population': {self.labels[i] if i < len(self.labels) else f'Pop {i}': source_slice[i] 
                                      for i in range(source_slice.shape[0])}
+        }
+    
+    def plot_custom_source_fields(self, output_dir=None, save_plot=False, show_plot=True,
+                                  figsize=(15, 10), z_slice=None, cmap="RdBu_r",
+                                  add_necrotic_boundary=True, necrotic_threshold=0.1,
+                                  add_tumor_contours=False, tumor_threshold=0.1,
+                                  max_plots=6, include_statistics=True,
+                                  population_indices=None, population_labels=None,
+                                  step_idx=None):
+        """
+        Plot source term fields from customizable populations with necrotic core boundary.
+        
+        This function allows you to plot source terms from specific populations (e.g., necrotic)
+        and overlay the necrotic core boundary. You can specify populations by index or label.
+        
+        Args:
+            output_dir: Directory to save plot
+            save_plot: Whether to save the plot
+            show_plot: Whether to display the plot
+            figsize: Figure size
+            z_slice: Z-slice to plot (defaults to center)
+            cmap: Colormap for the source field (RdBu_r is good for positive/negative values)
+            add_necrotic_boundary: Whether to add necrotic core boundary contour
+            necrotic_threshold: Density threshold for necrotic core boundary
+            add_tumor_contours: Whether to add total tumor boundary contours
+            tumor_threshold: Density threshold for tumor boundary
+            max_plots: Maximum number of time points to plot (if step_idx is None)
+            include_statistics: Whether to include statistics text on plots
+            population_indices: List of population indices to plot (e.g., [0, 2] or [-1] for necrotic)
+                               If None, plots all populations
+            population_labels: List of population labels to plot (alternative to indices)
+                              If both indices and labels are provided, indices take precedence
+            step_idx: Specific time step index to plot (default None = plot evolution over time)
+                     If provided, max_plots is ignored
+        """
+        print("Creating custom source field plot...")
+        
+        # Check if source fields are available in physics data
+        if "physics_data" not in self.simulation_data:
+            print("Warning: No physics data found in simulation data.")
+            print("Available data keys:", list(self.simulation_data.keys()))
+            return
+        
+        # Check if source terms are available in physics data
+        physics_data = self.simulation_data["physics_data"]
+        if len(physics_data) == 0 or "source_terms" not in physics_data[0]:
+            print("Warning: No source terms found in physics data.")
+            print("Available physics data keys:", list(physics_data[0].keys()) if len(physics_data) > 0 else "No physics data")
+            return
+        
+        # Determine which populations to plot
+        if population_indices is not None:
+            # Use provided indices
+            pop_indices = population_indices if isinstance(population_indices, list) else [population_indices]
+            # Handle negative indices (e.g., -1 for last population/necrotic)
+            pop_indices = [idx if idx >= 0 else len(self.labels) + idx for idx in pop_indices]
+        elif population_labels is not None:
+            # Convert labels to indices
+            pop_indices = []
+            labels_list = population_labels if isinstance(population_labels, list) else [population_labels]
+            for label in labels_list:
+                if label in self.labels:
+                    pop_indices.append(self.labels.index(label))
+                else:
+                    print(f"Warning: Population label '{label}' not found. Available labels: {self.labels}")
+        else:
+            # Default: plot all populations
+            pop_indices = list(range(len(self.labels)))
+        
+        # Validate indices
+        valid_indices = [idx for idx in pop_indices if 0 <= idx < len(self.labels)]
+        if not valid_indices:
+            print(f"Warning: No valid population indices. Available range: 0-{len(self.labels)-1}")
+            return
+        
+        pop_indices = valid_indices
+        print(f"Plotting source fields for populations: {[self.labels[i] for i in pop_indices]}")
+        
+        # Determine time steps to plot
+        if step_idx is not None:
+            # Plot single time step
+            if step_idx < 0:
+                step_idx = len(self.saved_steps) + step_idx
+            if step_idx < 0 or step_idx >= len(self.saved_steps):
+                print(f"Warning: step_idx {step_idx} out of range. Using last step.")
+                step_idx = len(self.saved_steps) - 1
+            plot_indices = [step_idx]
+        else:
+            # Plot evolution over time
+            if len(self.saved_steps) <= max_plots:
+                plot_indices = list(range(len(self.saved_steps)))
+            else:
+                plot_indices = np.linspace(0, len(self.saved_steps)-1, max_plots, dtype=int)
+        
+        # Calculate subplot layout
+        # Layout: rows = time steps, cols = populations
+        num_time_steps = len(plot_indices)
+        num_populations = len(pop_indices)
+        num_cols = num_populations
+        num_rows = num_time_steps
+        
+        fig, axes = plt.subplots(num_rows, num_cols, figsize=figsize)
+        # Handle different matplotlib subplot return types
+        # Convert to consistent 2D list format: axes_flat[row][col]
+        if num_time_steps == 1 and num_populations == 1:
+            # Single subplot returns an Axes object
+            axes_flat = [[axes]]
+        elif num_time_steps == 1:
+            # Single row, multiple columns - returns 1D array or list
+            if isinstance(axes, np.ndarray):
+                axes_flat = [axes.flatten().tolist()]
+            else:
+                axes_flat = [[axes] if num_populations == 1 else list(axes)]
+        elif num_populations == 1:
+            # Multiple rows, single column - returns 1D array or list
+            if isinstance(axes, np.ndarray):
+                axes_flat = [[ax] for ax in axes.flatten()]
+            else:
+                axes_flat = [[axes] if num_time_steps == 1 else [[ax] for ax in axes]]
+        else:
+            # Multiple rows and columns - returns 2D array
+            if isinstance(axes, np.ndarray):
+                axes_flat = axes.tolist()
+            else:
+                # Fallback: try to reshape
+                axes_list = np.array(axes).reshape(num_rows, num_cols).tolist()
+                axes_flat = axes_list
+        
+        # Set default z_slice if not provided
+        if z_slice is None:
+            z_slice = self.grid_size[2] // 2
+        
+        # Create coordinate grids
+        x = np.arange(self.grid_size[0]) * self.dx
+        y = np.arange(self.grid_size[1]) * self.dx
+        X, Y = np.meshgrid(x, y, indexing='ij')
+        
+        # Find global min/max for consistent color scaling across all populations and time steps
+        all_source_data = []
+        for plot_step_idx in plot_indices:
+            for pop_idx in pop_indices:
+                source_field = physics_data[plot_step_idx]["source_terms"][pop_idx]
+                source_slice = source_field[:, :, z_slice]
+                all_source_data.append(source_slice)
+        
+        vmin = np.min(all_source_data)
+        vmax = np.max(all_source_data)
+        
+        # Ensure symmetric color scaling around zero if source terms can be negative
+        if vmin < 0 and vmax > 0:
+            abs_max = max(abs(vmin), abs(vmax))
+            vmin = -abs_max
+            vmax = abs_max
+        
+        # Plot each time step and population combination
+        for row, plot_step_idx in enumerate(plot_indices):
+            step = self.saved_steps[plot_step_idx]
+            time = self.saved_times[plot_step_idx]
+            
+            # Get density fields for contours
+            phi_hat = self._get_field_slice("phi_hat", plot_step_idx)
+            total_density = np.sum(phi_hat, axis=0)
+            density_slice = total_density[:, :, z_slice]
+            
+            # Get necrotic density if needed
+            necrotic_density_slice = None
+            if add_necrotic_boundary and len(self.labels) > 1:
+                necrotic_pop_idx = len(self.labels) - 1  # Last population is necrotic
+                necrotic_density_slice = phi_hat[necrotic_pop_idx][:, :, z_slice]
+            
+            for col, pop_idx in enumerate(pop_indices):
+                # Get the correct axis
+                if num_time_steps == 1 and num_populations == 1:
+                    ax = axes_flat[0][0]
+                elif num_time_steps == 1:
+                    ax = axes_flat[0][col]
+                elif num_populations == 1:
+                    ax = axes_flat[row][0]
+                else:
+                    ax = axes_flat[row][col]
+                
+                # Get source field for this step and population
+                source_field = physics_data[plot_step_idx]["source_terms"][pop_idx]
+                source_slice = source_field[:, :, z_slice]
+                
+                # Create the plot with consistent color scaling
+                im = ax.imshow(source_slice, extent=[x[0], x[-1], y[0], y[-1]], 
+                              origin='lower', cmap=cmap, aspect='equal', vmin=vmin, vmax=vmax)
+                
+                # Add necrotic core boundary contour if requested
+                if add_necrotic_boundary and necrotic_density_slice is not None:
+                    ax.contour(X, Y, necrotic_density_slice, levels=[necrotic_threshold], 
+                              colors='red', linewidths=2.5, alpha=0.9, linestyles='solid',
+                              label='Necrotic Core')
+                
+                # Add total tumor boundary contours if requested
+                if add_tumor_contours:
+                    ax.contour(X, Y, density_slice, levels=[tumor_threshold], 
+                              colors='black', linewidths=2, alpha=0.8, linestyles='--',
+                              label='Tumor Boundary')
+                
+                # Add statistics text if requested
+                if include_statistics:
+                    stats_text = f"Min: {np.min(source_slice):.3f}\nMax: {np.max(source_slice):.3f}\nMean: {np.mean(source_slice):.3f}"
+                    ax.text(0.02, 0.98, stats_text, transform=ax.transAxes, verticalalignment='top',
+                           bbox=dict(boxstyle='round', facecolor='white', alpha=0.8), fontsize=8)
+                
+                # Set title and labels
+                pop_label = self.labels[pop_idx]
+                if num_time_steps == 1:
+                    # Single time step: show population in title
+                    ax.set_title(f'{pop_label}\nStep {step} (t={time:.2f})', fontsize=10)
+                elif num_populations == 1:
+                    # Single population: show time in title
+                    ax.set_title(f'Step {step} (t={time:.2f})', fontsize=10)
+                else:
+                    # Multiple populations and time steps
+                    if row == 0:
+                        ax.set_title(f'{pop_label}', fontsize=10)
+                    if col == 0:
+                        ax.set_ylabel(f'Step {step}\n(t={time:.2f})', fontsize=9)
+                
+                ax.set_xlabel('X')
+                if col == 0:
+                    ax.set_ylabel('Y')
+                
+                # Add colorbar to the last plot
+                if row == num_time_steps - 1 and col == num_populations - 1:
+                    fig.colorbar(im, ax=ax, label='Source Term')
+        
+        # Set overall title
+        pop_labels_str = ', '.join([self.labels[i] for i in pop_indices])
+        if step_idx is not None and len(plot_indices) == 1:
+            title = f'Source Fields: {pop_labels_str} (Step {self.saved_steps[plot_indices[0]]}, z={z_slice})'
+        else:
+            title = f'Source Field Evolution: {pop_labels_str} (z={z_slice})'
+        fig.suptitle(title, fontsize=14)
+        
+        plt.tight_layout()
+        
+        if save_plot and output_dir:
+            os.makedirs(output_dir, exist_ok=True)
+            pop_str = '_'.join([self.labels[i] for i in pop_indices])
+            if step_idx is not None and len(plot_indices) == 1:
+                filename = f'source_fields_{pop_str}_step{self.saved_steps[plot_indices[0]]}_z{z_slice}.png'
+            else:
+                filename = f'source_fields_{pop_str}_evolution_z{z_slice}.png'
+            plt.savefig(os.path.join(output_dir, filename), dpi=300, bbox_inches='tight')
+            print(f"Custom source field plot saved to {output_dir}/{filename}")
+        
+        if show_plot:
+            plt.show()
+        else:
+            plt.close()
+        
+        # Return data for potential use
+        return {
+            'population_indices': pop_indices,
+            'population_labels': [self.labels[i] for i in pop_indices],
+            'plot_indices': plot_indices,
+            'z_slice': z_slice
         }
