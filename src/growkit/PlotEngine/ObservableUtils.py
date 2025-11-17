@@ -459,46 +459,79 @@ class ObservableUtils:
         return adaptive_threshold
     
     def calculate_inhibited_radius(self, source_terms, density_field, 
-                                   growth_threshold=2.0, 
+                                   nutrient_field=None,
+                                   phi_hat=None,
+                                   lambda_rates=None,
+                                   nutrient_thresholds=None,
+                                   k_switch=10.0,
+                                   beta_N=0.0005,
+                                   proliferation_threshold=0.01,
+                                   death_switch_threshold=0.7,
                                    density_threshold=0.1, 
                                    method='radial_average',
-                                   threshold_type='percentile',
-                                   threshold_percentile=75.0,
-                                   use_adaptive_threshold=True,
-                                   exclude_necrotic=True,
-                                   drop_fraction=0.5):
+                                   growth_threshold=2.0,  # Deprecated, kept for backward compatibility
+                                   threshold_type='percentile',  # Deprecated, kept for backward compatibility
+                                   threshold_percentile=75.0,  # Deprecated, kept for backward compatibility
+                                   use_adaptive_threshold=True,  # Deprecated, kept for backward compatibility
+                                   exclude_necrotic=True,  # Deprecated, kept for backward compatibility
+                                   drop_fraction=0.5):  # Deprecated, kept for backward compatibility
         """
-        Calculate the inhibited radius - the boundary where necrotic source terms become positive.
+        Calculate the inhibited radius - the annulus where proliferation source term goes near zero
+        but death has not yet turned on.
         
-        This represents the outer boundary of necrosis death caused by lack of nutrient. The inhibited
-        radius is where necrotic source terms cross from zero/negative to positive (moving outward from center),
-        marking the outer extent of the hypoxic region where necrosis is actively occurring. This should
-        be further out than the necrotic core radius, as it marks where necrotic processes become active.
+        The inhibited radius corresponds to the radius at which the proliferation source term
+        I_i = G_N * n * lambda_i * phi_i falls below threshold, while simultaneously
+        Theta(n_i - n) ≈ 1 (death OFF). This represents the annulus where:
+        - Nutrient is still above death threshold (death OFF)
+        - But nutrient is too low for proliferation to be non-negligible
         
         Args:
-            source_terms: Source term field (M, nx, ny, nz) - must have at least one population
+            source_terms: Source term field (M, nx, ny, nz) - kept for backward compatibility but not used in new calculation
             density_field: Cell density field for tumor center detection
-            growth_threshold: Deprecated parameter (kept for backward compatibility, not used)
+            nutrient_field: Nutrient concentration field (nx, ny, nz) - required for new calculation
+            phi_hat: Cell fraction fields for all populations (M, nx, ny, nz) - required for new calculation
+            lambda_rates: Proliferation rates for each population (M,) - required for new calculation
+            nutrient_thresholds: Death thresholds for each population (M,) - required for new calculation
+            k_switch: Steepness parameter for nutrient switch (default 10.0)
+            beta_N: Necrotic feedback parameter (default 0.0005)
+            proliferation_threshold: Threshold below which proliferation is considered negligible (default 0.01)
+            death_switch_threshold: Threshold for Theta_death to be considered "ON" (death OFF when > this, default 0.95)
             density_threshold: Minimum density to consider as tumor region (default 0.1)
             method: Method for calculation ('radial_average', 'contour')
+            growth_threshold: Deprecated parameter (kept for backward compatibility, not used)
             threshold_type: Deprecated parameter (kept for backward compatibility, not used)
             threshold_percentile: Deprecated parameter (kept for backward compatibility, not used)
             use_adaptive_threshold: Deprecated parameter (kept for backward compatibility, not used)
-            exclude_necrotic: Deprecated parameter (kept for backward compatibility, not used - now uses necrotic source terms)
+            exclude_necrotic: Deprecated parameter (kept for backward compatibility, not used)
             drop_fraction: Deprecated parameter (kept for backward compatibility, not used)
             
         Returns:
-            inhibited_radius: Radius where necrotic source terms cross from zero/negative to positive (from center outward)
+            inhibited_radius: Radius where proliferation falls below threshold but death is still OFF
         """
-        # Extract necrotic source terms (last population) - this is the boundary of positive necrotic source terms
-        if source_terms.ndim == 4:
-            if source_terms.shape[0] == 0:
-                return 0.0
-            # Get necrotic population source terms (last population)
-            necrotic_source_terms = source_terms[-1]
-        else:
-            # If already 3D, assume it's necrotic source terms
-            necrotic_source_terms = source_terms
+        # Check if required parameters are provided for new calculation
+        if nutrient_field is None or phi_hat is None or lambda_rates is None or nutrient_thresholds is None:
+            # Fall back to old behavior for backward compatibility
+            # This uses the old necrotic source term method
+            return self._calculate_inhibited_radius_old(
+                source_terms, density_field, density_threshold, method
+            )
+        
+        # Validate input shapes
+        if phi_hat.ndim != 4:
+            raise ValueError(f"phi_hat must be 4D (M, nx, ny, nz), got shape {phi_hat.shape}")
+        if nutrient_field.ndim != 3:
+            raise ValueError(f"nutrient_field must be 3D (nx, ny, nz), got shape {nutrient_field.shape}")
+        
+        # M is the number of viable populations (lambda_rates and nutrient_thresholds should match viable populations)
+        # phi_hat may include necrotic as the last population
+        M = len(lambda_rates)  # Number of viable populations from config
+        if len(nutrient_thresholds) != M:
+            raise ValueError(f"nutrient_thresholds must have same length as lambda_rates (M={M})")
+        
+        # Check if phi_hat has more populations than M (indicating necrotic is separate)
+        has_separate_necrotic = phi_hat.shape[0] > M
+        if phi_hat.shape[0] < M:
+            raise ValueError(f"phi_hat has {phi_hat.shape[0]} populations but {M} viable populations specified")
         
         # Find tumor center using density field
         com = self.calculate_center_of_mass(density_field)
@@ -508,32 +541,210 @@ class ObservableUtils:
         radius_method = method if method in ['contour', 'mass', 'gyration'] else 'contour'
         total_radius = self.calculate_radius(density_field, threshold=density_threshold, method=radius_method)
         
-        # Check if there are any positive necrotic source terms in tumor region
+        # Check if there is any tumor density
         tumor_mask = density_field > density_threshold
         if not np.any(tumor_mask):
             return 0.0
         
-        # Find maximum positive necrotic source term value in tumor region
-        max_necrotic_source = np.max(necrotic_source_terms[tumor_mask])
-        if max_necrotic_source <= 0:
-            # No positive necrotic source terms found, return 0 (no active necrosis)
-            return 0.0
+        # Compute Theta_death for each population (death switch: death OFF when Theta_death ≈ 1)
+        # Theta_death = 0.5 * (1 + tanh(k * (n - n_thresh_death)))
+        # Death is OFF when nutrient > death threshold (Theta_death ≈ 1)
+        Theta_death = np.zeros((M, *nutrient_field.shape), dtype=np.float32)
+        for i in range(M):
+            n_thresh_death = nutrient_thresholds[i]
+            Theta_death[i] = 0.5 * (1 + np.tanh(k_switch * (nutrient_field - n_thresh_death)))
         
-        # Use zero crossing with small tolerance to find where necrotic source terms become positive
-        # Use a small absolute tolerance to account for numerical noise
-        zero_tolerance = max(1e-6, 0.01 * max_necrotic_source)  # Small tolerance for zero crossing
+        # Compute necrotic feedback factor G_N
+        # G_N = exp(-beta_N * V_N) where V_N is total necrotic volume
+        if has_separate_necrotic:
+            # Necrotic is separate (last population)
+            V_N = np.sum(phi_hat[-1])
+        else:
+            # No separate necrotic population, set V_N = 0 (G_N = 1)
+            V_N = 0.0
+        G_N = np.exp(-beta_N * V_N)
+        
+        # Compute proliferation source terms for viable populations: I_i = G_N * n * lambda_i * phi_i
+        # Note: If growth switch is enabled, this should be multiplied by Theta_growth, but since
+        # we're computing the raw proliferation potential, we compute it without the switch.
+        # The inhibited region is where this raw proliferation is low (due to low nutrient or low cell density)
+        # but death is still OFF.
+        proliferation_source = np.zeros_like(nutrient_field)
+        for i in range(M):
+            proliferation_source += G_N * nutrient_field * lambda_rates[i] * phi_hat[i]
+        
+        # Create mask for inhibited region:
+        # - Proliferation source term < threshold (proliferation negligible)
+        # - Theta_death > death_switch_threshold (death OFF - nutrient > death threshold)
+        # Use minimum Theta_death across populations (death OFF if all populations have death OFF)
+        # Actually, we want death OFF, so we need Theta_death to be high (close to 1)
+        # For multiple populations, use the minimum - if any population has death ON, then death is ON
+        # But we want death OFF, so we need ALL populations to have death OFF (use minimum)
+        min_Theta_death = np.min(Theta_death, axis=0)
+        death_off_mask = min_Theta_death > death_switch_threshold
+        
+        # Proliferation is low when the source term is below threshold
+        # The inhibited region should be where proliferation is "negligible" compared to well-nourished regions
+        # Use a percentile-based threshold to find where proliferation is low relative to the tumor
+        if np.any(tumor_mask):
+            proliferation_in_tumor = proliferation_source[tumor_mask]
+            if len(proliferation_in_tumor) > 0 and np.max(proliferation_in_tumor) > 0:
+                # Use 25th percentile as threshold (proliferation is low in bottom 25% of tumor)
+                percentile_threshold = np.percentile(proliferation_in_tumor, 25.0)
+                # Use percentile threshold if it's reasonable, otherwise fall back to absolute
+                # But prefer percentile since absolute threshold (0.01) is often too strict
+                if percentile_threshold > proliferation_threshold:
+                    effective_threshold = percentile_threshold
+                else:
+                    # If percentile is too low, use a fraction of max instead
+                    max_proliferation = np.max(proliferation_in_tumor)
+                    effective_threshold = max(proliferation_threshold, 0.1 * max_proliferation)
+            else:
+                effective_threshold = proliferation_threshold
+        else:
+            effective_threshold = proliferation_threshold
+        
+        proliferation_low_mask = proliferation_source < effective_threshold
+        inhibited_mask = death_off_mask & proliferation_low_mask & tumor_mask
+        
+        if not np.any(inhibited_mask):
+            # No inhibited region found - this could mean:
+            # 1. Proliferation is never low enough where death is OFF
+            # 2. Death turns ON before proliferation becomes low
+            # 3. Thresholds are too strict
+            return 0.0
         
         # Calculate radial distances from center
         r_squared = (self.X - com[0])**2 + (self.Y - com[1])**2 + (self.Z - com[2])**2
         radial_distances = np.sqrt(r_squared)
         
         if method == 'radial_average':
-            # Bin data by radial distance and find where necrotic source terms become positive
+            # Bin data by radial distance and find outer boundary of inhibited region
             max_radius = np.max(radial_distances)
             num_bins = max(10, min(200, int(max_radius / self.dx)))
             radial_bins = np.linspace(0, max_radius, num_bins + 1)
             
-            # Calculate average necrotic source terms and density in each radial bin
+            # Calculate average proliferation source, death switch, and density in each radial bin
+            avg_proliferation = np.zeros(num_bins)
+            avg_death_switch = np.zeros(num_bins)
+            avg_density = np.zeros(num_bins)
+            
+            for i in range(num_bins):
+                r_min = radial_bins[i]
+                r_max = radial_bins[i + 1]
+                mask = (radial_distances >= r_min) & (radial_distances < r_max)
+                
+                if np.any(mask):
+                    avg_proliferation[i] = np.mean(proliferation_source[mask])
+                    avg_death_switch[i] = np.mean(min_Theta_death[mask])
+                    avg_density[i] = np.mean(density_field[mask])
+            
+            # Work only where tumor density is present
+            viable_mask = avg_density > density_threshold
+            if not np.any(viable_mask):
+                return 0.0
+            
+            radial_centers = (radial_bins[:-1] + radial_bins[1:]) / 2
+            
+            # Simple 3-point moving average smoothing within viable region to reduce jitter
+            smoothed_proliferation = avg_proliferation.copy()
+            smoothed_death_switch = avg_death_switch.copy()
+            for i in range(1, num_bins - 1):
+                if viable_mask[i - 1] or viable_mask[i] or viable_mask[i + 1]:
+                    smoothed_proliferation[i] = (avg_proliferation[i - 1] + avg_proliferation[i] + avg_proliferation[i + 1]) / 3.0
+                    smoothed_death_switch[i] = (avg_death_switch[i - 1] + avg_death_switch[i] + avg_death_switch[i + 1]) / 3.0
+            
+            # Find outer boundary of inhibited region (moving outward from center)
+            # Inhibited region: proliferation < effective_threshold AND death_switch > threshold (death OFF)
+            # Use the same effective_threshold that was used to create the inhibited_mask
+            inhibited_radius = 0.0
+            found = False
+            
+            # Track if we're in inhibited region
+            in_inhibited = False
+            for i in range(num_bins):
+                if not viable_mask[i]:
+                    continue
+                
+                is_inhibited = (smoothed_proliferation[i] < effective_threshold) and (smoothed_death_switch[i] > death_switch_threshold)
+                
+                if is_inhibited:
+                    in_inhibited = True
+                    inhibited_radius = radial_centers[i]
+                    found = True
+                elif in_inhibited and not is_inhibited:
+                    # We've exited the inhibited region, keep the last inhibited radius
+                    break
+            
+            # Ensure inhibited radius is within tumor boundary
+            if inhibited_radius > total_radius:
+                inhibited_radius = 0.0
+                
+        elif method == 'contour':
+            # Use contour method: find maximum distance to points in inhibited region
+            # Find all points in inhibited region
+            inhibited_coords = np.where(inhibited_mask)
+            if len(inhibited_coords[0]) == 0:
+                return 0.0
+            
+            inhibited_points = np.column_stack([
+                inhibited_coords[0] * self.dx,
+                inhibited_coords[1] * self.dx,
+                inhibited_coords[2] * self.dx
+            ])
+            
+            # Calculate distances from center to all inhibited points
+            distances = cdist([center_point], inhibited_points)[0]
+            
+            # The inhibited radius is the maximum distance to inhibited points (outer boundary)
+            inhibited_radius = np.max(distances) if len(distances) > 0 else 0.0
+            
+            # Ensure inhibited radius is within tumor boundary
+            if inhibited_radius > total_radius:
+                inhibited_radius = 0.0
+        else:
+            raise ValueError(f"Unknown method: {method}")
+        
+        return inhibited_radius
+    
+    def _calculate_inhibited_radius_old(self, source_terms, density_field, density_threshold, method):
+        """
+        Old implementation for backward compatibility (uses necrotic source terms).
+        """
+        # Extract necrotic source terms (last population)
+        if source_terms.ndim == 4:
+            if source_terms.shape[0] == 0:
+                return 0.0
+            necrotic_source_terms = source_terms[-1]
+        else:
+            necrotic_source_terms = source_terms
+        
+        # Find tumor center
+        com = self.calculate_center_of_mass(density_field)
+        center_point = np.array([com[0], com[1], com[2]])
+        
+        # Calculate total tumor radius
+        radius_method = method if method in ['contour', 'mass', 'gyration'] else 'contour'
+        total_radius = self.calculate_radius(density_field, threshold=density_threshold, method=radius_method)
+        
+        # Check if there are any positive necrotic source terms
+        tumor_mask = density_field > density_threshold
+        if not np.any(tumor_mask):
+            return 0.0
+        
+        max_necrotic_source = np.max(necrotic_source_terms[tumor_mask])
+        if max_necrotic_source <= 0:
+            return 0.0
+        
+        zero_tolerance = max(1e-6, 0.01 * max_necrotic_source)
+        r_squared = (self.X - com[0])**2 + (self.Y - com[1])**2 + (self.Z - com[2])**2
+        radial_distances = np.sqrt(r_squared)
+        
+        if method == 'radial_average':
+            max_radius = np.max(radial_distances)
+            num_bins = max(10, min(200, int(max_radius / self.dx)))
+            radial_bins = np.linspace(0, max_radius, num_bins + 1)
+            
             avg_necrotic_sources = np.zeros(num_bins)
             avg_density = np.zeros(num_bins)
             
@@ -546,59 +757,43 @@ class ObservableUtils:
                     avg_necrotic_sources[i] = np.mean(necrotic_source_terms[mask])
                     avg_density[i] = np.mean(density_field[mask])
             
-            # Work only where tumor density is present
             viable_mask = avg_density > density_threshold
             if not np.any(viable_mask):
                 return 0.0
             
             radial_centers = (radial_bins[:-1] + radial_bins[1:]) / 2
             
-            # Simple 3-point moving average smoothing within viable region to reduce jitter
             smoothed = avg_necrotic_sources.copy()
             for i in range(1, num_bins - 1):
                 if viable_mask[i - 1] or viable_mask[i] or viable_mask[i + 1]:
                     smoothed[i] = (avg_necrotic_sources[i - 1] + avg_necrotic_sources[i] + avg_necrotic_sources[i + 1]) / 3.0
             
-            # Find first crossing from zero/negative (<= tolerance) to positive (> tolerance) moving outward from center
-            # This marks the outer boundary where necrotic source terms become positive (active necrosis)
             inhibited_radius = 0.0
             found = False
             for i in range(1, num_bins):
                 if not (viable_mask[i - 1] and viable_mask[i]):
                     continue
-                # Find crossing from zero/negative to positive (moving outward)
-                # Only consider crossings within the tumor boundary
                 if (np.abs(smoothed[i - 1]) <= zero_tolerance or smoothed[i - 1] < 0) and (smoothed[i] > zero_tolerance) and (radial_centers[i] <= total_radius):
                     inhibited_radius = radial_centers[i]
                     found = True
                     break
             
             if not found:
-                # Fallback logic
                 positive_mask = (avg_necrotic_sources > zero_tolerance) & viable_mask
                 if np.any(positive_mask):
-                    # There are positive necrotic source terms, but no crossing found
-                    # This means the center itself is positive (no hypoxic core)
-                    # Return 0 since inhibited radius starts at the center
                     inhibited_radius = 0.0
                 else:
-                    # All viable bins are zero or negative, so no active necrosis
                     inhibited_radius = 0.0
             
-            # Ensure inhibited radius is within tumor boundary
             if inhibited_radius > total_radius:
                 inhibited_radius = 0.0
                 
         elif method == 'contour':
-            # Use contour method: find minimum distance to points where necrotic source terms are positive
-            # Find points where necrotic source terms are positive
             positive_mask = (necrotic_source_terms > zero_tolerance) & (density_field > density_threshold)
             
             if not np.any(positive_mask):
-                # No positive necrotic source terms found, return 0
                 return 0.0
             
-            # Find all points where necrotic source terms are positive
             positive_coords = np.where(positive_mask)
             positive_points = np.column_stack([
                 positive_coords[0] * self.dx,
@@ -606,14 +801,9 @@ class ObservableUtils:
                 positive_coords[2] * self.dx
             ])
             
-            # Calculate distances from center to all points with positive necrotic source terms
             distances = cdist([center_point], positive_points)[0]
-            
-            # The inhibited radius is the minimum distance to points with positive necrotic source terms
-            # This marks the inner boundary where necrotic source terms become positive (moving outward from center)
             inhibited_radius = np.min(distances) if len(distances) > 0 else 0.0
             
-            # Ensure inhibited radius is within tumor boundary
             if inhibited_radius > total_radius:
                 inhibited_radius = 0.0
         else:

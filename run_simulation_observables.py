@@ -27,7 +27,7 @@ from src.growkit.PlotEngine.SimPlotter import SimPlotter
 
 
 def run_simulation_with_observables(config_path, output_dir, total_steps=50, 
-                                   save_interval=1, threshold=0.1, 
+                                   save_interval=1, threshold=0.4, 
                                    parameter_values=None, config=None,
                                    cached_flat_config_keys=None):
     """
@@ -73,8 +73,13 @@ def run_simulation_with_observables(config_path, output_dir, total_steps=50,
     plotter = SimPlotter(simulation_data)
     
     # Export observables to temporary CSV
+    # Pass threshold parameter to ensure consistent calculation
     temp_csv_path = output_dir / "observables_temp.csv"
-    df = plotter.export_observables_data(output_dir=str(output_dir), filename="observables_temp.csv")
+    df = plotter.export_observables_data(
+        output_dir=str(output_dir), 
+        filename="observables_temp.csv",
+        threshold=threshold  # Use the threshold parameter passed to this function
+    )
     
     # Now add config and parameter values directly
     # OPTIMIZATION: Only add config parameters once, not per-row
@@ -143,7 +148,7 @@ if __name__ == "__main__":
     output_dir = "/Users/rileymcnamara/CODE/2025/silicokit/laboratory/saved_simulations"
     total_steps = 20
     save_interval = 1
-    threshold = 0.1
+    threshold = 0.4  # Match default used in notebook for consistency
     
     csv_path = run_simulation_with_observables(
         config_path=config_path,

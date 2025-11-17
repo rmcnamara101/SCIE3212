@@ -581,8 +581,6 @@ def main():
         'populations.Necrotic.dynamics.mu': (0.1, 30),
         # Nutrient growth threshold offset: random between 0.1 and 0.99
         'nutrient.dynamics.growth_threshold_offset': (0.1, 0.99),
-        # Nutrient diffusion: random between 10000 and 100000
-        'nutrient.dynamics.diffusion': (10000, 500000),
     }
     
     # Number of random samples to generate

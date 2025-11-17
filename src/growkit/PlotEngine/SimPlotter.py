@@ -21,7 +21,13 @@ class SimPlotter:
         self.num_populations = self.metadata["num_populations"]
         self.saved_steps = self.metadata["saved_steps"]
         self.saved_times = self.metadata["saved_times"]
-        self.dx = 1.0  # Default value, should be extracted from config if available
+        
+        # Extract dx from config if available
+        self.dx = 1.0  # Default value
+        if "config" in self.metadata:
+            config = self.metadata["config"]
+            if "domain" in config and "dx" in config["domain"]:
+                self.dx = float(config["domain"]["dx"])
         
         # Get population labels
         if "population_labels" in self.metadata:
@@ -35,7 +41,7 @@ class SimPlotter:
         else:
             self.labels = [f"Population_{i}" for i in range(self.num_populations)]
         
-        # Initialize observable utilities
+        # Initialize observable utilities with correct dx
         self.utils = ObservableUtils(self.grid_size, self.dx)
         
         # Memory optimization: ensure field_data uses memory-mapped arrays if available
@@ -70,23 +76,38 @@ class SimPlotter:
         """
         Get a field slice for a specific step, ensuring memory efficiency.
         Returns a view or minimal copy to avoid memory bloat.
+        
+        Handles both list and array formats:
+        - Lists: field_data["phi_hat"] is a list of arrays (from run_and_save_simulation)
+        - Arrays: field_data["phi_hat"] is a numpy array (from load_simulation_data)
         """
         field = self.field_data[field_name]
         if field is None:
             return None
         
-        # Get the slice - for memory-mapped arrays, this loads the slice into memory
-        # We want to minimize memory usage, so we'll work with the slice directly
-        # and let Python's GC handle cleanup
-        slice_data = field[step_idx]
+        # Get the slice - handles both list and array formats
+        # For lists: field[step_idx] returns the array at that index
+        # For arrays: field[step_idx] returns a slice (M, nx, ny, nz)
+        if isinstance(field, list):
+            # Data is a list of arrays (from run_and_save_simulation)
+            if step_idx >= len(field):
+                raise IndexError(f"Step index {step_idx} out of range for {field_name} (length {len(field)})")
+            slice_data = field[step_idx]
+        else:
+            # Data is a numpy array (from load_simulation_data, possibly memory-mapped)
+            slice_data = field[step_idx]
+        
+        # Ensure slice_data is a numpy array
+        if not isinstance(slice_data, np.ndarray):
+            slice_data = np.array(slice_data)
         
         # If data is already float32, return as-is (no conversion needed)
-        if hasattr(slice_data, 'dtype') and slice_data.dtype == np.float32:
+        if slice_data.dtype == np.float32:
             return slice_data
         
         # If data is float64 and we're not memory-mapped, convert to float32 to save memory
         # Note: We avoid conversion for memory-mapped arrays to prevent loading full array
-        if hasattr(slice_data, 'dtype') and slice_data.dtype == np.float64:
+        if slice_data.dtype == np.float64:
             if "_npz_file" not in self.simulation_data:
                 # Not memory-mapped, safe to convert
                 return np.array(slice_data, dtype=np.float32, copy=False)
@@ -216,10 +237,76 @@ class SimPlotter:
                 # Clear physics cache periodically to save memory
                 if hasattr(physics_data, 'clear_cache'):
                     physics_data.clear_cache()
+                # Extract configuration parameters for new calculation method
+                nutrient_field = None
+                lambda_rates = None
+                nutrient_thresholds = None
+                k_switch = 10.0
+                beta_N = 0.0005
+                
+                if "config" in self.metadata:
+                    config = self.metadata["config"]
+                    # Get k_switch from nutrient config
+                    if "nutrient" in config and "dynamics" in config["nutrient"]:
+                        k_switch = config["nutrient"]["dynamics"].get("k", 10.0)
+                    
+                    # Extract lambda_rates and nutrient_thresholds from populations config
+                    # IMPORTANT: Use self.labels order to match phi_hat ordering
+                    if "populations" in config:
+                        populations = config["populations"]
+                        
+                        # Get viable population labels (exclude necrotic, which is last)
+                        viable_labels = self.labels[:-1] if len(self.labels) > 1 else self.labels
+                        
+                        if viable_labels:
+                            lambda_rates = []
+                            nutrient_thresholds = []
+                            
+                            # Iterate in the same order as phi_hat (using self.labels)
+                            # Need to map labels back to population names in config
+                            # The config uses population keys (like "Tumour"), not labels
+                            # So we need to find the config key that matches each label
+                            for label in viable_labels:
+                                # Find the population config entry that matches this label
+                                found = False
+                                for pop_name, pop_config in populations.items():
+                                    if pop_name.lower() == "necrotic":
+                                        continue
+                                    # Check if this population's label matches
+                                    pop_label = pop_config.get("label", pop_name)
+                                    if pop_label == label:
+                                        if "dynamics" in pop_config:
+                                            dynamics = pop_config["dynamics"]
+                                            lambda_rates.append(dynamics.get("lambda", 0.0))
+                                            nutrient_thresholds.append(dynamics.get("nutrient_threshold", 0.0))
+                                            found = True
+                                            break
+                                
+                                if not found:
+                                    # Fallback: if label doesn't match, try to use index
+                                    # This shouldn't happen, but handle gracefully
+                                    print(f"Warning: Could not find config for label '{label}', using defaults")
+                                    lambda_rates.append(0.0)
+                                    nutrient_thresholds.append(0.0)
+                            
+                            # Get beta_N from necrotic population if it exists
+                            if "Necrotic" in populations and "dynamics" in populations["Necrotic"]:
+                                beta_N = populations["Necrotic"]["dynamics"].get("beta_N", 0.0005)
+                            
+                            lambda_rates = np.array(lambda_rates, dtype=np.float32)
+                            nutrient_thresholds = np.array(nutrient_thresholds, dtype=np.float32)
+                
                 for step_idx in range(len(self.saved_steps)):
                     phi_hat = self._get_field_slice("phi_hat", step_idx)
                     total_density = np.sum(phi_hat, axis=0)
                     source_terms = physics_data[step_idx]["source_terms"]
+                    
+                    # Get nutrient field if available
+                    if "nutrient_fields" in self.field_data and self.field_data["nutrient_fields"] is not None:
+                        nutrient_field = self._get_field_slice("nutrient_fields", step_idx)
+                    else:
+                        nutrient_field = None
+                    
                     # Clean up memory periodically
                     if step_idx % 5 == 0:
                         import gc
@@ -228,18 +315,25 @@ class SimPlotter:
                         if hasattr(physics_data, 'clear_cache') and step_idx % 10 == 0:
                             physics_data.clear_cache()
                     
-                    # Calculate inhibited radius (where necrotic source terms become positive from center)
-                    # This uses necrotic source terms to find the boundary of positive necrotic source terms
+                    # Calculate inhibited radius using new method if parameters are available
+                    # New method: radius where proliferation source term falls below threshold but death is still OFF
                     inhibited_radius = self.utils.calculate_inhibited_radius(
-                        source_terms, total_density, 
-                        growth_threshold=growth_threshold,  # Deprecated but kept for backward compatibility
+                        source_terms, total_density,
+                        nutrient_field=nutrient_field,
+                        phi_hat=phi_hat,
+                        lambda_rates=lambda_rates,
+                        nutrient_thresholds=nutrient_thresholds,
+                        k_switch=k_switch,
+                        beta_N=beta_N,
                         density_threshold=threshold,
                         method='radial_average',
-                        threshold_type=threshold_type,  # Deprecated but kept for backward compatibility
-                        threshold_percentile=growth_threshold_percentile,  # Deprecated but kept for backward compatibility
-                        use_adaptive_threshold=use_adaptive_threshold,  # Deprecated but kept for backward compatibility
-                        exclude_necrotic=True,  # Deprecated but kept for backward compatibility
-                        drop_fraction=drop_fraction  # Deprecated but kept for backward compatibility
+                        # Deprecated parameters kept for backward compatibility
+                        growth_threshold=growth_threshold,
+                        threshold_type=threshold_type,
+                        threshold_percentile=growth_threshold_percentile,
+                        use_adaptive_threshold=use_adaptive_threshold,
+                        exclude_necrotic=True,
+                        drop_fraction=drop_fraction
                     )
                     inhibited_radii.append(inhibited_radius)
             else:
@@ -764,8 +858,11 @@ class SimPlotter:
         observables = {}
         
         # Radius evolution (always calculated)
+        # Note: method parameter is not passed through plot_all_observables, so it uses default 'contour'
+        # If you need a different method, call plot_tumor_radius_evolution directly
         radius_data = self.plot_tumor_radius_evolution(output_dir=None, save_plot=False, 
                                                       show_plot=False, threshold=threshold,
+                                                      method='contour',  # Default method for consistency
                                                       include_inhibited_radius=include_inhibited_radius,
                                                       include_necrotic_radius=include_necrotic_radius,
                                                       include_hypoxic_radius=include_hypoxic_radius,
@@ -1671,7 +1768,18 @@ class SimPlotter:
             'background_mean_sources': background_mean_sources
         }
     
-    def export_observables_data(self, output_dir, filename='observables_data.csv'):
+    def export_observables_data(self, output_dir, filename='observables_data.csv',
+                                threshold=0.1, method='contour',
+                                include_inhibited_radius=True,
+                                include_necrotic_radius=True,
+                                include_hypoxic_radius=True,
+                                growth_threshold=0.01,
+                                use_adaptive_threshold=True,
+                                threshold_type='percentile',
+                                growth_threshold_percentile=75.0,
+                                necrotic_threshold_percentile=25.0,
+                                drop_fraction=0.5,
+                                viable_threshold=0.1):
         """
         Export observables data to CSV file.
         Currently only exports radius data (Total_Radius, Inhibited_Radius, Necrotic_Radius).
@@ -1679,6 +1787,18 @@ class SimPlotter:
         Args:
             output_dir: Directory to save data
             filename: Base filename for the data
+            threshold: Density threshold for radius calculation (default 0.1)
+            method: Method for radius calculation ('contour' or 'mass', default 'contour')
+            include_inhibited_radius: Whether to include inhibited radius calculation
+            include_necrotic_radius: Whether to include necrotic radius calculation
+            include_hypoxic_radius: Whether to include hypoxic radius calculation
+            growth_threshold: Absolute threshold for detecting proliferative cells (deprecated, kept for compatibility)
+            use_adaptive_threshold: Whether to use adaptive thresholds (deprecated, kept for compatibility)
+            threshold_type: Type of adaptive threshold (deprecated, kept for compatibility)
+            growth_threshold_percentile: Percentile for proliferative threshold (deprecated, kept for compatibility)
+            necrotic_threshold_percentile: Percentile for necrotic threshold (deprecated, kept for compatibility)
+            drop_fraction: Fraction of maximum source term to use as threshold (deprecated, kept for compatibility)
+            viable_threshold: Nutrient concentration threshold (deprecated, kept for compatibility)
         """
         print("Exporting observables data...")
         
@@ -1689,10 +1809,18 @@ class SimPlotter:
             output_dir=None, 
             save_plot=False, 
             show_plot=False,
-            include_inhibited_radius=True,
-            include_necrotic_radius=True,
-            use_adaptive_threshold=True,
-            only_radii=True  # Only calculate radius data
+            threshold=threshold,
+            include_inhibited_radius=include_inhibited_radius,
+            include_necrotic_radius=include_necrotic_radius,
+            include_hypoxic_radius=include_hypoxic_radius,
+            growth_threshold=growth_threshold,
+            use_adaptive_threshold=use_adaptive_threshold,
+            threshold_type=threshold_type,
+            growth_threshold_percentile=growth_threshold_percentile,
+            necrotic_threshold_percentile=necrotic_threshold_percentile,
+            only_radii=True,  # Only calculate radius data
+            drop_fraction=drop_fraction,
+            viable_threshold=viable_threshold
         )
         
         # Create time series data

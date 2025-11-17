@@ -17,39 +17,39 @@ populations:
     label: Tumour Cells
     color: Green
     dynamics:
-      lambda: 10 # float
-      mu: 12 # float
-      mobility: 10000.0 # float
-      nutrient_threshold: 0.55 # float (death stops above this)
-      nutrient_consumption: 0.6 # float
-      nutrient_production: 0.6 # float
+      lambda: 16.250551453301846
+      mu: 4.237384439333056
+      mobility: 10000.0
+      nutrient_threshold: 0.30582271695808627
+      nutrient_consumption: 0.6900708160530712
+      nutrient_production: 0.7022907588606612
     
     
   Necrotic:
     label: Necrotic Cells
     color: Black
     dynamics:
-      lambda: 0.0 # float
-      mu: 0 # float
-      mobility: 0.0 # float
-      nutrient_threshold: 0.0 # float
-      nutrient_consumption: 0.0 # float
-      nutrient_production: 0.0 # float
-      beta_N: 0.0005 # float
+      lambda: 0.0
+      mu: 12.287221153030941
+      mobility: 0.0
+      nutrient_threshold: 0.0
+      nutrient_consumption: 0.1
+      nutrient_production: 0.0
+      beta_N: 0.006432242782880669
 
 nutrient:
   name: General
   label: General nutrient
   color: Orange
   dynamics:
-    diffusion: 300000 # float
+    diffusion: 1000000 # float
     #boundary_value: 1.0 # float defining the value of the nutrient at the boundary
-    k: 15.0 # float defining the steepness of the nutrient switch
+    k: 8.0 # float defining the steepness of the nutrient switch
     # Growth threshold offset: creates hypoxic gap between death and growth
     # Death stops when nutrient > nutrient_threshold
     # Growth starts when nutrient > (nutrient_threshold + growth_threshold_offset)
     # The gap between them is the hypoxic band with zero source terms
-    growth_threshold_offset: 0.2 # float, offset added to nutrient_threshold for growth switch 
+    growth_threshold_offset: 0.5829239150484846 # float, offset added to nutrient_threshold for growth switch 
 
 physics:
   adhesion_energy:
