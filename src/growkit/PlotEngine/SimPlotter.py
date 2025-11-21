@@ -149,7 +149,7 @@ class SimPlotter:
             # Clear physics cache if available
             if "physics_data" in self.simulation_data:
                 physics_data = self.simulation_data["physics_data"]
-                if hasattr(physics_data, 'clear_cache'):
+                if physics_data is not None and hasattr(physics_data, 'clear_cache'):
                     physics_data.clear_cache()
         
         return results
@@ -170,6 +170,18 @@ class SimPlotter:
         """
         Plot tumor radius evolution over time.
         
+        NOTE ON INDIVIDUAL VS TOTAL RADIUS:
+        Individual population radii are calculated using only that population's density field,
+        while total radius uses the sum of all populations (including necrotic). This means:
+        - If viable cells at the edge die and convert to necrotic, the viable cell density
+          may drop below threshold, but necrotic cells keep total density above threshold.
+        - This causes total radius to continue growing while individual population radius
+          may plateau or grow slower.
+        - This is expected behavior: total radius includes all cell types, while individual
+          radius shows only where that specific population exceeds the threshold.
+        - Use plot_radius_diagnostic() to visualize radial density profiles and understand
+          what's happening at the edge.
+        
         Args:
             output_dir: Directory to save plot
             save_plot: Whether to save the plot
@@ -178,8 +190,8 @@ class SimPlotter:
             include_individual_populations: Whether to plot individual population radii
             threshold: Density threshold for radius calculation
             method: Method for radius calculation ('contour' or 'mass')
-            include_inhibited_radius: Whether to include inhibited radius calculation (finds where necrotic source terms become positive, marking outer boundary of necrosis)
-            include_necrotic_radius: Whether to include necrotic radius calculation (uses density thresholding)
+            include_inhibited_radius: Whether to include inhibited radius calculation (region containing inhibited or dead cells, where nutrient < threshold)
+            include_necrotic_radius: Whether to include necrotic radius calculation (region void of living cells, where viable density < 0.01)
             include_hypoxic_radius: Whether to include hypoxic radius calculation (finds outer boundary where necrotic source terms become non-zero)
             growth_threshold: Deprecated parameter (kept for backward compatibility, not used)
             use_adaptive_threshold: Deprecated parameter (kept for backward compatibility, not used)
@@ -232,7 +244,7 @@ class SimPlotter:
         inhibited_radii = []
         if include_inhibited_radius and "physics_data" in self.simulation_data:
             physics_data = self.simulation_data["physics_data"]
-            if len(physics_data) > 0 and "source_terms" in physics_data[0]:
+            if physics_data is not None and len(physics_data) > 0 and "source_terms" in physics_data[0]:
                 print("Calculating inhibited radius evolution...")
                 # Clear physics cache periodically to save memory
                 if hasattr(physics_data, 'clear_cache'):
@@ -342,28 +354,37 @@ class SimPlotter:
         else:
             include_inhibited_radius = False
         
-        # Calculate necrotic radius if requested using density thresholding
-        # NOTE: This is density-based radius - shows where necrotic cells exist
-        # Uses the necrotic population density field (last population) with threshold
+        # Calculate necrotic radius if requested
+        # NOTE: Based on paper definition: "Proportion of outer radius void of living cells"
+        # This finds the OUTERMOST radius of the central region where viable cell density is very low
+        # The necrotic core is in the center, so we need to find where viable density transitions
+        # from low (necrotic core) to higher (viable rim) as we move outward from center
         necrotic_radii = []
         if include_necrotic_radius:
             # Check if we have a necrotic population (last population)
             if len(self.labels) > 1:
                 print("Calculating necrotic radius evolution...")
-                necrotic_pop_idx = len(self.labels) - 1  # Last population is necrotic
+                # Use a very low threshold for viable cells (void of living cells)
+                viable_threshold = 0.01  # Very low threshold - region void of living cells
                 for step_idx in range(len(self.saved_steps)):
                     phi_hat = self._get_field_slice("phi_hat", step_idx)
-                    # Calculate necrotic radius using density thresholding
-                    necrotic_radius = self.utils.calculate_radius(
-                        phi_hat[necrotic_pop_idx], 
-                        threshold=threshold, 
-                        method=method
-                    )
-                    necrotic_radii.append(necrotic_radius)
+                    total_density = np.sum(phi_hat, axis=0)
+                    
                     # Clean up memory periodically
                     if step_idx % 5 == 0:
                         import gc
                         gc.collect()
+                    
+                    # Calculate necrotic radius using phi_hat (viable density)
+                    necrotic_radius = self.utils.calculate_necrotic_radius(
+                        source_terms=None,  # Not needed for new method
+                        density_field=total_density,
+                        phi_hat=phi_hat,
+                        density_threshold=threshold,
+                        viable_threshold=viable_threshold,
+                        method='radial_average'
+                    )
+                    necrotic_radii.append(necrotic_radius)
             else:
                 print("Warning: No necrotic population found (need at least 2 populations)")
                 include_necrotic_radius = False
@@ -377,7 +398,7 @@ class SimPlotter:
         hypoxic_radii = []
         if include_hypoxic_radius and "physics_data" in self.simulation_data:
             physics_data = self.simulation_data["physics_data"]
-            if len(physics_data) > 0 and "source_terms" in physics_data[0]:
+            if physics_data is not None and len(physics_data) > 0 and "source_terms" in physics_data[0]:
                 # Check if we have a necrotic population (last population)
                 if len(self.labels) > 1:
                     print("Calculating hypoxic radius evolution...")
@@ -1375,14 +1396,14 @@ class SimPlotter:
         print("Creating source field evolution plot...")
         
         # Check if source fields are available in physics data
-        if "physics_data" not in self.simulation_data:
+        if "physics_data" not in self.simulation_data or self.simulation_data["physics_data"] is None:
             print("Warning: No physics data found in simulation data.")
             print("Available data keys:", list(self.simulation_data.keys()))
             return
         
         # Check if source terms are available in physics data
         physics_data = self.simulation_data["physics_data"]
-        if len(physics_data) == 0 or "source_terms" not in physics_data[0]:
+        if physics_data is None or len(physics_data) == 0 or "source_terms" not in physics_data[0]:
             print("Warning: No source terms found in physics data.")
             print("Available physics data keys:", list(physics_data[0].keys()) if len(physics_data) > 0 else "No physics data")
             return
@@ -1512,14 +1533,14 @@ class SimPlotter:
         print("Calculating source field statistics evolution...")
         
         # Check if source fields are available in physics data
-        if "physics_data" not in self.simulation_data:
+        if "physics_data" not in self.simulation_data or self.simulation_data["physics_data"] is None:
             print("Warning: No physics data found in simulation data.")
             print("Available data keys:", list(self.simulation_data.keys()))
             return
         
         # Check if source terms are available in physics data
         physics_data = self.simulation_data["physics_data"]
-        if len(physics_data) == 0 or "source_terms" not in physics_data[0]:
+        if physics_data is None or len(physics_data) == 0 or "source_terms" not in physics_data[0]:
             print("Warning: No source terms found in physics data.")
             print("Available physics data keys:", list(physics_data[0].keys()) if len(physics_data) > 0 else "No physics data")
             return
@@ -1649,14 +1670,14 @@ class SimPlotter:
         print("Analyzing source-tumor correlation...")
         
         # Check if source fields are available in physics data
-        if "physics_data" not in self.simulation_data:
+        if "physics_data" not in self.simulation_data or self.simulation_data["physics_data"] is None:
             print("Warning: No physics data found in simulation data.")
             print("Available data keys:", list(self.simulation_data.keys()))
             return
         
         # Check if source terms are available in physics data
         physics_data = self.simulation_data["physics_data"]
-        if len(physics_data) == 0 or "source_terms" not in physics_data[0]:
+        if physics_data is None or len(physics_data) == 0 or "source_terms" not in physics_data[0]:
             print("Warning: No source terms found in physics data.")
             print("Available physics data keys:", list(physics_data[0].keys()) if len(physics_data) > 0 else "No physics data")
             return
@@ -1874,12 +1895,12 @@ class SimPlotter:
         print("Creating source term diagnostic plot...")
         
         # Check if source fields are available
-        if "physics_data" not in self.simulation_data:
+        if "physics_data" not in self.simulation_data or self.simulation_data["physics_data"] is None:
             print("Warning: No physics data found in simulation data.")
             return
         
         physics_data = self.simulation_data["physics_data"]
-        if len(physics_data) == 0 or "source_terms" not in physics_data[0]:
+        if physics_data is None or len(physics_data) == 0 or "source_terms" not in physics_data[0]:
             print("Warning: No source terms found in physics data.")
             return
         
@@ -2090,14 +2111,14 @@ class SimPlotter:
         print("Creating custom source field plot...")
         
         # Check if source fields are available in physics data
-        if "physics_data" not in self.simulation_data:
+        if "physics_data" not in self.simulation_data or self.simulation_data["physics_data"] is None:
             print("Warning: No physics data found in simulation data.")
             print("Available data keys:", list(self.simulation_data.keys()))
             return
         
         # Check if source terms are available in physics data
         physics_data = self.simulation_data["physics_data"]
-        if len(physics_data) == 0 or "source_terms" not in physics_data[0]:
+        if physics_data is None or len(physics_data) == 0 or "source_terms" not in physics_data[0]:
             print("Warning: No source terms found in physics data.")
             print("Available physics data keys:", list(physics_data[0].keys()) if len(physics_data) > 0 else "No physics data")
             return
@@ -2314,3 +2335,312 @@ class SimPlotter:
             'plot_indices': plot_indices,
             'z_slice': z_slice
         }
+    
+    def plot_radius_diagnostic(self, output_dir=None, save_plot=False, show_plot=True,
+                              figsize=(20, 12), z_slice=None, step_indices=None,
+                              threshold=0.1, method='contour', num_radial_bins=100):
+        """
+        Diagnostic plot to investigate why individual population radii differ from total radius.
+        
+        This plot helps understand:
+        - Radial density profiles for each population vs total density
+        - Where threshold is crossed for individual vs total
+        - How necrotic cells at the edge affect total radius
+        - Why individual population radius might plateau while total continues growing
+        
+        Args:
+            output_dir: Directory to save plot
+            save_plot: Whether to save the plot
+            show_plot: Whether to display the plot
+            figsize: Figure size
+            z_slice: Z-slice to analyze (defaults to center)
+            step_indices: List of time step indices to analyze (default: [0, -1] for first and last)
+            threshold: Density threshold used for radius calculation
+            method: Method for radius calculation ('contour' or 'mass')
+            num_radial_bins: Number of radial bins for profile analysis
+        """
+        print("Creating radius diagnostic plot...")
+        
+        # Set default z_slice
+        if z_slice is None:
+            z_slice = self.grid_size[2] // 2
+        
+        # Set default step_indices (start and end only)
+        if step_indices is None:
+            step_indices = [0, -1]
+        elif isinstance(step_indices, int):
+            step_indices = [step_indices]
+        
+        # Normalize negative indices
+        step_indices = [idx if idx >= 0 else len(self.saved_steps) + idx for idx in step_indices]
+        step_indices = [max(0, min(idx, len(self.saved_steps) - 1)) for idx in step_indices]
+        
+        # Remove duplicates while preserving order
+        seen = set()
+        step_indices = [x for x in step_indices if not (x in seen or seen.add(x))]
+        
+        # Create subplots: rows = time steps, cols = [radial profiles, edge region detail]
+        num_steps = len(step_indices)
+        fig = plt.figure(figsize=figsize)
+        gs = fig.add_gridspec(num_steps, 2, hspace=0.3, wspace=0.3)
+        
+        # Store results for return
+        diagnostic_results = {
+            'step_indices': step_indices,
+            'individual_radii': {},
+            'total_radii': {},
+            'z_slice': z_slice,
+            'threshold': threshold
+        }
+        
+        for row, step_idx in enumerate(step_indices):
+            # Get data for this time step
+            phi_hat = self._get_field_slice("phi_hat", step_idx)
+            total_density = np.sum(phi_hat, axis=0)
+            
+            # Get 2D slice
+            total_density_slice = total_density[:, :, z_slice]
+            
+            # Find center of mass
+            com = self.utils.calculate_center_of_mass(total_density)
+            
+            # Calculate radial distances from center
+            x_coords = np.arange(self.grid_size[0]) * self.dx
+            y_coords = np.arange(self.grid_size[1]) * self.dx
+            X, Y = np.meshgrid(x_coords, y_coords, indexing='ij')
+            r_squared = (X - com[0])**2 + (Y - com[1])**2
+            radial_distances = np.sqrt(r_squared)
+            
+            # Calculate radii for this step (using full 3D field)
+            total_radius = self.utils.calculate_radius(total_density, threshold=threshold, method=method)
+            individual_radii = {}
+            for i, label in enumerate(self.labels):
+                individual_radii[label] = self.utils.calculate_radius(phi_hat[i], threshold=threshold, method=method)
+            
+            # Also calculate radii from the 2D slice for comparison
+            total_radius_2d = self.utils.calculate_radius(total_density_slice[..., None], threshold=threshold, method=method)
+            individual_radii_2d = {}
+            for i, label in enumerate(self.labels):
+                pop_slice_3d = phi_hat[i][:, :, z_slice][..., None]  # Add z dimension back
+                individual_radii_2d[label] = self.utils.calculate_radius(pop_slice_3d, threshold=threshold, method=method)
+            
+            # Store results
+            diagnostic_results['total_radii'][step_idx] = total_radius
+            diagnostic_results['individual_radii'][step_idx] = individual_radii.copy()
+            diagnostic_results['total_radii_2d'] = diagnostic_results.get('total_radii_2d', {})
+            diagnostic_results['total_radii_2d'][step_idx] = total_radius_2d
+            diagnostic_results['individual_radii_2d'] = diagnostic_results.get('individual_radii_2d', {})
+            diagnostic_results['individual_radii_2d'][step_idx] = individual_radii_2d.copy()
+            
+            # Bin data by radial distance
+            max_radius = np.max(radial_distances)
+            radial_bins = np.linspace(0, max_radius, num_radial_bins + 1)
+            radial_centers = (radial_bins[:-1] + radial_bins[1:]) / 2
+            
+            # Calculate average densities in each radial bin
+            avg_total_density = np.zeros(num_radial_bins)
+            avg_population_densities = {label: np.zeros(num_radial_bins) for label in self.labels}
+            
+            for i in range(num_radial_bins):
+                r_min = radial_bins[i]
+                r_max = radial_bins[i + 1]
+                mask = (radial_distances >= r_min) & (radial_distances < r_max)
+                
+                if np.any(mask):
+                    avg_total_density[i] = np.mean(total_density_slice[mask])
+                    for j, label in enumerate(self.labels):
+                        pop_slice = phi_hat[j][:, :, z_slice]
+                        avg_population_densities[label][i] = np.mean(pop_slice[mask])
+            
+            # Plot 1: Radial density profiles
+            ax1 = fig.add_subplot(gs[row, 0])
+            ax1.plot(radial_centers, avg_total_density, 'k-', linewidth=3, label='Total Density', zorder=10)
+            
+            colors = plt.cm.Set1(np.linspace(0, 1, len(self.labels)))
+            for i, label in enumerate(self.labels):
+                ax1.plot(radial_centers, avg_population_densities[label], '--', 
+                        color=colors[i], linewidth=2, label=f'{label}', alpha=0.8)
+            
+            # Add threshold line
+            ax1.axhline(y=threshold, color='r', linestyle=':', linewidth=2, alpha=0.7, label=f'Threshold ({threshold})')
+            
+            # Mark calculated radii (3D and 2D for comparison)
+            ax1.axvline(x=total_radius, color='k', linestyle='-', linewidth=2, alpha=0.5, 
+                       label=f'Total Radius 3D ({total_radius:.2f})')
+            ax1.axvline(x=total_radius_2d, color='k', linestyle=':', linewidth=2, alpha=0.5, 
+                       label=f'Total Radius 2D ({total_radius_2d:.2f})')
+            for i, label in enumerate(self.labels):
+                ax1.axvline(x=individual_radii[label], color=colors[i], linestyle='--', 
+                           linewidth=1.5, alpha=0.5, label=f'{label} Radius 3D ({individual_radii[label]:.2f})')
+                ax1.axvline(x=individual_radii_2d[label], color=colors[i], linestyle=':', 
+                           linewidth=1.5, alpha=0.5, label=f'{label} Radius 2D ({individual_radii_2d[label]:.2f})')
+            
+            ax1.set_xlabel('Radial Distance')
+            ax1.set_ylabel('Average Density')
+            ax1.set_title(f'Radial Profile (Step {self.saved_steps[step_idx]}, t={self.saved_times[step_idx]:.2f})')
+            ax1.legend(fontsize=8, loc='best')
+            ax1.grid(True, alpha=0.3)
+            ax1.set_xlim(0, max_radius)
+            
+            # Plot 2: Edge region analysis (zoom on edge)
+            ax2 = fig.add_subplot(gs[row, 1])
+            # Focus on edge region (around total radius)
+            edge_region_radius = total_radius * 1.2  # Show 20% beyond total radius
+            edge_mask = radial_distances <= edge_region_radius
+            
+            if np.any(edge_mask):
+                # Get edge region data
+                edge_radial = radial_distances[edge_mask]
+                edge_total = total_density_slice[edge_mask]
+                edge_populations = {}
+                for j, label in enumerate(self.labels):
+                    edge_populations[label] = phi_hat[j][:, :, z_slice][edge_mask]
+                
+                # Scatter plot of densities vs radial distance
+                # Use larger, more distinct markers for better visibility
+                ax2.scatter(edge_radial, edge_total, c='black', s=15, alpha=0.5, 
+                           label='Total', zorder=10, marker='o', edgecolors='black', linewidths=0.5)
+                for j, label in enumerate(self.labels):
+                    # Use different marker styles for each population
+                    markers = ['s', '^', 'v', 'D', 'p', '*']
+                    marker = markers[j % len(markers)]
+                    ax2.scatter(edge_radial, edge_populations[label], c=colors[j], s=12, 
+                              alpha=0.4, label=label, marker=marker, edgecolors=colors[j], linewidths=0.3)
+                
+                # Add moving average lines to show trends more clearly
+                # Use a smaller window and only average where there's sufficient data
+                if len(edge_radial) > 10:
+                    # Sort by radial distance for proper moving average
+                    sort_idx = np.argsort(edge_radial)
+                    sorted_radial = edge_radial[sort_idx]
+                    sorted_total = edge_total[sort_idx]
+                    sorted_pops = {label: edge_populations[label][sort_idx] for label in self.labels}
+                    
+                    # Use a window size based on data density (smaller window for better resolution)
+                    window_size = max(5, len(edge_radial) // 50)  # Adaptive window size
+                    if window_size % 2 == 0:
+                        window_size += 1  # Make odd for symmetric window
+                    
+                    # Calculate moving average
+                    def moving_average(data, window):
+                        """Calculate moving average with proper edge handling"""
+                        result = np.zeros_like(data)
+                        half_window = window // 2
+                        for i in range(len(data)):
+                            start = max(0, i - half_window)
+                            end = min(len(data), i + half_window + 1)
+                            result[i] = np.mean(data[start:end])
+                        return result
+                    
+                    # Only plot moving average where we have enough points
+                    total_ma = moving_average(sorted_total, window_size)
+                    pop_ma = {label: moving_average(sorted_pops[label], window_size) 
+                             for label in self.labels}
+                    
+                    # Plot moving averages as lines (thicker, more visible)
+                    ax2.plot(sorted_radial, total_ma, 
+                            'k-', linewidth=3, alpha=0.9, label='Total (avg)', zorder=15)
+                    for j, label in enumerate(self.labels):
+                        ax2.plot(sorted_radial, pop_ma[label],
+                                '--', color=colors[j], linewidth=2.5, alpha=0.8, 
+                                label=f'{label} (avg)', zorder=14)
+                
+                # Add threshold and radius lines
+                ax2.axhline(y=threshold, color='r', linestyle=':', linewidth=2, alpha=0.7)
+                # Show both 3D and 2D radii for comparison
+                ax2.axvline(x=total_radius, color='k', linestyle='-', linewidth=2, alpha=0.5, 
+                           label=f'Total 3D ({total_radius:.1f})')
+                ax2.axvline(x=total_radius_2d, color='k', linestyle=':', linewidth=2, alpha=0.7, 
+                           label=f'Total 2D ({total_radius_2d:.1f})')
+                for j, label in enumerate(self.labels):
+                    ax2.axvline(x=individual_radii[label], color=colors[j], linestyle='--', 
+                              linewidth=1.5, alpha=0.5, label=f'{label} 3D ({individual_radii[label]:.1f})')
+                    ax2.axvline(x=individual_radii_2d[label], color=colors[j], linestyle=':', 
+                              linewidth=1.5, alpha=0.7, label=f'{label} 2D ({individual_radii_2d[label]:.1f})')
+                
+                # Add diagnostic text showing what's above threshold at the edge
+                # Check what's actually above threshold near the total radius
+                near_total_radius = (radial_distances >= total_radius * 0.95) & (radial_distances <= total_radius * 1.05)
+                if np.any(near_total_radius):
+                    total_above = np.sum(edge_total > threshold)
+                    total_below = np.sum(edge_total <= threshold)
+                    pop_above = {}
+                    pop_below = {}
+                    for j, label in enumerate(self.labels):
+                        pop_above[label] = np.sum(edge_populations[label] > threshold)
+                        pop_below[label] = np.sum(edge_populations[label] <= threshold)
+                    
+                    # Also check what the sum of individual populations is
+                    sum_individuals = np.zeros_like(edge_total)
+                    for j, label in enumerate(self.labels):
+                        sum_individuals += edge_populations[label]
+                    
+                    # Check for discrepancies between sum of individuals and total
+                    diff = np.abs(edge_total - sum_individuals)
+                    max_diff = np.max(diff)
+                    
+                    # Check what's happening at the actual total radius boundary
+                    # Find points near the total radius
+                    near_boundary = (edge_radial >= total_radius * 0.98) & (edge_radial <= total_radius * 1.02)
+                    if np.any(near_boundary):
+                        boundary_total = edge_total[near_boundary]
+                        boundary_sum = sum_individuals[near_boundary]
+                        boundary_radial = edge_radial[near_boundary]
+                        boundary_pops = {label: edge_populations[label][near_boundary] for label in self.labels}
+                        
+                        # Find points above threshold near boundary
+                        above_thresh = boundary_total > threshold
+                        if np.any(above_thresh):
+                            above_radial = boundary_radial[above_thresh]
+                            above_total = boundary_total[above_thresh]
+                            above_sum = boundary_sum[above_thresh]
+                            above_pops = {label: boundary_pops[label][above_thresh] for label in self.labels}
+                    
+                    # Add text box with diagnostic info
+                    diag_text = f"Edge Region Stats:\n"
+                    diag_text += f"Total > {threshold}: {total_above}\n"
+                    diag_text += f"Total <= {threshold}: {total_below}\n"
+                    for j, label in enumerate(self.labels):
+                        diag_text += f"{label} > {threshold}: {pop_above[label]}\n"
+                    diag_text += f"\nSum vs Total:\n"
+                    diag_text += f"Max diff: {max_diff:.6f}\n"
+                    diag_text += f"Sum max: {np.max(sum_individuals):.4f}\n"
+                    diag_text += f"Total max: {np.max(edge_total):.4f}\n"
+                    if np.any(near_boundary) and np.any(above_thresh):
+                        diag_text += f"\nNear boundary (>thresh):\n"
+                        diag_text += f"Radial: {np.min(above_radial):.1f}-{np.max(above_radial):.1f}\n"
+                        diag_text += f"Total: {np.min(above_total):.4f}-{np.max(above_total):.4f}\n"
+                        diag_text += f"Sum: {np.min(above_sum):.4f}-{np.max(above_sum):.4f}\n"
+                        for j, label in enumerate(self.labels):
+                            diag_text += f"{label}: {np.min(above_pops[label]):.4f}-{np.max(above_pops[label]):.4f}\n"
+                    
+                    ax2.text(0.02, 0.98, diag_text, transform=ax2.transAxes,
+                           verticalalignment='top', fontsize=7, family='monospace',
+                           bbox=dict(boxstyle='round', facecolor='yellow', alpha=0.7))
+                
+                ax2.set_xlabel('Radial Distance')
+                ax2.set_ylabel('Density')
+                ax2.set_title('Edge Region Detail')
+                ax2.legend(fontsize=7, loc='best')
+                ax2.grid(True, alpha=0.3)
+                ax2.set_xlim(max(0, total_radius * 0.7), edge_region_radius)
+            else:
+                ax2.text(0.5, 0.5, 'No edge\nregion data', ha='center', va='center',
+                        transform=ax2.transAxes, fontsize=12)
+                ax2.set_title('Edge Region Detail')
+        
+        fig.suptitle(f'Radius Diagnostic Analysis (z={z_slice}, threshold={threshold})', fontsize=16)
+        
+        if save_plot and output_dir:
+            os.makedirs(output_dir, exist_ok=True)
+            filename = f'radius_diagnostic_z{z_slice}_threshold{threshold}.png'
+            plt.savefig(os.path.join(output_dir, filename), dpi=300, bbox_inches='tight')
+            print(f"Radius diagnostic plot saved to {output_dir}/{filename}")
+        
+        if show_plot:
+            plt.show()
+        else:
+            plt.close()
+        
+        # Return diagnostic data
+        return diagnostic_results

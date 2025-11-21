@@ -324,9 +324,13 @@ class CellFieldPlotter:
             step_indices = list(range(len(simulation_data["metadata"]["saved_steps"])))
         
         # Limit number of plots to avoid overcrowding
+        # Select evenly spaced steps across the entire simulation instead of just first 12
         if len(step_indices) > 12:
-            print(f"Warning: Limiting plots to 12 steps (requested {len(step_indices)})")
-            step_indices = step_indices[:12]
+            print(f"Warning: Limiting plots to 12 evenly spaced steps (requested {len(step_indices)})")
+            # Select evenly spaced indices across the entire range
+            max_plots = 12
+            evenly_spaced_indices = np.linspace(0, len(step_indices)-1, max_plots, dtype=int)
+            step_indices = [step_indices[i] for i in evenly_spaced_indices]
         
         # Calculate subplot layout
         num_plots = len(step_indices)
@@ -1311,19 +1315,16 @@ class CellFieldPlotter:
             }
         }
         
-        # Add physics data if available
+        # Add physics data if available - use lazy loading to avoid memory crashes
+        from src.growkit.Simulator import LazyPhysicsData
+        
         if "pressure" in npz_file:
-            simulation_data["physics_data"] = []
-            for i in range(len(npz_file["pressure"])):
-                physics_data = {
-                    "pressure": npz_file["pressure"][i],
-                    "velocity": npz_file["velocity"][i],
-                    "energy_derivative": npz_file["energy_derivative"][i],
-                    "mass_flux": npz_file["mass_flux"][i]
-                }
-                # Add source terms if available
-                if "source_terms" in npz_file:
-                    physics_data["source_terms"] = npz_file["source_terms"][i]
-                simulation_data["physics_data"].append(physics_data)
+            num_steps = len(npz_file["pressure"])
+            simulation_data["physics_data"] = LazyPhysicsData(npz_file, num_steps)
+        else:
+            simulation_data["physics_data"] = None
+        
+        # Store npz file reference for memory mapping
+        simulation_data["_npz_file"] = npz_file
         
         return simulation_data

@@ -196,6 +196,55 @@ class SweepDataComparator:
         
         return scale
     
+    def calculate_optimal_scale_all_metrics(self, sim_data, exp_data, metrics):
+        """
+        Find a single optimal scaling factor across all metrics simultaneously.
+        This ensures consistency - all radii for a simulation are scaled by the same factor.
+        
+        Args:
+            sim_data: Simulation observables DataFrame
+            exp_data: Experimental data DataFrame
+            metrics: List of metric names to include
+        
+        Returns:
+            Optimal scale factor (single value for all metrics)
+        """
+        all_sim_values = []
+        all_exp_values = []
+        
+        sim_steps = sim_data['Step'].values
+        exp_days = exp_data['Day'].values
+        
+        # Collect matched points from all metrics
+        for metric in metrics:
+            if metric not in sim_data.columns or metric not in exp_data.columns:
+                continue
+            
+            sim_values = sim_data[metric].values
+            exp_values = exp_data[metric].values
+            
+            # Find matched points (step = day)
+            for exp_idx, exp_day in enumerate(exp_days):
+                if np.isnan(exp_values[exp_idx]):
+                    continue
+                
+                step_match_idx = np.where(sim_steps == exp_day)[0]
+                if len(step_match_idx) > 0:
+                    sim_val = sim_values[step_match_idx[0]]
+                    if not np.isnan(sim_val):
+                        all_sim_values.append(sim_val)
+                        all_exp_values.append(exp_values[exp_idx])
+        
+        # Convert to arrays
+        all_sim_values = np.array(all_sim_values)
+        all_exp_values = np.array(all_exp_values)
+        
+        if len(all_sim_values) < 2:
+            return 1.0
+        
+        # Calculate optimal scale using all matched points from all metrics
+        return self.calculate_optimal_scale(all_sim_values, all_exp_values)
+    
     def calculate_rmse(self, sim_steps, sim_values, exp_days, exp_values, scale=None):
         """
         Calculate RMSE between simulation and experimental data using exact step-to-day matches.
@@ -263,6 +312,7 @@ class SweepDataComparator:
                                          metrics=['Total_Radius', 'Inhibited_Radius', 'Necrotic_Radius']):
         """
         Compare a single simulation to experimental data for a given seeding density.
+        Uses a single scale factor for all metrics to ensure consistency.
         
         Args:
             run_id: Simulation run ID
@@ -270,7 +320,7 @@ class SweepDataComparator:
             metrics: List of metrics to compare
         
         Returns:
-            Dictionary with RMSE values and scales for each metric
+            Dictionary with RMSE values for each metric and a single scale factor
         """
         if run_id not in self.simulation_data:
             return None
@@ -281,8 +331,14 @@ class SweepDataComparator:
         sim_data = self.simulation_data[run_id]['observables']
         exp_data = self.experimental_data[density]
         
-        results = {}
+        # Calculate a single optimal scale factor across all metrics
+        scale = self.calculate_optimal_scale_all_metrics(sim_data, exp_data, metrics)
         
+        results = {
+            'scale': scale  # Single scale factor for all metrics
+        }
+        
+        # Calculate RMSE for each metric using the same scale
         for metric in metrics:
             if metric not in sim_data.columns or metric not in exp_data.columns:
                 continue
@@ -292,16 +348,18 @@ class SweepDataComparator:
             exp_days = exp_data['Day'].values
             exp_values = exp_data[metric].values
             
-            rmse, scale = self.calculate_rmse(sim_steps, sim_values, exp_days, exp_values)
+            rmse, _ = self.calculate_rmse(sim_steps, sim_values, exp_days, exp_values, scale=scale)
             
             results[metric] = {
-                'rmse': rmse,
-                'scale': scale
+                'rmse': rmse
             }
         
         # Calculate combined RMSE (average across metrics)
-        if results:
-            results['combined_rmse'] = np.mean([r['rmse'] for r in results.values()])
+        metric_rmses = [r['rmse'] for r in results.values() if isinstance(r, dict) and 'rmse' in r]
+        if metric_rmses:
+            results['combined_rmse'] = np.mean(metric_rmses)
+        else:
+            results['combined_rmse'] = np.inf
         
         return results
     
@@ -330,7 +388,8 @@ class SweepDataComparator:
             result_entry = {
                 'run_id': run_id,
                 'combined_rmse': results.get('combined_rmse', np.inf),
-                'metrics': {k: v for k, v in results.items() if k != 'combined_rmse'}
+                'scale': results.get('scale', 1.0),
+                'metrics': {k: v for k, v in results.items() if k not in ['combined_rmse', 'scale']}
             }
             all_results.append(result_entry)
         
@@ -380,6 +439,9 @@ class SweepDataComparator:
         if n_metrics == 1:
             axes = [axes]
         
+        # Get single scale factor (applies to all metrics)
+        scale = results.get('scale', 1.0)
+        
         plot_idx = 0
         for metric in metrics:
             if metric not in sim_data.columns or metric not in exp_data.columns:
@@ -393,8 +455,7 @@ class SweepDataComparator:
             exp_days = exp_data['Day'].values
             exp_values = exp_data[metric].values
             
-            # Get scale
-            scale = results[metric]['scale']
+            # Get RMSE for this metric
             rmse = results[metric]['rmse']
             
             # Find matched points for plotting (step = day)
@@ -474,23 +535,24 @@ class SweepDataComparator:
         print(f"\n{'='*80}")
         print(f"Top {len(best_matches)} matches for {density} seeding density:")
         print(f"{'='*80}")
-        print(f"{'Rank':<6} {'Run ID':<8} {'Combined RMSE':<15} {'Total_Radius':<20} {'Inhibited_Radius':<20} {'Necrotic_Radius':<20}")
+        print(f"{'Rank':<6} {'Run ID':<8} {'Combined RMSE':<15} {'Scale':<10} {'Total_Radius':<20} {'Inhibited_Radius':<20} {'Necrotic_Radius':<20}")
         print(f"{'-'*80}")
         
         for rank, match in enumerate(best_matches, 1):
             run_id = match['run_id']
             combined_rmse = match['combined_rmse']
+            scale = match.get('scale', 'N/A')
             
             metrics_str = []
             for metric in ['Total_Radius', 'Inhibited_Radius', 'Necrotic_Radius']:
                 if metric in match['metrics']:
                     rmse = match['metrics'][metric]['rmse']
-                    scale = match['metrics'][metric]['scale']
-                    metrics_str.append(f"RMSE: {rmse:.1f}, scale: {scale:.2f}")
+                    metrics_str.append(f"RMSE: {rmse:.1f}")
                 else:
                     metrics_str.append("N/A")
             
-            print(f"{rank:<6} {run_id:<8} {combined_rmse:<15.2f} {metrics_str[0]:<20} {metrics_str[1]:<20} {metrics_str[2]:<20}")
+            scale_str = f"{scale:.2f}" if isinstance(scale, (int, float)) else str(scale)
+            print(f"{rank:<6} {run_id:<8} {combined_rmse:<15.2f} {scale_str:<10} {metrics_str[0]:<20} {metrics_str[1]:<20} {metrics_str[2]:<20}")
         
         print(f"{'='*80}\n")
     
@@ -519,10 +581,7 @@ class SweepDataComparator:
             return
         
         best_run_id = best_matches[0]['run_id']
-        best_scale_factors = {}
-        for metric in metrics:
-            if metric in best_matches[0]['metrics']:
-                best_scale_factors[metric] = best_matches[0]['metrics'][metric]['scale']
+        best_scale = best_matches[0].get('scale', 1.0)  # Single scale for all metrics
         
         exp_data = self.experimental_data[density]
         exp_days = exp_data['Day'].values
@@ -561,9 +620,9 @@ class SweepDataComparator:
                 sim_steps = sim_data['Step'].values
                 sim_values = sim_data[metric].values
                 
-                # Get scale factor (use best match's scale for all, or calculate per run)
-                if run_id == best_run_id and metric in best_scale_factors:
-                    scale = best_scale_factors[metric]
+                # Get scale factor (use best match's scale, or calculate per run across all metrics)
+                if run_id == best_run_id:
+                    scale = best_scale
                     # Highlight best match
                     color = metric_colors.get(metric, 'green')
                     alpha = 0.9
@@ -571,27 +630,8 @@ class SweepDataComparator:
                     zorder = 50
                     label = f'Best Match (Run {run_id})'
                 else:
-                    # Calculate scale for this run
-                    exp_days_clean = exp_days[~np.isnan(exp_values)]
-                    exp_values_clean = exp_values[~np.isnan(exp_values)]
-                    sim_steps_clean = sim_steps[~np.isnan(sim_values)]
-                    sim_values_clean = sim_values[~np.isnan(sim_values)]
-                    
-                    # Find matched points
-                    matched_sim_values = []
-                    matched_exp_values = []
-                    for exp_idx, exp_day in enumerate(exp_days_clean):
-                        step_match_idx = np.where(sim_steps_clean == exp_day)[0]
-                        if len(step_match_idx) > 0:
-                            matched_sim_values.append(sim_values_clean[step_match_idx[0]])
-                            matched_exp_values.append(exp_values_clean[exp_idx])
-                    
-                    if len(matched_sim_values) < 2:
-                        continue
-                    
-                    matched_sim_values = np.array(matched_sim_values)
-                    matched_exp_values = np.array(matched_exp_values)
-                    scale = self.calculate_optimal_scale(matched_sim_values, matched_exp_values)
+                    # Calculate single scale for this run across all metrics
+                    scale = self.calculate_optimal_scale_all_metrics(sim_data, exp_data, metrics)
                     
                     # Grey out other runs
                     color = 'lightgrey'
@@ -676,17 +716,16 @@ def export_results_to_csv(comparator, all_results, output_dir):
                 'Density': density,
                 'Rank': rank,
                 'Run_ID': match['run_id'],
-                'Combined_RMSE': match['combined_rmse']
+                'Combined_RMSE': match['combined_rmse'],
+                'Scale': match.get('scale', np.nan)  # Single scale for all metrics
             }
             
-            # Add metric-specific RMSE and scales
+            # Add metric-specific RMSE (all use the same scale)
             for metric in ['Total_Radius', 'Inhibited_Radius', 'Necrotic_Radius']:
                 if metric in match['metrics']:
                     row[f'{metric}_RMSE'] = match['metrics'][metric]['rmse']
-                    row[f'{metric}_Scale'] = match['metrics'][metric]['scale']
                 else:
                     row[f'{metric}_RMSE'] = np.nan
-                    row[f'{metric}_Scale'] = np.nan
             
             # Add parameter values if available
             run_id = match['run_id']
@@ -744,7 +783,7 @@ def main():
     # ============================================================================
     
     # Path to parameter sweep directory
-    SWEEP_DIR = args.sweep_dir or "/Users/rileymcnamara/CODE/2025/silicokit/laboratory/parameter_sweeps/random_parameter_sweep_20251116_212405"
+    SWEEP_DIR = args.sweep_dir or "/Users/rileymcnamara/CODE/2025/silicokit/laboratory/parameter_sweeps/random_parameter_sweep_20251118_215113"
     
     # Path to experimental data (None = use default)
     EXPERIMENTAL_DATA_PATH = args.experimental_data

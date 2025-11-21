@@ -26,7 +26,7 @@ for i, label in enumerate(plotter.labels):
     print(f"  Index {i}: {label}")
 
 # Plot 3D tumor field
-plotter.plot_3d_tumor_field(simulation_data, step_idx=9, isosurface_level=0.1, cmap="PiYG")
+#plotter.plot_3d_tumor_field(simulation_data, step_idx=9, isosurface_level=0.1, cmap="PiYG")
 
 # Plot 3D populations with different colors and wedge cutout to see interior
 # Use per-population thresholds: lower threshold for necrotic cells (typically lower density)
@@ -38,9 +38,9 @@ isosurface_levels = {
     2: 0.001  # Third population (e.g., necrotic cells) - very low threshold
 }
 
-#plotter.plot_3d_populations(simulation_data, step_idx=5, isosurface_level=isosurface_levels,
-#                            population_colors=['red', 'blue', 'green'],
-#                            cutout_angle=60, cutout_azimuth_start=0, cutout_buffer=10.0)
+plotter.plot_3d_populations(simulation_data, step_idx=5, isosurface_level=isosurface_levels,
+                            population_colors=['red', 'blue', 'green'],
+                            cutout_angle=60, cutout_azimuth_start=0, cutout_buffer=10.0)
 
 # Plot 3D quadratic potential with tumor overlay
 #plotter.plot_3d_quadratic_potential(simulation_data, step_idx=0, show_tumor_field=True)

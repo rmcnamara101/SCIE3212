@@ -566,24 +566,36 @@ def main():
     # Define parameter bounds for random sampling
     parameter_bounds_dict = {
         # Tumor cell growth rate: random between 2.0 and 8.0
-        'populations.Tumour.dynamics.lambda': (0.1, 30),
+        'populations.Tumour.dynamics.lambda': (10, 30),
         # Tumor cell death rate: random between 0.2 and 2.0
         'populations.Tumour.dynamics.mu': (0.1, 30),
         # Tumor cell nutrient threshold: random between 0.1 and 1.0
         'populations.Tumour.dynamics.nutrient_threshold': (0.1, 0.99),
         # Tumor cell nutrient consumption: random between 0.01 and 0.1
         'populations.Tumour.dynamics.nutrient_consumption': (0.01, 0.99),
-        # Tumor cell nutrient production: random between 0.01 and 0.1
-        'populations.Tumour.dynamics.nutrient_production': (0.01, 0.99),
         # Necrotic cell beta_N: random between 0.00001 and 0.1
-        'populations.Necrotic.dynamics.beta_N': (0.00001, 0.1),
+        'populations.Necrotic.dynamics.beta_N': (0.00001, 0.01),
         # Necrotic cell death rate: random between 0.1 and 30
-        'populations.Necrotic.dynamics.mu': (0.1, 30),
-        # Nutrient growth threshold offset: random between 0.1 and 0.99
-        'nutrient.dynamics.growth_threshold_offset': (0.1, 0.99),
+        'populations.Necrotic.dynamics.mu': (10, 30),
     }
     
-    # Number of random samples to generate
+    # Number of random samples to generateihn
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+    \\|
     num_samples = 1000
     
     # Run random parameter sweep

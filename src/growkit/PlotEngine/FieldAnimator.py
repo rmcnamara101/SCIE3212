@@ -293,14 +293,14 @@ class FieldAnimator:
         print("Creating source field animation...")
         
         # Check if source fields are available in physics data
-        if "physics_data" not in self.simulation_data:
+        if "physics_data" not in self.simulation_data or self.simulation_data["physics_data"] is None:
             print("Warning: No physics data found in simulation data.")
             print("Available data keys:", list(self.simulation_data.keys()))
             return None
         
         # Check if source terms are available in physics data
         physics_data = self.simulation_data["physics_data"]
-        if len(physics_data) == 0 or "source_terms" not in physics_data[0]:
+        if physics_data is None or len(physics_data) == 0 or "source_terms" not in physics_data[0]:
             print("Warning: No source terms found in physics data.")
             print("Available physics data keys:", list(physics_data[0].keys()) if len(physics_data) > 0 else "No physics data")
             return None
@@ -522,7 +522,7 @@ class FieldAnimator:
                 
             elif field_name == 'source':
                 # Check if source fields are available
-                if "physics_data" not in self.simulation_data:
+                if "physics_data" not in self.simulation_data or self.simulation_data["physics_data"] is None:
                     print(f"Warning: No physics data found. Skipping {field_name}.")
                     # Hide this axis
                     axes[field_idx].set_visible(False)
@@ -530,7 +530,7 @@ class FieldAnimator:
                     continue
                 
                 physics_data = self.simulation_data["physics_data"]
-                if len(physics_data) == 0 or "source_terms" not in physics_data[0]:
+                if physics_data is None or len(physics_data) == 0 or "source_terms" not in physics_data[0]:
                     print(f"Warning: No source terms found. Skipping {field_name}.")
                     # Hide this axis
                     axes[field_idx].set_visible(False)

@@ -855,28 +855,22 @@ class SimulationGUI:
             'nutrient_fields': raw_data.get('nutrient_fields', None)
         }
         
-        # Create physics_data structure
-        physics_data = []
-        num_steps = len(raw_data['phi_hat'])
+        # Create physics_data structure with lazy loading to avoid memory crashes
+        # Import LazyPhysicsData from Simulator
+        from src.growkit.Simulator import LazyPhysicsData
         
-        for i in range(num_steps):
-            physics_step = {}
-            if 'pressure' in raw_data:
-                physics_step['pressure'] = raw_data['pressure'][i]
-            if 'velocity' in raw_data:
-                physics_step['velocity'] = raw_data['velocity'][i]
-            if 'energy_derivative' in raw_data:
-                physics_step['energy_derivative'] = raw_data['energy_derivative'][i]
-            if 'mass_flux' in raw_data:
-                physics_step['mass_flux'] = raw_data['mass_flux'][i]
-            if 'source_terms' in raw_data:
-                physics_step['source_terms'] = raw_data['source_terms'][i]
-            physics_data.append(physics_step)
+        num_steps = len(raw_data['phi_hat'])
+        if 'pressure' in raw_data:
+            # Use lazy loading for physics data
+            physics_data = LazyPhysicsData(raw_data, num_steps)
+        else:
+            physics_data = None
         
         converted_data = {
             'metadata': metadata,
             'field_data': field_data,
-            'physics_data': physics_data
+            'physics_data': physics_data,
+            '_npz_file': raw_data  # Keep reference for memory mapping
         }
         
         return converted_data
@@ -887,8 +881,8 @@ class SimulationGUI:
             self.set_loading(True)
             self.status_var.set("Loading simulation data...")
             
-            # Load simulation data
-            raw_data = np.load(file_path, allow_pickle=True)
+            # Load simulation data with memory mapping to avoid crashes with large files
+            raw_data = np.load(file_path, allow_pickle=True, mmap_mode='r')
             
             # Convert to expected format if needed
             self.simulation_data = self.convert_data_format(raw_data)

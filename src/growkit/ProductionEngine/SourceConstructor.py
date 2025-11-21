@@ -51,12 +51,6 @@ class SourceConstructor:
         self.lambda_ = np.array([p["dynamics"]["lambda"] for p in self.pops.values()], dtype=np.float32)
         self.mu = np.array([p["dynamics"]["mu"] for p in self.pops.values()], dtype=np.float32)
         self.nutrient_thresholds = np.array([p["dynamics"]["nutrient_threshold"] for p in self.pops.values()], dtype=np.float32)
-        
-        # Extract growth threshold offset (creates hypoxic gap between death and growth)
-        # If not specified, defaults to 0 (no gap, same threshold for both)
-        # Located under nutrient.dynamics since it's related to nutrient thresholds
-        growth_threshold_offset = self.cfg.get("nutrient", {}).get("dynamics", {}).get("growth_threshold_offset", 0.0)
-        self.growth_thresholds = self.nutrient_thresholds + growth_threshold_offset
     
     def _build_death_matrix(self):
         """
@@ -86,33 +80,23 @@ class SourceConstructor:
         """
         Compute smooth nutrient switches Theta_i for each population.
         
-        This method now returns separate switches for growth and death to create
-        a hypoxic gap where neither process occurs.
-        
         Args:
             nutrient_field: Local nutrient concentration field
             
         Returns:
-            Theta_death: (M, nx, ny, nz) array of death switches (death stops when nutrient > death_threshold)
-            Theta_growth: (M, nx, ny, nz) array of growth switches (growth starts when nutrient > growth_threshold)
+            Theta: (M, nx, ny, nz) array of nutrient switches (death stops when nutrient > nutrient_threshold)
         """
         k = self.cfg["nutrient"]["dynamics"]["k"]  # Steepness parameter for smooth transition
         shape = nutrient_field.shape
-        Theta_death = np.zeros((self.M, *shape), dtype=np.float32)
-        Theta_growth = np.zeros((self.M, *shape), dtype=np.float32)
+        Theta = np.zeros((self.M, *shape), dtype=np.float32)
         
         # Use local nutrient levels for computing switches
         for i in range(self.M):
             # Death threshold: death stops when nutrient > nutrient_threshold
-            n_thresh_death = self.nutrient_thresholds[i]
-            Theta_death[i] = 0.5 * (1 + np.tanh(k * (nutrient_field - n_thresh_death)))
+            n_thresh = self.nutrient_thresholds[i]
+            Theta[i] = 0.5 * (1 + np.tanh(k * (nutrient_field - n_thresh)))
             
-            # Growth threshold: growth starts when nutrient > growth_threshold
-            # growth_threshold = nutrient_threshold + offset (creates hypoxic gap)
-            n_thresh_growth = self.growth_thresholds[i]
-            Theta_growth[i] = 0.5 * (1 + np.tanh(k * (nutrient_field - n_thresh_growth)))
-            
-        return Theta_death, Theta_growth
+        return Theta
     
     def _compute_necrotic_feedback(self, phi_hat):
         """
@@ -162,8 +146,8 @@ class SourceConstructor:
         Returns:
             A_hat: Source term vector for all populations (including necrotic)
         """
-        # Compute nutrient switches (separate for growth and death)
-        Theta_death, Theta_growth = self._compute_nutrient_switches(nutrient_field)
+        # Compute nutrient switches
+        Theta = self._compute_nutrient_switches(nutrient_field)
         
         # Compute necrotic feedback
         G_N = self._compute_necrotic_feedback(phi_hat)
@@ -172,27 +156,16 @@ class SourceConstructor:
         alpha_hat = self._compute_proliferation_weighted_populations(phi_hat)
         
         # Apply nutrient modulation to death matrix
-        # Death should happen when nutrient is BELOW death threshold (inverse of death switch)
-        # So we use (1 - Theta_death) instead of Theta_death for death
+        # Death should happen when nutrient is BELOW death threshold (inverse of switch)
+        # So we use (1 - Theta) instead of Theta for death
         D_modulated = self.D.copy()
         for i in range(self.M):
-            D_modulated[i, i] *= (1.0 - Theta_death[i])
-            D_modulated[self.M-1, i] *= (1.0 - Theta_death[i])  # Also modulate flow into necrotic
+            D_modulated[i, i] *= (1.0 - Theta[i])
+            D_modulated[self.M-1, i] *= (1.0 - Theta[i])  # Also modulate flow into necrotic
         
         # Compute source vector components
         # Growth term: G_N * n * P * alpha_hat
-        # Optionally apply growth switch Theta_growth to growth terms
-        apply_nutrient_switch_to_growth = self.cfg.get("populations", {}).get("apply_nutrient_switch_to_growth", False)
-        
-        if apply_nutrient_switch_to_growth:
-            # Apply growth switch: growth only when nutrient > growth_threshold
-            growth_term = np.zeros_like(phi_hat)
-            P_alpha = np.tensordot(self.P, alpha_hat, axes=([1], [0]))
-            for i in range(self.M):
-                growth_term[i] = G_N * Theta_growth[i] * nutrient_field * P_alpha[i]
-        else:
-            # Original: growth scaled by nutrient field but no switch
-            growth_term = G_N * nutrient_field * np.tensordot(self.P, alpha_hat, axes=([1], [0]))
+        growth_term = G_N * nutrient_field * np.tensordot(self.P, alpha_hat, axes=([1], [0]))
         
         # Death term: D * phi_hat
         death_term = np.tensordot(D_modulated, phi_hat, axes=([1], [0]))
@@ -216,8 +189,8 @@ class SourceConstructor:
         Returns:
             pressure_source: Source term for pressure equation (scalar field)
         """
-        # Compute nutrient switches (separate for growth and death)
-        Theta_death, Theta_growth = self._compute_nutrient_switches(nutrient_field)
+        # Compute nutrient switches
+        Theta = self._compute_nutrient_switches(nutrient_field)
         
         # Compute necrotic feedback
         G_N = self._compute_necrotic_feedback(phi_hat)
@@ -227,18 +200,11 @@ class SourceConstructor:
         
         # For pressure, we only want absolute growth/death, not mass transfer
         # Growth: sum over all populations of their absolute growth
-        apply_nutrient_switch_to_growth = self.cfg.get("populations", {}).get("apply_nutrient_switch_to_growth", False)
-        
         growth_terms = np.zeros_like(nutrient_field)
         for i in range(self.M):
             # Only count growth that stays in the same population (diagonal of P)
             if i < self.P.shape[0] and i < self.P.shape[1]:
-                if apply_nutrient_switch_to_growth:
-                    # Apply growth switch: growth only when nutrient > growth_threshold
-                    growth_terms += G_N * Theta_growth[i] * nutrient_field * self.P[i, i] * alpha_hat[i]
-                else:
-                    # Original: growth scaled by nutrient field but no switch
-                    growth_terms += G_N * nutrient_field * self.P[i, i] * alpha_hat[i]
+                growth_terms += G_N * nutrient_field * self.P[i, i] * alpha_hat[i]
         
         # Death terms are excluded from pressure source because:
         # - All death from viable populations flows into necrotic (via death matrix D)
@@ -262,7 +228,7 @@ class SourceConstructor:
             pressure_source: Source term for pressure equation (scalar field)
         """
         # Compute nutrient switches (vectorized)
-        k = 5.0
+        k = self.cfg["nutrient"]["dynamics"]["k"]
         if nutrient_field.ndim == 3:
             nutrient_field_expanded = nutrient_field[None, :, :, :]
         else:
@@ -307,8 +273,8 @@ class SourceConstructor:
         """
         M = self.M
         
-        # Compute nutrient switches (spatially varying, separate for growth and death)
-        Theta_death, Theta_growth = self._compute_nutrient_switches(nutrient_field)  # (M, nx, ny, nz)
+        # Compute nutrient switches (spatially varying)
+        Theta = self._compute_nutrient_switches(nutrient_field)  # (M, nx, ny, nz)
         
         # Compute necrotic feedback - always a global scalar
         V_N = np.sum(phi_hat[-1])  # Total necrotic volume (assuming necrotic is last population)
@@ -318,32 +284,19 @@ class SourceConstructor:
         alpha_hat = self.lambda_[:, None, None, None] * phi_hat  # (M, nx, ny, nz)
         
         # Apply nutrient modulation to death matrix (spatially varying)
-        # Death should happen when nutrient is BELOW death threshold (inverse of death switch)
-        # So we use (1 - Theta_death) instead of Theta_death for death
-        # D_modulated[i,j] = D[i,j] * (1 - Theta_death[j]) for each spatial location
+        # Death should happen when nutrient is BELOW death threshold (inverse of switch)
+        # So we use (1 - Theta) instead of Theta for death
+        # D_modulated[i,j] = D[i,j] * (1 - Theta[j]) for each spatial location
         D_modulated = np.zeros((M, M, *nutrient_field.shape), dtype=np.float32)
         for i in range(M):
             for j in range(M):
-                D_modulated[i, j] = self.D[i, j] * (1.0 - Theta_death[j])
+                D_modulated[i, j] = self.D[i, j] * (1.0 - Theta[j])
         
         # Compute source vector
         # Growth term: G_N * n * P * alpha_hat
-        # Optionally apply growth switch Theta_growth to growth terms
-        # If growth switch is applied, growth only occurs when nutrient > growth_threshold
-        apply_nutrient_switch_to_growth = self.cfg.get("populations", {}).get("apply_nutrient_switch_to_growth", False)
-        
-        if apply_nutrient_switch_to_growth:
-            # Apply growth switch to growth: growth only when nutrient > growth_threshold
-            # Theta_growth is (M, nx, ny, nz), we need to apply it per population
-            growth_term = np.zeros_like(phi_hat)
-            P_alpha = np.tensordot(self.P, alpha_hat, axes=([1], [0]))  # (M, nx, ny, nz)
-            for i in range(M):
-                growth_term[i] = G_N * Theta_growth[i] * nutrient_field * P_alpha[i]
-        else:
-            # Original: growth scaled by nutrient field but no switch
-            # G_N is scalar, nutrient_field is (nx, ny, nz), alpha_hat is (M, nx, ny, nz)
-            # P is (M, M), we want P * alpha_hat = (M, nx, ny, nz)
-            growth_term = G_N * nutrient_field[None, :, :, :] * np.tensordot(self.P, alpha_hat, axes=([1], [0]))
+        # G_N is scalar, nutrient_field is (nx, ny, nz), alpha_hat is (M, nx, ny, nz)
+        # P is (M, M), we want P * alpha_hat = (M, nx, ny, nz)
+        growth_term = G_N * nutrient_field[None, :, :, :] * np.tensordot(self.P, alpha_hat, axes=([1], [0]))
         
         # Death term: D_modulated * phi_hat (spatially varying)
         # D_modulated is (M, M, nx, ny, nz), phi_hat is (M, nx, ny, nz)
@@ -380,8 +333,8 @@ class SourceConstructor:
         """
         M = self.M
         
-        # Compute nutrient switches (spatially varying, separate for growth and death)
-        Theta_death, Theta_growth = self._compute_nutrient_switches(nutrient_field)  # (M, nx, ny, nz)
+        # Compute nutrient switches (spatially varying)
+        Theta = self._compute_nutrient_switches(nutrient_field)  # (M, nx, ny, nz)
         
         # Compute necrotic feedback
         V_N = np.sum(phi_hat[-1])  # Total necrotic volume
@@ -391,26 +344,16 @@ class SourceConstructor:
         alpha_hat = self.lambda_[:, None, None, None] * phi_hat
         
         # Apply nutrient modulation to death matrix
-        # Death should happen when nutrient is BELOW death threshold (inverse of death switch)
-        # So we use (1 - Theta_death) instead of Theta_death for death
+        # Death should happen when nutrient is BELOW death threshold (inverse of switch)
+        # So we use (1 - Theta) instead of Theta for death
         D_modulated = np.zeros((M, M, *nutrient_field.shape), dtype=np.float32)
         for i in range(M):
             for j in range(M):
-                D_modulated[i, j] = self.D[i, j] * (1.0 - Theta_death[j])
+                D_modulated[i, j] = self.D[i, j] * (1.0 - Theta[j])
         
         # Compute growth and death terms
-        # Optionally apply growth switch Theta_growth to growth terms
-        apply_nutrient_switch_to_growth = self.cfg.get("populations", {}).get("apply_nutrient_switch_to_growth", False)
-        
-        if apply_nutrient_switch_to_growth:
-            # Apply growth switch to growth: growth only when nutrient > growth_threshold
-            growth_term = np.zeros_like(phi_hat)
-            P_alpha = np.tensordot(self.P, alpha_hat, axes=([1], [0]))  # (M, nx, ny, nz)
-            for i in range(M):
-                growth_term[i] = G_N * Theta_growth[i] * nutrient_field * P_alpha[i]
-        else:
-            # Original: growth scaled by nutrient field but no switch
-            growth_term = G_N * nutrient_field[None, :, :, :] * np.tensordot(self.P, alpha_hat, axes=([1], [0]))
+        # Growth term: G_N * n * P * alpha_hat
+        growth_term = G_N * nutrient_field[None, :, :, :] * np.tensordot(self.P, alpha_hat, axes=([1], [0]))
         
         death_term = np.zeros_like(phi_hat)
         for i in range(M):

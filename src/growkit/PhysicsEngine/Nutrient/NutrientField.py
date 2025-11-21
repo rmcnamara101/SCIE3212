@@ -111,7 +111,7 @@ class NutrientField:
         # This approximates the balance between diffusion and consumption
         
         # Parameters for natural nutrient field - adjusted for stronger effect
-        max_consumption_effect = 0.5  # Maximum reduction in center (50% reduction = 0.5 nutrient)
+        max_consumption_effect = 0.1  # Maximum reduction in center (50% reduction = 0.5 nutrient)
         consumption_length_scale = min(nx, ny, nz) / 4  # Shorter length scale for steeper gradient
         
         # Create distance field from center (inverse of distance from boundary)
