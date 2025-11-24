@@ -783,7 +783,7 @@ def main():
     # ============================================================================
     
     # Path to parameter sweep directory
-    SWEEP_DIR = args.sweep_dir or "/Users/rileymcnamara/CODE/2025/silicokit/laboratory/parameter_sweeps/random_parameter_sweep_20251118_215113"
+    SWEEP_DIR = args.sweep_dir or "/Users/rileymcnamara/CODE/2025/silicokit/laboratory/parameter_sweeps/random_parameter_sweep_20251123_224231"
     
     # Path to experimental data (None = use default)
     EXPERIMENTAL_DATA_PATH = args.experimental_data

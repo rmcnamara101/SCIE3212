@@ -110,7 +110,9 @@ class SimPlotter:
         if slice_data.dtype == np.float64:
             if "_npz_file" not in self.simulation_data:
                 # Not memory-mapped, safe to convert
-                return np.array(slice_data, dtype=np.float32, copy=False)
+                # Use np.asarray().astype() instead of np.array(..., copy=False) for NumPy 2.0 compatibility
+                # Converting from float64 to float32 always requires a copy anyway
+                return np.asarray(slice_data).astype(np.float32)
             else:
                 # Memory-mapped - return as-is to avoid creating unnecessary copies
                 # The memory-mapped slice will be freed when it goes out of scope

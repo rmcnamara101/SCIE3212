@@ -21,7 +21,7 @@ from numba import njit
 from src.growkit.MathEngine.Operators import isotropic_laplacian
 
 
-def compute_adhesion_energy_derivative_numba(phi, laplace_phi, m):
+def compute_adhesion_energy_derivative_numba(phi, laplace_phi, m, k):
     """
     Compute adhesion energy derivative using Numba optimization.
     
@@ -39,13 +39,9 @@ def compute_adhesion_energy_derivative_numba(phi, laplace_phi, m):
     laplace_phi = laplace_phi.astype(np.float64, copy=False)
     m = float(m)
 
-    # For coagulation, use a simpler adhesion potential that promotes clustering
-    # Instead of double-well (which causes phase separation), use a potential that
-    # encourages cells to aggregate into a single cohesive mass
-    
     # Simple quadratic potential: f(φ) = -0.5 * φ * (1 - φ) * (2 * φ - 1)
     # This creates attractive forces that pull cells together
-    f_prime = -phi * (1 - phi) * (2 * phi - 1)
+    f_prime = - (k / 4) * phi * (1 - phi) * (2 * phi - 1)
     
     # Compute energy derivative: δE/δφ = m * (f'(φ) - 0.01 * ∇²φ)
     # The negative f_prime creates attractive forces toward high cell density
@@ -81,7 +77,8 @@ class VectorizedEnergy:
     def _extract_energy_params(self):
         """Extract energy parameters from configuration."""
         self.m = self.cfg["physics"]["adhesion_energy"]["m"]
-    
+        self.k = self.cfg["physics"]["adhesion_energy"]["k"]
+
     def compute_energy_derivative(self, phi_T, dx):
         """
         Compute adhesion energy derivative for total cell density.
@@ -100,7 +97,7 @@ class VectorizedEnergy:
         phi_T = phi_T.astype(np.float64, copy=False)
         laplace_phi = isotropic_laplacian(phi_T, dx)
         # Use original phi_T for both double-well derivative and curvature term
-        energy_deriv = compute_adhesion_energy_derivative_numba(phi_T, laplace_phi, self.m)
+        energy_deriv = compute_adhesion_energy_derivative_numba(phi_T, laplace_phi, self.m, self.k)
         
         # Optional config-based clipping for very large adhesion m
         max_ed = (

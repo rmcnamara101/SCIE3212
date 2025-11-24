@@ -81,8 +81,7 @@ def run_simulation_with_observables(config_path, output_dir, total_steps=50,
         threshold=threshold  # Use the threshold parameter passed to this function
     )
     
-    # Now add config and parameter values directly
-    # OPTIMIZATION: Only add config parameters once, not per-row
+    # Flatten config for metadata section
     from run_parameter_sweep import flatten_dict
     
     # OPTIMIZATION: Only flatten config if we don't have cached keys
@@ -95,42 +94,38 @@ def run_simulation_with_observables(config_path, output_dir, total_steps=50,
         # No cache, flatten normally
         flat_config = flatten_dict(config)
     
-    # OPTIMIZATION: Batch DataFrame column additions using assign() for better performance
-    # Prepare all new columns in a dictionary first, then add them all at once
-    new_columns = {}
-    
-    # Add varied parameters first (with Param_ prefix)
-    if parameter_values:
-        for param_name, param_value in parameter_values.items():
-            col_name = f"Param_{param_name.replace('.', '_')}"
-            new_columns[col_name] = param_value  # Will broadcast to all rows
-    
-    # Add all config parameters (with Config_ prefix)
-    # OPTIMIZATION: Convert to string once, then broadcast
-    for param_name, param_value in sorted(flat_config.items()):
-        col_name = f"Config_{param_name.replace('.', '_')}"
-        new_columns[col_name] = str(param_value)  # Will broadcast to all rows
-    
-    # OPTIMIZATION: Use assign() to add all columns at once (more efficient than per-column assignment)
-    if new_columns:
-        df = df.assign(**new_columns)
-    
-    # OPTIMIZATION: Avoid unnecessary DataFrame copy by using assign or reindex
-    # Only reorder if we actually need to (check if columns are already in order)
-    config_cols = [c for c in df.columns if c.startswith('Config_')]
-    param_cols = [c for c in df.columns if c.startswith('Param_')]
-    obs_cols = [c for c in df.columns if c not in config_cols + param_cols]
-    
-    # Only reorder if columns are not already in the desired order
-    current_order = list(df.columns)
-    desired_order = sorted(param_cols) + sorted(config_cols) + obs_cols
-    
-    if current_order != desired_order:
-        df = df[desired_order]
-    
-    # Save the combined CSV (use a generic name since run_id isn't available here)
+    # Save the CSV with structured format: metadata at top, then observables
     csv_path = output_dir / "observables_data.csv"
-    df.to_csv(csv_path, index=False)
+    
+    with open(csv_path, 'w', newline='') as f:
+        import csv
+        writer = csv.writer(f)
+        
+        # Write simulation information section at the top
+        writer.writerow(['# Simulation Information'])
+        writer.writerow(['# ===================='])
+        writer.writerow([])  # Blank row
+        
+        # Write varied parameters (if any)
+        if parameter_values:
+            writer.writerow(['# Varied Parameters'])
+            for param_name, param_value in sorted(parameter_values.items()):
+                writer.writerow([f'Param_{param_name.replace(".", "_")}', param_value])
+            writer.writerow([])  # Blank row
+        
+        # Write all configuration parameters
+        writer.writerow(['# Configuration Parameters'])
+        for param_name, param_value in sorted(flat_config.items()):
+            writer.writerow([f'Config_{param_name.replace(".", "_")}', str(param_value)])
+        writer.writerow([])  # Blank row
+        
+        # Write separator and observables section
+        writer.writerow(['# Observables Data'])
+        writer.writerow(['# ================'])
+        writer.writerow([])  # Blank row
+    
+    # Append the observables DataFrame to the CSV
+    df.to_csv(csv_path, mode='a', index=False)
     
     # Remove temporary file
     if temp_csv_path.exists():

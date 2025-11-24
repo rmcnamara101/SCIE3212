@@ -37,14 +37,14 @@ populations:
     color: Green
     dynamics:
       lambda: 28  # Growth rate (net growth = 3 per time unit ≈ 24h doubling, acceptable but on fast side)
-      mu: 30  # Death rate
+      mu: 40  # Death rate
       # Updated based on literature: original 10000 was too low (52 μm²/day)
       # Literature values: 1000-10000 μm²/day for tumor cell motility
       # Reduced from 2,000,000 to 500,000 for performance (scales to ~2,500 μm²/day, middle of literature range)
       # Can reduce further to 200,000 (~1,000 μm²/day) if still too slow, but may affect cell mixing
-      mobility: 1000000.0  # (50× increase from original 10000, 4× reduction from 2,000,000)
-      nutrient_threshold: 0.8
-      nutrient_consumption: 0.9
+      mobility: 100000.0  # (50× increase from original 10000, 4× reduction from 2,000,000)
+      nutrient_threshold: 0.7
+      nutrient_consumption: 3
       nutrient_production: 0.0
   Necrotic:
     label: Necrotic Cells
@@ -63,17 +63,13 @@ nutrient:
   label: General nutrient
   color: Orange
   dynamics:
-    # Updated based on literature review: original 100000 was too low (0.5×10⁻⁶ cm²/s)
-    # Literature values: oxygen ~1-2×10⁻⁵ cm²/s, glucose ~1-3×10⁻⁶ cm²/s
-    # Current value (2,000,000) scales to ~1×10⁻⁵ cm²/s, appropriate for oxygen
-    # For glucose, use ~400,000-600,000; for oxygen, use 2,000,000-4,000,000
     diffusion: 2000000 # float (20× increase from original 100000)
-    #boundary_value: 1.0 # float defining the value of the nutrient at the boundary
     k: 20 # float defining the steepness of the nutrient switch 
 
 physics:
   adhesion_energy:
-    m: 10.0  # Reduced from 100.0 to prevent numerical overflow
+    m: 0.05  # Energy scale factor for the adhesion energy
+    k: 0.1 # float defining the steepness of the adhesion energy
   disable_pressure: False
   pressure_solver: fast_cg  # Options: "fast_cg" (fastest, recommended for sweeps), "original_cg", "improved_cg", "gmres", "multigrid", "pyamg"
   pressure_constant: 1.0 # float defining the pressure scale factor
