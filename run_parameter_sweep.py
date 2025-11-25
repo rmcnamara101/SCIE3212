@@ -566,9 +566,9 @@ def main():
     # Define parameter bounds for random sampling
     parameter_bounds_dict = {
         # Tumor cell growth rate: random between 2.0 and 8.0
-        'populations.Tumour.dynamics.lambda': (10,  50),
+        'populations.Tumour.dynamics.lambda': (10.0,  50.0),
         # Tumor cell death rate: random between 0.2 and 2.0
-        'populations.Tumour.dynamics.mu': (10, 50),
+        'populations.Tumour.dynamics.mu': (10.0, 50.0),
         # Tumor cell nutrient threshold: random between 0.1 and 1.0
         'populations.Tumour.dynamics.nutrient_threshold': (0.3, 0.99),
         # Tumor cell nutrient consumption: random between 0.01 and 0.1
@@ -576,7 +576,9 @@ def main():
         # Necrotic cell beta_N: random between 0.00001 and 0.1
         'populations.Necrotic.dynamics.beta_N': (0.0001, 0.01),
         # Necrotic cell death rate: random between 0.1 and 30
-        'populations.Necrotic.dynamics.mu': (10, 50),
+        'populations.Necrotic.dynamics.mu': (10.0, 50.0),
+        # Nutrient switch steepness: random between 0.01 and 1.0
+        'nutrient.dynamics.k': (5.0, 20.0),
     }
     
     # Number of random samples to generate
@@ -590,7 +592,7 @@ def main():
         total_steps=20,  # Short runs for testing
         save_interval=1,
         threshold=0.1,
-        random_seed=42  # For reproducible results
+        random_seed=1000  # For reproducible results
     )
     
     print(f"\nRandom parameter sweep completed with {len(csv_files)} successful runs")

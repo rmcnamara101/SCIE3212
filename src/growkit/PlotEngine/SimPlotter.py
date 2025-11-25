@@ -161,7 +161,6 @@ class SimPlotter:
                                    threshold=0.4, method='contour', 
                                    include_inhibited_radius=True,
                                    include_necrotic_radius=True,
-                                   include_hypoxic_radius=True,
                                    growth_threshold=3.0,
                                    use_adaptive_threshold=True,
                                    threshold_type='percentile',
@@ -194,14 +193,13 @@ class SimPlotter:
             method: Method for radius calculation ('contour' or 'mass')
             include_inhibited_radius: Whether to include inhibited radius calculation (region containing inhibited or dead cells, where nutrient < threshold)
             include_necrotic_radius: Whether to include necrotic radius calculation (region void of living cells, where viable density < 0.01)
-            include_hypoxic_radius: Whether to include hypoxic radius calculation (finds outer boundary where necrotic source terms become non-zero)
             growth_threshold: Deprecated parameter (kept for backward compatibility, not used)
             use_adaptive_threshold: Deprecated parameter (kept for backward compatibility, not used)
             threshold_type: Deprecated parameter (kept for backward compatibility, not used)
             growth_threshold_percentile: Deprecated parameter (kept for backward compatibility, not used)
             necrotic_threshold_percentile: Deprecated parameter (kept for backward compatibility, not used - necrotic radius uses density thresholding)
             drop_fraction: Fraction of maximum source term to use as threshold for inhibited radius (default 0.5 = 50% of max)
-            viable_threshold: Deprecated parameter (kept for backward compatibility, not used - hypoxic radius uses necrotic source terms)
+            viable_threshold: Deprecated parameter (kept for backward compatibility, not used)
         """
         print("Calculating tumor radius evolution...")
         
@@ -242,7 +240,7 @@ class SimPlotter:
         # Calculate inhibited radius if requested and source terms are available
         # NOTE: This finds where necrotic source terms cross from zero/negative to positive (moving outward from center)
         # This marks the outer boundary of necrosis death caused by lack of nutrient, representing the outer extent
-        # of the hypoxic region where necrosis is actively occurring. This should be further out than the necrotic core radius.
+        # of the region where necrosis is actively occurring. This should be further out than the necrotic core radius.
         inhibited_radii = []
         if include_inhibited_radius and "physics_data" in self.simulation_data:
             physics_data = self.simulation_data["physics_data"]
@@ -393,56 +391,6 @@ class SimPlotter:
         else:
             include_necrotic_radius = False
         
-        # Calculate hypoxic radius if requested and source terms are available
-        # NOTE: This finds the outer boundary where necrotic source terms become non-zero
-        # This marks where necrotic cells transition from zero to positive source terms (active necrotic processes)
-        # This should be greater than the necrotic core radius
-        hypoxic_radii = []
-        if include_hypoxic_radius and "physics_data" in self.simulation_data:
-            physics_data = self.simulation_data["physics_data"]
-            if physics_data is not None and len(physics_data) > 0 and "source_terms" in physics_data[0]:
-                # Check if we have a necrotic population (last population)
-                if len(self.labels) > 1:
-                    print("Calculating hypoxic radius evolution...")
-                    # Clear physics cache before starting
-                    if hasattr(physics_data, 'clear_cache'):
-                        physics_data.clear_cache()
-                    for step_idx in range(len(self.saved_steps)):
-                        phi_hat = self._get_field_slice("phi_hat", step_idx)
-                        total_density = np.sum(phi_hat, axis=0)
-                        source_terms = physics_data[step_idx]["source_terms"]
-                        # Clean up memory periodically
-                        if step_idx % 5 == 0:
-                            import gc
-                            gc.collect()
-                            if hasattr(physics_data, 'clear_cache') and step_idx % 10 == 0:
-                                physics_data.clear_cache()
-                        
-                        # Calculate hypoxic radius (outer boundary where necrotic source terms become non-zero)
-                        hypoxic_radius = self.utils.calculate_hypoxic_radius(
-                            source_terms, total_density,
-                            density_threshold=threshold,
-                            method='radial_average'
-                        )
-                        
-                        # Ensure hypoxic radius is greater than necrotic radius
-                        if include_necrotic_radius and len(necrotic_radii) > step_idx:
-                            necrotic_radius = necrotic_radii[step_idx]
-                            if hypoxic_radius <= necrotic_radius:
-                                hypoxic_radius = 0.0  # If not greater than necrotic, set to 0
-                        
-                        hypoxic_radii.append(hypoxic_radius)
-                else:
-                    print("Warning: No necrotic population found (need at least 2 populations)")
-                    include_hypoxic_radius = False
-            else:
-                print("Warning: Source terms not available for hypoxic radius calculation")
-                include_hypoxic_radius = False
-        else:
-            if include_hypoxic_radius:
-                print("Warning: Physics data not available for hypoxic radius calculation")
-            include_hypoxic_radius = False
-        
         # Create plot
         fig, ax = plt.subplots(figsize=figsize)
         
@@ -460,12 +408,6 @@ class SimPlotter:
             ax.plot(self.saved_times, necrotic_radii, 'r--', linewidth=2, 
                    label='Necrotic Radius', marker='v', markersize=5)
         
-        # Plot hypoxic radius if available
-        # NOTE: This is the outer boundary where necrotic source terms become non-zero
-        if include_hypoxic_radius:
-            ax.plot(self.saved_times, hypoxic_radii, 'b--', linewidth=2, 
-                   label='Hypoxic Radius', marker='s', markersize=5)
-        
         # Plot individual population radii if requested
         if include_individual_populations:
             colors = plt.cm.Set1(np.linspace(0, 1, len(self.labels)))
@@ -480,15 +422,13 @@ class SimPlotter:
         ax.grid(True, alpha=0.3)
         
         # Add text box with information about thresholds
-        if include_inhibited_radius or include_necrotic_radius or include_hypoxic_radius:
+        if include_inhibited_radius or include_necrotic_radius:
             info_text = f'Thresholds:\n'
             info_text += f'Density threshold: {threshold} (used for all radii)\n'
             if include_inhibited_radius:
                 info_text += f'Inhibited: source terms >= 5% of max (from center)\n'
             if include_necrotic_radius:
-                info_text += f'Necrotic: density threshold ({threshold})\n'
-            if include_hypoxic_radius:
-                info_text += f'Hypoxic: necrotic source terms > 0'
+                info_text += f'Necrotic: density threshold ({threshold})'
             ax.text(0.02, 0.98, info_text, transform=ax.transAxes, 
                    verticalalignment='top', fontsize=9,
                    bbox=dict(boxstyle='round', facecolor='lightgray', alpha=0.8))
@@ -511,8 +451,7 @@ class SimPlotter:
             'total_radii': total_radii,
             'population_radii': radii_data,
             'inhibited_radii': inhibited_radii if include_inhibited_radius else None,
-            'necrotic_radii': necrotic_radii if include_necrotic_radius else None,
-            'hypoxic_radii': hypoxic_radii if include_hypoxic_radius else None
+            'necrotic_radii': necrotic_radii if include_necrotic_radius else None
         } 
     
     def plot_population_density_evolution(self, output_dir=None, save_plot=False, show_plot=True,
@@ -842,7 +781,6 @@ class SimPlotter:
                            figsize=(20, 15), threshold=0.1, 
                            include_inhibited_radius=True,
                            include_necrotic_radius=True,
-                           include_hypoxic_radius=True,
                            growth_threshold=0.01,
                            use_adaptive_threshold=True,
                            threshold_type='percentile',
@@ -862,7 +800,6 @@ class SimPlotter:
             threshold: Density threshold for radius calculation
             include_inhibited_radius: Whether to include inhibited radius calculation
             include_necrotic_radius: Whether to include necrotic radius calculation
-            include_hypoxic_radius: Whether to include hypoxic radius calculation
             growth_threshold: Absolute threshold for detecting proliferative cells (used if use_adaptive_threshold=False)
             use_adaptive_threshold: Whether to use adaptive thresholds based on source term distribution
             threshold_type: Type of adaptive threshold ('percentile', 'relative_max', 'relative_mean')
@@ -870,7 +807,7 @@ class SimPlotter:
             necrotic_threshold_percentile: Percentile for necrotic threshold (default 25.0)
             only_radii: If True, only calculate radius-related observables (for export)
             drop_fraction: Fraction of maximum source term to use as threshold for inhibited radius (default 0.5)
-            viable_threshold: Nutrient concentration threshold below which cells are hypoxic (default 0.1)
+            viable_threshold: Deprecated parameter (kept for backward compatibility, not used)
         """
         if not only_radii:
             print("Creating comprehensive observables plot...")
@@ -888,7 +825,6 @@ class SimPlotter:
                                                       method='contour',  # Default method for consistency
                                                       include_inhibited_radius=include_inhibited_radius,
                                                       include_necrotic_radius=include_necrotic_radius,
-                                                      include_hypoxic_radius=include_hypoxic_radius,
                                                       growth_threshold=growth_threshold,
                                                       use_adaptive_threshold=use_adaptive_threshold,
                                                       threshold_type=threshold_type,
@@ -936,11 +872,6 @@ class SimPlotter:
             if include_necrotic_radius and radius_data.get('necrotic_radii') is not None:
                 ax.plot(self.saved_times, radius_data['necrotic_radii'], 'r--', linewidth=2, 
                        label='Necrotic', marker='v', markersize=4)
-            
-            # Add hypoxic radius if available
-            if include_hypoxic_radius and radius_data.get('hypoxic_radii') is not None:
-                ax.plot(self.saved_times, radius_data['hypoxic_radii'], 'b--', linewidth=2, 
-                       label='Hypoxic', marker='s', markersize=4)
             
             ax.set_xlabel('Time')
             ax.set_ylabel('Radius')
@@ -1795,7 +1726,6 @@ class SimPlotter:
                                 threshold=0.1, method='contour',
                                 include_inhibited_radius=True,
                                 include_necrotic_radius=True,
-                                include_hypoxic_radius=True,
                                 growth_threshold=0.01,
                                 use_adaptive_threshold=True,
                                 threshold_type='percentile',
@@ -1814,14 +1744,13 @@ class SimPlotter:
             method: Method for radius calculation ('contour' or 'mass', default 'contour')
             include_inhibited_radius: Whether to include inhibited radius calculation
             include_necrotic_radius: Whether to include necrotic radius calculation
-            include_hypoxic_radius: Whether to include hypoxic radius calculation
             growth_threshold: Absolute threshold for detecting proliferative cells (deprecated, kept for compatibility)
             use_adaptive_threshold: Whether to use adaptive thresholds (deprecated, kept for compatibility)
             threshold_type: Type of adaptive threshold (deprecated, kept for compatibility)
             growth_threshold_percentile: Percentile for proliferative threshold (deprecated, kept for compatibility)
             necrotic_threshold_percentile: Percentile for necrotic threshold (deprecated, kept for compatibility)
             drop_fraction: Fraction of maximum source term to use as threshold (deprecated, kept for compatibility)
-            viable_threshold: Nutrient concentration threshold (deprecated, kept for compatibility)
+            viable_threshold: Deprecated parameter (kept for backward compatibility, not used)
         """
         print("Exporting observables data...")
         
@@ -1835,7 +1764,6 @@ class SimPlotter:
             threshold=threshold,
             include_inhibited_radius=include_inhibited_radius,
             include_necrotic_radius=include_necrotic_radius,
-            include_hypoxic_radius=include_hypoxic_radius,
             growth_threshold=growth_threshold,
             use_adaptive_threshold=use_adaptive_threshold,
             threshold_type=threshold_type,
@@ -1857,13 +1785,11 @@ class SimPlotter:
         for label, radii in observables['radius']['population_radii'].items():
             data[f'{label}_Radius'] = radii
         
-        # Add inhibited, necrotic, and hypoxic radii if available
+        # Add inhibited and necrotic radii if available
         if observables['radius'].get('inhibited_radii') is not None:
             data['Inhibited_Radius'] = observables['radius']['inhibited_radii']
         if observables['radius'].get('necrotic_radii') is not None:
             data['Necrotic_Radius'] = observables['radius']['necrotic_radii']
-        if observables['radius'].get('hypoxic_radii') is not None:
-            data['Hypoxic_Radius'] = observables['radius']['hypoxic_radii']
         
         # Create DataFrame and save
         df = pd.DataFrame(data)

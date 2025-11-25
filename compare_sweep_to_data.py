@@ -17,6 +17,7 @@ import numpy as np
 import matplotlib.pyplot as plt
 from scipy.optimize import minimize_scalar
 from typing import Dict, List, Optional, Tuple
+import yaml
 
 # Add project root to path
 if sys.platform == "darwin":
@@ -119,9 +120,12 @@ class SweepDataComparator:
         # Find all CSV files
         csv_files = sorted(self.sweep_dir.glob("observables_run_*.csv"))
         
+        # Fallback: check for observables_data.csv (single run or old format)
         if len(csv_files) == 0:
-            print(f"Warning: No CSV files found in {self.sweep_dir}")
-            return
+            csv_files = sorted(self.sweep_dir.glob("observables_data.csv"))
+            if len(csv_files) == 0:
+                print(f"Warning: No CSV files found in {self.sweep_dir}")
+                return
         
         print(f"Found {len(csv_files)} CSV files")
         
@@ -133,8 +137,31 @@ class SweepDataComparator:
                 else:
                     run_id = len(self.simulation_data) + 1
                 
-                # Load CSV file
-                df = pd.read_csv(csv_file)
+                # Load CSV file - handle new format with metadata at top
+                # First, find where observables data starts
+                with open(csv_file, 'r') as f:
+                    lines = f.readlines()
+                
+                # Find where observables data starts
+                obs_start_idx = None
+                for i, line in enumerate(lines):
+                    if line.strip().startswith('# Observables Data'):
+                        # Find the next non-comment, non-blank line (should be header)
+                        for j in range(i+1, len(lines)):
+                            if lines[j].strip() and not lines[j].strip().startswith('#'):
+                                obs_start_idx = j
+                                break
+                        break
+                
+                if obs_start_idx is None:
+                    # Fallback: try reading normally (pandas will skip comment lines)
+                    try:
+                        df = pd.read_csv(csv_file, comment='#')
+                    except Exception:
+                        print(f"Warning: Could not parse {csv_file}")
+                        continue
+                else:
+                    df = pd.read_csv(csv_file, skiprows=obs_start_idx)
                 
                 # Extract observables (Step, Time, Total_Radius, Inhibited_Radius, Necrotic_Radius)
                 obs_cols = ['Step', 'Time', 'Total_Radius', 'Inhibited_Radius', 'Necrotic_Radius']
@@ -147,12 +174,65 @@ class SweepDataComparator:
                 # Create observables dataframe
                 observables_df = df[available_cols].copy()
                 
+                # Extract config from metadata section (new format)
+                config = {}
+                varied_params = {}  # Separate varied parameters
+                try:
+                    # Look for config parameters in metadata section
+                    in_param_section = False
+                    in_config_section = False
+                    for line in lines:
+                        line_stripped = line.strip()
+                        
+                        if line_stripped.startswith('# Varied Parameters'):
+                            in_param_section = True
+                            in_config_section = False
+                            continue
+                        elif line_stripped.startswith('# Configuration Parameters'):
+                            in_param_section = False
+                            in_config_section = True
+                            continue
+                        elif line_stripped.startswith('# Observables Data'):
+                            break
+                        elif in_param_section or in_config_section:
+                            # Parse CSV-style lines: key, value
+                            if ',' in line_stripped and not line_stripped.startswith('#'):
+                                parts = line_stripped.split(',', 1)  # Split only on first comma
+                                if len(parts) >= 2:
+                                    key = parts[0].strip()
+                                    value_str = parts[1].strip()
+                                    
+                                    # Try to convert to numeric if possible
+                                    try:
+                                        # Try float first
+                                        value = float(value_str)
+                                        # If it's an integer, convert to int
+                                        if value.is_integer():
+                                            value = int(value)
+                                    except ValueError:
+                                        # Keep as string if not numeric
+                                        value = value_str
+                                    
+                                    if in_param_section:
+                                        varied_params[key] = value
+                                    elif in_config_section:
+                                        config[key] = value
+                    
+                    # Store both varied params and config, with varied params taking precedence
+                    # This allows easy access to all parameters
+                    all_params = {**config, **varied_params}
+                    config = all_params
+                    
+                except Exception as e:
+                    print(f"Warning: Could not parse metadata from {csv_file}: {e}")
+                    pass  # If we can't parse metadata, continue without it
+                
                 # Store data
                 self.simulation_data[run_id] = {
                     'observables': observables_df,
                     'file_path': csv_file,
-                    'config': {col: df[col].iloc[0] for col in df.columns 
-                              if col.startswith('Config_') or col.startswith('Param_')}
+                    'config': config if config else {},
+                    'varied_params': varied_params if varied_params else {}
                 }
                     
             except Exception as e:
@@ -693,6 +773,350 @@ class SweepDataComparator:
             plt.show()
         else:
             plt.close()
+    
+    def suggest_parameter_bounds(self, density='10k', 
+                                  metrics=['Total_Radius', 'Inhibited_Radius', 'Necrotic_Radius'],
+                                  top_percentile=25, expansion_factor=1.2, min_expansion=0.1,
+                                  parameter_metric_weights=None):
+        """
+        Analyze all simulations and suggest parameter bounds for the next parameter sweep
+        based on RMSE cost function, with optional weighting by parameter-observable relationships.
+        
+        Args:
+            density: Seeding density to use for RMSE calculation
+            metrics: List of metrics to include in RMSE calculation
+            top_percentile: Percentile of best simulations to use for bounds (default: 25 = top 25%)
+            expansion_factor: Factor to expand bounds around good parameter ranges (default: 1.2 = 20% expansion)
+            min_expansion: Minimum expansion as fraction of range (default: 0.1 = 10%)
+            parameter_metric_weights: Dictionary mapping parameter names (with Param_ prefix) to 
+                                     dictionaries of metric weights. Example:
+                                     {
+                                         'Param_populations_Tumour_dynamics_lambda': {
+                                             'Total_Radius': 1.0,
+                                             'Inhibited_Radius': 0.5,
+                                             'Necrotic_Radius': 0.0
+                                         },
+                                         ...
+                                     }
+                                     If None, uses combined RMSE for all parameters.
+        
+        Returns:
+            Dictionary with suggested parameter bounds and analysis summary
+        """
+        print(f"\n{'='*80}")
+        print(f"Analyzing parameter bounds for next sweep (density: {density})")
+        print(f"{'='*80}")
+        
+        if density not in self.experimental_data:
+            print(f"Error: Density {density} not found")
+            return None
+        
+        # Calculate RMSE for all simulations
+        print("Calculating RMSE for all simulations...")
+        all_results = []
+        
+        for run_id in self.simulation_data.keys():
+            results = self.compare_simulation_to_experiment(run_id, density, metrics)
+            if results is None:
+                continue
+            
+            # Get parameter values for this run
+            varied_params = self.simulation_data[run_id].get('varied_params', {})
+            config = self.simulation_data[run_id].get('config', {})
+            
+            # Combine to get all parameters (varied params take precedence)
+            all_params = {**config, **varied_params}
+            
+            # Store metric-specific RMSE values
+            metric_rmses = {}
+            for metric in metrics:
+                if metric in results and isinstance(results[metric], dict):
+                    metric_rmses[metric] = results[metric].get('rmse', np.inf)
+                else:
+                    metric_rmses[metric] = np.inf
+            
+            result_entry = {
+                'run_id': run_id,
+                'combined_rmse': results.get('combined_rmse', np.inf),
+                'scale': results.get('scale', 1.0),
+                'parameters': all_params,
+                'metric_rmses': metric_rmses  # Store individual metric RMSEs
+            }
+            all_results.append(result_entry)
+        
+        if len(all_results) == 0:
+            print("No valid simulation results found")
+            return None
+        
+        # Identify which parameters were varied across runs
+        # Collect all parameter names that appear in varied_params
+        varied_param_names = set()
+        for result in all_results:
+            run_id = result['run_id']
+            varied_params = self.simulation_data[run_id].get('varied_params', {})
+            varied_param_names.update(varied_params.keys())
+        
+        # If parameter_metric_weights is provided, calculate weighted RMSE for each parameter
+        if parameter_metric_weights:
+            print("\nUsing parameter-specific metric weights for bounds analysis...")
+            for result in all_results:
+                # Calculate parameter-specific weighted RMSE
+                param_weighted_rmses = {}
+                
+                for param_name in varied_param_names:
+                    if param_name in parameter_metric_weights:
+                        weights = parameter_metric_weights[param_name]
+                        # Calculate weighted RMSE for this parameter
+                        weighted_rmse = 0.0
+                        total_weight = 0.0
+                        
+                        for metric, weight in weights.items():
+                            if metric in result['metric_rmses'] and weight > 0:
+                                weighted_rmse += result['metric_rmses'][metric] * weight
+                                total_weight += weight
+                        
+                        if total_weight > 0:
+                            param_weighted_rmses[param_name] = weighted_rmse / total_weight
+                        else:
+                            param_weighted_rmses[param_name] = result['combined_rmse']
+                    else:
+                        # No weights specified, use combined RMSE
+                        param_weighted_rmses[param_name] = result['combined_rmse']
+                
+                result['param_weighted_rmses'] = param_weighted_rmses
+        
+        # Sort by combined RMSE (for overall threshold calculation)
+        all_results.sort(key=lambda x: x['combined_rmse'])
+        
+        if len(varied_param_names) == 0:
+            print("No varied parameters found in simulations")
+            return None
+        
+        print(f"\nFound {len(varied_param_names)} varied parameters:")
+        for param in sorted(varied_param_names):
+            print(f"  - {param}")
+        
+        # Calculate percentile threshold
+        percentile_idx = int(len(all_results) * (top_percentile / 100.0))
+        percentile_idx = max(1, percentile_idx)  # At least 1 simulation
+        threshold_rmse = all_results[percentile_idx - 1]['combined_rmse']
+        
+        print(f"\nUsing top {top_percentile}% of simulations (RMSE <= {threshold_rmse:.2f})")
+        print(f"This includes {percentile_idx} out of {len(all_results)} simulations")
+        
+        # Extract parameter values for top simulations
+        top_results = [r for r in all_results if r['combined_rmse'] <= threshold_rmse]
+        
+        # Analyze each parameter
+        suggested_bounds = {}
+        parameter_analysis = {}
+        
+        for param_name in sorted(varied_param_names):
+            # Determine which RMSE to use for this parameter
+            if parameter_metric_weights and param_name in parameter_metric_weights:
+                # Use parameter-specific weighted RMSE
+                # Re-sort results by this parameter's weighted RMSE
+                param_sorted_results = sorted(all_results, 
+                                            key=lambda x: x.get('param_weighted_rmses', {}).get(param_name, x['combined_rmse']))
+                param_threshold_idx = int(len(param_sorted_results) * (top_percentile / 100.0))
+                param_threshold_idx = max(1, param_threshold_idx)
+                param_threshold_rmse = param_sorted_results[param_threshold_idx - 1].get('param_weighted_rmses', {}).get(param_name, threshold_rmse)
+                
+                print(f"  {param_name}: Using parameter-specific weighted RMSE (threshold: {param_threshold_rmse:.2f})")
+            else:
+                # Use combined RMSE
+                param_sorted_results = all_results
+                param_threshold_rmse = threshold_rmse
+            
+            # Get all values for this parameter
+            all_values = []
+            top_values = []
+            
+            for result in param_sorted_results:
+                params = result['parameters']
+                if param_name in params:
+                    try:
+                        val = float(params[param_name])
+                        all_values.append(val)
+                        
+                        # Determine if this result is in top percentile for this parameter
+                        if parameter_metric_weights and param_name in parameter_metric_weights:
+                            param_rmse = result.get('param_weighted_rmses', {}).get(param_name, result['combined_rmse'])
+                            if param_rmse <= param_threshold_rmse:
+                                top_values.append(val)
+                        else:
+                            if result['combined_rmse'] <= threshold_rmse:
+                                top_values.append(val)
+                    except (ValueError, TypeError):
+                        continue
+            
+            if len(all_values) == 0:
+                continue
+            
+            all_values = np.array(all_values)
+            
+            # Calculate statistics
+            param_min = np.min(all_values)
+            param_max = np.max(all_values)
+            param_range = param_max - param_min
+            
+            if len(top_values) > 0:
+                top_values = np.array(top_values)
+                top_min = np.min(top_values)
+                top_max = np.max(top_values)
+                top_mean = np.mean(top_values)
+                top_std = np.std(top_values)
+                
+                # Suggest bounds centered on good region with expansion
+                center = top_mean
+                half_range = max(
+                    (top_max - top_min) / 2 * expansion_factor,
+                    param_range * min_expansion / 2
+                )
+                
+                suggested_min = max(param_min, center - half_range)
+                suggested_max = min(param_max, center + half_range)
+                
+                # If we're at the boundary, expand outward
+                if suggested_min == param_min:
+                    suggested_min = max(0, param_min - param_range * min_expansion)
+                if suggested_max == param_max:
+                    suggested_max = param_max + param_range * min_expansion
+                
+            else:
+                # No good values found, use full range with slight expansion
+                suggested_min = param_min - param_range * min_expansion
+                suggested_max = param_max + param_range * min_expansion
+                top_min = top_max = top_mean = top_std = np.nan
+            
+            # Determine if parameter is numeric (int vs float)
+            is_integer = all(isinstance(v, (int, np.integer)) or 
+                           (isinstance(v, float) and v.is_integer()) 
+                           for v in all_values if not np.isnan(v))
+            
+            if is_integer:
+                suggested_min = int(np.floor(suggested_min))
+                suggested_max = int(np.ceil(suggested_max))
+            
+            suggested_bounds[param_name] = (suggested_min, suggested_max)
+            
+            parameter_analysis[param_name] = {
+                'current_min': param_min,
+                'current_max': param_max,
+                'top_min': top_min if len(top_values) > 0 else np.nan,
+                'top_max': top_max if len(top_values) > 0 else np.nan,
+                'top_mean': top_mean if len(top_values) > 0 else np.nan,
+                'top_std': top_std if len(top_values) > 0 else np.nan,
+                'suggested_min': suggested_min,
+                'suggested_max': suggested_max,
+                'num_top_sims': len(top_values),
+                'is_integer': is_integer
+            }
+        
+        # Print summary
+        print(f"\n{'='*80}")
+        print("SUGGESTED PARAMETER BOUNDS FOR NEXT SWEEP")
+        print(f"{'='*80}")
+        print(f"{'Parameter':<50} {'Current Range':<25} {'Suggested Range':<25} {'Top Sim Range':<25}")
+        print(f"{'-'*125}")
+        
+        for param_name in sorted(varied_param_names):
+            if param_name not in parameter_analysis:
+                continue
+            
+            analysis = parameter_analysis[param_name]
+            current_range = f"[{analysis['current_min']:.4f}, {analysis['current_max']:.4f}]"
+            suggested_range = f"[{analysis['suggested_min']:.4f}, {analysis['suggested_max']:.4f}]"
+            
+            if not np.isnan(analysis['top_min']):
+                top_range = f"[{analysis['top_min']:.4f}, {analysis['top_max']:.4f}]"
+            else:
+                top_range = "N/A"
+            
+            print(f"{param_name:<50} {current_range:<25} {suggested_range:<25} {top_range:<25}")
+        
+        print(f"{'='*80}\n")
+        
+        # Create summary dictionary
+        summary = {
+            'density': density,
+            'total_simulations': len(all_results),
+            'top_percentile': top_percentile,
+            'threshold_rmse': threshold_rmse,
+            'num_top_simulations': len(top_results),
+            'suggested_bounds': suggested_bounds,
+            'parameter_analysis': parameter_analysis,
+            'best_rmse': all_results[0]['combined_rmse'],
+            'worst_rmse': all_results[-1]['combined_rmse'],
+            'median_rmse': np.median([r['combined_rmse'] for r in all_results])
+        }
+        
+        return summary
+    
+    def export_suggested_bounds(self, summary, output_path=None, format='yaml'):
+        """
+        Export suggested parameter bounds to a file.
+        
+        Args:
+            summary: Summary dictionary from suggest_parameter_bounds()
+            output_path: Path to output file (default: sweep_dir/suggested_bounds.yaml)
+            format: Output format ('yaml' or 'json')
+        """
+        if summary is None:
+            print("No summary to export")
+            return
+        
+        if output_path is None:
+            output_path = self.sweep_dir / "suggested_bounds.yaml"
+        else:
+            output_path = Path(output_path)
+        
+        # Convert bounds to format suitable for parameter sweep
+        # Parameter names need to be converted back from Param_ format
+        bounds_dict = {}
+        for param_key, (min_val, max_val) in summary['suggested_bounds'].items():
+            # Remove 'Param_' prefix and convert underscores back to dots
+            if param_key.startswith('Param_'):
+                param_name = param_key[6:].replace('_', '.')
+            else:
+                param_name = param_key.replace('_', '.')
+            
+            bounds_dict[param_name] = [min_val, max_val]
+        
+        if format.lower() == 'yaml':
+            output_data = {
+                'suggested_parameter_bounds': bounds_dict,
+                'analysis_summary': {
+                    'density': summary['density'],
+                    'total_simulations': summary['total_simulations'],
+                    'top_percentile': summary['top_percentile'],
+                    'threshold_rmse': float(summary['threshold_rmse']),
+                    'num_top_simulations': summary['num_top_simulations'],
+                    'best_rmse': float(summary['best_rmse']),
+                    'worst_rmse': float(summary['worst_rmse']),
+                    'median_rmse': float(summary['median_rmse'])
+                }
+            }
+            
+            with open(output_path, 'w') as f:
+                yaml.dump(output_data, f, default_flow_style=False, sort_keys=False)
+            
+            print(f"Exported suggested bounds to {output_path}")
+        
+        elif format.lower() == 'json':
+            import json
+            output_data = {
+                'suggested_parameter_bounds': bounds_dict,
+                'analysis_summary': summary
+            }
+            
+            with open(output_path, 'w') as f:
+                json.dump(output_data, f, indent=2)
+            
+            print(f"Exported suggested bounds to {output_path}")
+        
+        else:
+            print(f"Unknown format: {format}. Use 'yaml' or 'json'")
 
 
 def export_results_to_csv(comparator, all_results, output_dir):
@@ -783,7 +1207,7 @@ def main():
     # ============================================================================
     
     # Path to parameter sweep directory
-    SWEEP_DIR = args.sweep_dir or "/Users/rileymcnamara/CODE/2025/silicokit/laboratory/parameter_sweeps/random_parameter_sweep_20251123_224231"
+    SWEEP_DIR = args.sweep_dir or "/Users/rileymcnamara/CODE/2025/silicokit/laboratory/parameter_sweeps/random_parameter_sweep_20251124_192155"
     
     # Path to experimental data (None = use default)
     EXPERIMENTAL_DATA_PATH = args.experimental_data
@@ -806,6 +1230,76 @@ def main():
     
     # Whether to show plots
     SHOW_PLOTS = args.show_plots
+    
+    # ============================================================================
+    # PARAMETER BOUNDS SUGGESTION CONFIGURATION
+    # ============================================================================
+    
+    # Whether to suggest parameter bounds for next sweep
+    SUGGEST_BOUNDS = True  # Set to True to enable bounds suggestion
+    
+    # Density to use for bounds suggestion (use first density if None)
+    BOUNDS_DENSITY = None  # None = use first density from DENSITIES, or specify '10k', '5k', '2k'
+    
+    # Percentile of best simulations to use for bounds (25 = top 25%)
+    TOP_PERCENTILE = 25.0
+    
+    # Factor to expand bounds around good parameter ranges (1.2 = 20% expansion)
+    EXPANSION_FACTOR = 1.2
+    
+    # Minimum expansion as fraction of range (0.1 = 10%)
+    MIN_EXPANSION = 0.1
+    
+    # Output format for suggested bounds ('yaml' or 'json')
+    BOUNDS_OUTPUT_FORMAT = 'yaml'
+    
+    # Output path for suggested bounds (None = sweep_dir/suggested_bounds.yaml)
+    BOUNDS_OUTPUT_PATH = None
+    
+    # Parameter-observable relationships for improved bounds suggestions
+    # Maps parameter names (with Param_ prefix) to dictionaries of metric weights
+    # Weights indicate how strongly each parameter affects each observable
+    # Example: If lambda primarily affects Total_Radius, give it weight 1.0 for Total_Radius
+    #          and lower weights (0.5, 0.0) for other metrics
+    PARAMETER_METRIC_WEIGHTS = {
+        # Example structure (uncomment and modify based on your knowledge):
+        # 'Param_populations_Tumour_dynamics_lambda': {
+        #     'Total_Radius': 1.0,           # Strong effect
+        #     'Inhibited_Radius': 0.5,      # Moderate effect
+        #     'Necrotic_Radius': 0.0        # No effect
+        # },
+        # 'Param_populations_Tumour_dynamics_mu': {
+        #     'Total_Radius': 0.5,
+        #     'Inhibited_Radius': 1.0,
+        #     'Necrotic_Radius': 0.3
+        # },
+        # 'Param_populations_Necrotic_dynamics_mu': {
+        #     'Total_Radius': 0.0,
+        #     'Inhibited_Radius': 0.3,
+        #     'Necrotic_Radius': 1.0
+        # },
+        # 'Param_populations_Necrotic_dynamics_beta_N': {
+        #     'Total_Radius': 0.0,
+        #     'Inhibited_Radius': 0.2,
+        #     'Necrotic_Radius': 1.0
+        # },
+        # 'Param_nutrient_dynamics_k': {
+        #     'Total_Radius': 0.8,
+        #     'Inhibited_Radius': 0.6,
+        #     'Necrotic_Radius': 0.4
+        # },
+        # 'Param_populations_Tumour_dynamics_nutrient_consumption': {
+        #     'Total_Radius': 0.6,
+        #     'Inhibited_Radius': 0.8,
+        #     'Necrotic_Radius': 0.5
+        # },
+        # 'Param_populations_Tumour_dynamics_nutrient_threshold': {
+        #     'Total_Radius': 0.4,
+        #     'Inhibited_Radius': 0.7,
+        #     'Necrotic_Radius': 0.6
+        # },
+    }
+    # If PARAMETER_METRIC_WEIGHTS is empty (or None), uses combined RMSE for all parameters
     
     # ============================================================================
     # END OF CONFIGURATION
@@ -854,6 +1348,38 @@ def main():
     # Export results to CSV if requested
     if hasattr(args, 'export_csv') and args.export_csv:
         export_results_to_csv(comparator, all_results, SWEEP_DIR)
+    
+    # Suggest parameter bounds if enabled
+    if SUGGEST_BOUNDS:
+        # Determine which density to use for bounds suggestion
+        if BOUNDS_DENSITY is not None:
+            bounds_density = BOUNDS_DENSITY
+        elif isinstance(DENSITIES, list) and len(DENSITIES) > 0:
+            bounds_density = DENSITIES[0]
+        else:
+            bounds_density = DENSITIES
+        
+        print(f"\n{'='*80}")
+        print(f"Generating parameter bounds suggestions...")
+        print(f"{'='*80}")
+        
+        summary = comparator.suggest_parameter_bounds(
+            density=bounds_density,
+            metrics=METRICS,
+            top_percentile=TOP_PERCENTILE,
+            expansion_factor=EXPANSION_FACTOR,
+            min_expansion=MIN_EXPANSION,
+            parameter_metric_weights=PARAMETER_METRIC_WEIGHTS if PARAMETER_METRIC_WEIGHTS else None
+        )
+        
+        if summary:
+            # Export suggested bounds
+            output_path = BOUNDS_OUTPUT_PATH if BOUNDS_OUTPUT_PATH else None
+            comparator.export_suggested_bounds(
+                summary, 
+                output_path=output_path,
+                format=BOUNDS_OUTPUT_FORMAT
+            )
     
     print("\nAnalysis complete!")
 

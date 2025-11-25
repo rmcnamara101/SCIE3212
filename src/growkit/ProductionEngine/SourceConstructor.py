@@ -92,7 +92,11 @@ class SourceConstructor:
         
         # Use local nutrient levels for computing switches
         for i in range(self.M):
-            # Death threshold: death stops when nutrient > nutrient_threshold
+            # Death threshold: death occurs when nutrient < nutrient_threshold
+            # Theta represents growth switch (high when nutrient > threshold)
+            # Death uses (1 - Theta), so death is high when nutrient < threshold
+            # Current behavior: lower threshold = less death (fewer regions have nutrient < threshold)
+            # If you want lower threshold = more death, the threshold interpretation needs to change
             n_thresh = self.nutrient_thresholds[i]
             Theta[i] = 0.5 * (1 + np.tanh(k * (nutrient_field - n_thresh)))
             

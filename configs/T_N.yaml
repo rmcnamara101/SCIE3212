@@ -23,7 +23,7 @@ simulation:
   seed: 13234
 
 domain:
-  shape: 100 # integer defining the number of grid points in each dimension
+  shape: 60 # integer defining the number of grid points in each dimension
   dx: 300 # float defining the spacing of the grid (simulation units; physical units assigned after scaling to match experimental radii)
   # NOTE: Do NOT change dx - it affects simulation physics. Only reinterpret units after simulation.
 
@@ -36,22 +36,22 @@ populations:
     label: Tumour Cells
     color: Green
     dynamics:
-      lambda: 28  # Growth rate (net growth = 3 per time unit ≈ 24h doubling, acceptable but on fast side)
-      mu: 40  # Death rate
+      lambda: 28.851560067517177  # Growth rate (net growth = 3 per time unit ≈ 24h doubling, acceptable but on fast side)
+      mu: 35.934935244009782  # Death rate
       # Updated based on literature: original 10000 was too low (52 μm²/day)
       # Literature values: 1000-10000 μm²/day for tumor cell motility
       # Reduced from 2,000,000 to 500,000 for performance (scales to ~2,500 μm²/day, middle of literature range)
       # Can reduce further to 200,000 (~1,000 μm²/day) if still too slow, but may affect cell mixing
       mobility: 100000.0  # (50× increase from original 10000, 4× reduction from 2,000,000)
-      nutrient_threshold: 0.7
-      nutrient_consumption: 3
+      nutrient_threshold: 0.65
+      nutrient_consumption: 2.5
       nutrient_production: 0.0
   Necrotic:
     label: Necrotic Cells
     color: Black
     dynamics:
       lambda: 0.0
-      mu: 12
+      mu: 22.18068189230385
       mobility: 0.0
       nutrient_threshold: 0.0
       nutrient_consumption: 0.0
@@ -64,7 +64,7 @@ nutrient:
   color: Orange
   dynamics:
     diffusion: 2000000 # float (20× increase from original 100000)
-    k: 20 # float defining the steepness of the nutrient switch 
+    k: 8 # float defining the steepness of the nutrient switch 
 
 physics:
   adhesion_energy:
@@ -89,7 +89,7 @@ initial_conditions:
 
   type: gaussian_random_blob
   radius: 8
-  center: [50, 50, 50]
+  center: [30, 30, 30]
   deformation_strength: 0.3 # How much to deform (0.0=sphere, 0.5=very deformed, optional, defaults to 0.3)
 
 
