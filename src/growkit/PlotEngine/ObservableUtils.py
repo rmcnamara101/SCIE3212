@@ -745,7 +745,7 @@ class ObservableUtils:
     
     def calculate_necrotic_radius(self, source_terms, density_field,
                                   phi_hat=None,
-                                  density_threshold=0.1,
+                                  density_threshold=0.2,
                                   viable_threshold=0.01,
                                   method='radial_average',
                                   # Deprecated parameters kept for backward compatibility

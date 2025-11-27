@@ -46,15 +46,52 @@ def run_simulation_with_observables(config_path, output_dir, total_steps=50,
         csv_path: Path to the exported CSV file with observables and config
     """
     import yaml
+    import numpy as np
     from pathlib import Path
     
     output_dir = Path(output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
     
-    # Load config if not provided
+    # Load config if not provided - use safe loader that handles numpy types
     if config is None:
-        with open(config_path, 'r') as f:
-            config = yaml.safe_load(f)
+        # Import the safe loader from run_parameter_sweep
+        try:
+            from run_parameter_sweep import load_config_safely
+            config = load_config_safely(config_path)
+        except ImportError:
+            # Fallback: define a simple safe loader here
+            def convert_numpy_types_to_native(obj):
+                if isinstance(obj, dict):
+                    return {key: convert_numpy_types_to_native(value) for key, value in obj.items()}
+                elif isinstance(obj, list):
+                    return [convert_numpy_types_to_native(item) for item in obj]
+                elif isinstance(obj, np.integer):
+                    return int(obj)
+                elif isinstance(obj, np.floating):
+                    return float(obj)
+                elif isinstance(obj, np.ndarray):
+                    return obj.tolist()
+                else:
+                    return obj
+            
+            try:
+                with open(config_path, 'r') as f:
+                    config = yaml.safe_load(f)
+            except Exception as e:
+                error_msg = str(e)
+                if 'constructor' in error_msg.lower() or 'tag' in error_msg.lower():
+                    try:
+                        with open(config_path, 'r') as f:
+                            if hasattr(yaml, 'unsafe_load'):
+                                config = yaml.unsafe_load(f)
+                            else:
+                                config = yaml.load(f, Loader=yaml.UnsafeLoader)
+                    except Exception as e2:
+                        raise ValueError(f"Could not load YAML file {config_path}: {e2}")
+                else:
+                    raise
+            
+            config = convert_numpy_types_to_native(config)
     
     # Run simulation
     simulator = TumorGrowthSimulator(str(config_path))

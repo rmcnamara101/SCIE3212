@@ -16,6 +16,41 @@
 #   - Mobility: 500,000 → ~2,500 μm²/day (middle of literature range, reduced for performance)
 #   - Grid spacing: 15 μm (one cell diameter, appropriate for continuum models)
 #
+# DIFFUSION LENGTH SCALING CONSIDERATIONS:
+# ========================================
+# When matching simulations to experimental data with different initial seeding densities,
+# different scaling factors (α) may be required (e.g., ranging from 0.09 to 0.07).
+# 
+# IMPORTANT: The diffusion length L_diff = √(D·t) scales with the spatial scale factor α.
+# This is because:
+#   - Physical diffusion coefficient: D_physical = D_sim × α²
+#   - Diffusion length: L_diff = √(D_physical × t) = α × √(D_sim × t)
+# 
+# IMPACT OF NOT ADJUSTING DIFFUSION:
+#   If you don't adjust the diffusion coefficient when using different scaling factors:
+#   - At α = 0.07: L_diff = 0.875 × L_ref (12.5% smaller than reference)
+#   - At α = 0.09: L_diff = 1.125 × L_ref (12.5% larger than reference)
+#   - Difference between extremes: 0.09/0.07 = 1.286 (28.6% variation)
+#   
+#   This means the diffusion length varies by ±12.5% around the midpoint, or 28.6% between
+#   the extremes. This could significantly affect nutrient penetration depth and necrotic
+#   core formation, especially in larger spheroids where diffusion limits are critical.
+# 
+# To maintain a CONSTANT diffusion length across different scaling factors:
+#   - Choose a reference scale factor α_ref (e.g., 0.08, the midpoint of your range)
+#   - Adjust the simulation diffusion coefficient: D_sim_adjusted = D_sim × (α_ref / α_actual)²
+# 
+# Example: If α_ref = 0.08 and α_actual = 0.07:
+#   - Adjustment factor: (0.08/0.07)² ≈ 1.306
+#   - Adjusted diffusion: 2,000,000 × 1.306 ≈ 2,612,000
+# 
+# This ensures that L_diff remains constant regardless of the spatial scaling factor used.
+# 
+# REFERENCE SCALING (for diffusion length normalization):
+#   - Reference scale factor α_ref: 0.08 μm/simulation_unit (midpoint of typical range 0.07-0.09)
+#   - Current diffusion: 2,000,000 (calibrated for α_ref = 0.08)
+#   - If using a different α, adjust: diffusion = 2,000,000 × (0.08 / α)²
+#
 # All parameters have been validated against literature values for tumor spheroid systems.
 
 simulation:
@@ -36,35 +71,37 @@ populations:
     label: Tumour Cells
     color: Green
     dynamics:
-      lambda: 28.851560067517177  # Growth rate (net growth = 3 per time unit ≈ 24h doubling, acceptable but on fast side)
-      mu: 35.934935244009782  # Death rate
-      # Updated based on literature: original 10000 was too low (52 μm²/day)
-      # Literature values: 1000-10000 μm²/day for tumor cell motility
-      # Reduced from 2,000,000 to 500,000 for performance (scales to ~2,500 μm²/day, middle of literature range)
-      # Can reduce further to 200,000 (~1,000 μm²/day) if still too slow, but may affect cell mixing
-      mobility: 100000.0  # (50× increase from original 10000, 4× reduction from 2,000,000)
-      nutrient_threshold: 0.65
-      nutrient_consumption: 2.5
+      lambda: 150.43211102659673
+      mu: 66.53632591876234
+      mobility: 100000000.0
+      nutrient_threshold: 0.40183127655648273
+      nutrient_consumption: 12.636226081896721
       nutrient_production: 0.0
   Necrotic:
     label: Necrotic Cells
     color: Black
     dynamics:
       lambda: 0.0
-      mu: 22.18068189230385
+      mu: 44.439284623878535
       mobility: 0.0
       nutrient_threshold: 0.0
       nutrient_consumption: 0.0
       nutrient_production: 0.0
-      beta_N: 0.0001
+      beta_N: 7.0e-05
 
 nutrient:
   name: General
   label: General nutrient
   color: Orange
   dynamics:
-    diffusion: 2000000 # float (20× increase from original 100000)
-    k: 8 # float defining the steepness of the nutrient switch 
+    # Diffusion coefficient (simulation units: length²/time)
+    # This value is calibrated for reference scale factor α_ref = 0.08 μm/simulation_unit
+    # To maintain constant diffusion length when using different scaling factors:
+    #   diffusion_adjusted = 2000000 × (0.08 / α_actual)²
+    # Example: if α_actual = 0.07, then diffusion = 2000000 × (0.08/0.07)² ≈ 2,612,000
+    diffusion: 2000000 # float (20× increase from original 100000, calibrated for α_ref = 0.08)
+    k: 13.405550918957573
+     # float defining the steepness of the nutrient switch 
 
 physics:
   adhesion_energy:

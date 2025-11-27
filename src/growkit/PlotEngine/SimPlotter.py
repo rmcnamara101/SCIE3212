@@ -2,6 +2,8 @@ import numpy as np
 import matplotlib.pyplot as plt
 import os
 from pathlib import Path
+import pandas as pd
+import sys
 from .ObservableUtils import ObservableUtils
 
 class SimPlotter:
@@ -1170,8 +1172,7 @@ class SimPlotter:
         # Return data for use by plot_all_observables and export
         return {
             'total_densities': total_densities,
-            'population_densities': density_data
-,
+            'population_densities': density_data,
             'times': self.saved_times,
             'min_concentrations': min_concentrations,
             'max_concentrations': max_concentrations,
@@ -2572,3 +2573,559 @@ class SimPlotter:
         
         # Return diagnostic data
         return diagnostic_results
+    
+    def plot_simulation_vs_experimental(self, cell_line=None, seeding_density='10k',
+                                       experimental_data_path=None,
+                                       output_dir=None, save_plot=False, show_plot=True,
+                                       figsize=(15, 10), threshold=0.1, method='contour',
+                                       include_inhibited_radius=True,
+                                       include_necrotic_radius=True,
+                                       drop_fraction=0.5,
+                                       metrics=None):
+        """
+        Plot simulation data compared to experimental data on the same plot.
+        Automatically scales simulation data to best match experimental data.
+        Uses weighted RMSE if experimental uncertainties are available.
+        
+        This function:
+        1. Loads experimental data for the specified cell line and seeding density (with uncertainties if available)
+        2. Calculates simulation radii (Total, Inhibited, Necrotic)
+        3. Finds optimal scaling factor to match simulation to experimental data (using weighted least squares if uncertainties available)
+        4. Plots both datasets on the same plot for easy comparison (with error bars if uncertainties available)
+        
+        Args:
+            cell_line: Cell line identifier (e.g., '983b'). If None, uses 'Summary' sheet.
+                     Can also be a sheet name in the Excel file.
+            seeding_density: Seeding density ('10k', '5k', or '2.5k', '2k' for backward compatibility)
+            experimental_data_path: Path to experimental data Excel file.
+                                   If None, uses default path: laboratory/data/Browning_Paper/Organised_Data.xlsx
+            output_dir: Directory to save plot
+            save_plot: Whether to save the plot
+            show_plot: Whether to display the plot
+            figsize: Figure size
+            threshold: Density threshold for radius calculation
+            method: Method for radius calculation ('contour' or 'mass')
+            include_inhibited_radius: Whether to include inhibited radius calculation
+            include_necrotic_radius: Whether to include necrotic radius calculation
+            drop_fraction: Fraction of maximum source term to use as threshold for inhibited radius
+            metrics: List of metrics to plot. If None, plots all available metrics.
+                    Options: ['Total_Radius', 'Inhibited_Radius', 'Necrotic_Radius']
+        
+        Returns:
+            Dictionary containing:
+            - 'experimental_data': Loaded experimental data DataFrame (with uncertainty columns if available)
+            - 'simulation_data': Dictionary with calculated simulation radii
+            - 'scale_factor': Optimal scaling factor used (from weighted least squares if uncertainties available)
+            - 'rmse': Dictionary of weighted RMSE values for each metric (or regular RMSE if no uncertainties)
+        """
+        # Get project root for default path
+        if experimental_data_path is None:
+            # Try to find project root (go up from src/growkit/PlotEngine)
+            current_file = Path(__file__).resolve()
+            proj_root = current_file.parent.parent.parent.parent
+            experimental_data_path = proj_root / "laboratory" / "data" / "Browning_Paper" / "Organised_Data.xlsx"
+        else:
+            experimental_data_path = Path(experimental_data_path)
+        
+        if not experimental_data_path.exists():
+            print(f"Error: Experimental data file not found at {experimental_data_path}")
+            return None
+        
+        # Load experimental data
+        print(f"Loading experimental data from {experimental_data_path}...")
+        exp_data = self._load_experimental_data(experimental_data_path, cell_line, seeding_density)
+        
+        if exp_data is None:
+            print(f"Error: Could not load experimental data for cell_line={cell_line}, density={seeding_density}")
+            return None
+        
+        print(f"Loaded experimental data: {len(exp_data)} time points")
+        print(f"  Days: {exp_data['Day'].min():.1f} to {exp_data['Day'].max():.1f}")
+        
+        # Calculate simulation radii
+        print("Calculating simulation radii...")
+        radius_data = self.plot_tumor_radius_evolution(
+            output_dir=None, save_plot=False, show_plot=False,
+            threshold=threshold, method=method,
+            include_inhibited_radius=include_inhibited_radius,
+            include_necrotic_radius=include_necrotic_radius,
+            drop_fraction=drop_fraction
+        )
+        
+        # Prepare simulation data as DataFrame (similar to observables export format)
+        sim_data = pd.DataFrame({
+            'Step': self.saved_steps,
+            'Time': self.saved_times,
+            'Total_Radius': radius_data['total_radii']
+        })
+        
+        # Add inhibited and necrotic radii if available
+        if include_inhibited_radius and radius_data.get('inhibited_radii') is not None:
+            sim_data['Inhibited_Radius'] = radius_data['inhibited_radii']
+        
+        if include_necrotic_radius and radius_data.get('necrotic_radii') is not None:
+            sim_data['Necrotic_Radius'] = radius_data['necrotic_radii']
+        
+        # Determine which metrics to plot
+        if metrics is None:
+            metrics = ['Total_Radius']
+            if include_inhibited_radius and 'Inhibited_Radius' in sim_data.columns and 'Inhibited_Radius' in exp_data.columns:
+                metrics.append('Inhibited_Radius')
+            if include_necrotic_radius and 'Necrotic_Radius' in sim_data.columns and 'Necrotic_Radius' in exp_data.columns:
+                metrics.append('Necrotic_Radius')
+        else:
+            # Filter to only available metrics
+            available_metrics = []
+            for metric in metrics:
+                if metric in sim_data.columns and metric in exp_data.columns:
+                    available_metrics.append(metric)
+                else:
+                    print(f"Warning: Metric '{metric}' not available in both simulation and experimental data")
+            metrics = available_metrics
+        
+        if len(metrics) == 0:
+            print("Error: No metrics available to plot")
+            return None
+        
+        # Calculate optimal scale factor across all metrics
+        print("Calculating optimal scale factor...")
+        scale_factor = self._calculate_optimal_scale_all_metrics(sim_data, exp_data, metrics)
+        print(f"Optimal scale factor: {scale_factor:.4f}")
+        
+        # Calculate RMSE for each metric
+        rmse_dict = {}
+        for metric in metrics:
+            rmse = self._calculate_rmse_metric(sim_data, exp_data, metric, scale_factor)
+            rmse_dict[metric] = rmse
+            print(f"  {metric} RMSE: {rmse:.2f} μm")
+        
+        # Create single plot for all metrics
+        fig, ax = plt.subplots(1, 1, figsize=figsize)
+        
+        # Colors and styles for each metric
+        metric_styles = {
+            'Total_Radius': {'color': 'blue', 'marker': 'o', 'linestyle': '-'},
+            'Inhibited_Radius': {'color': 'orange', 'marker': '^', 'linestyle': '-'},
+            'Necrotic_Radius': {'color': 'red', 'marker': 'v', 'linestyle': '-'}
+        }
+        
+        # Plot all metrics on the same axes
+        for metric in metrics:
+            # Get experimental data
+            exp_days = exp_data['Day'].values
+            exp_values = exp_data[metric].values
+            
+            # Get simulation data
+            sim_steps = sim_data['Step'].values
+            sim_values = sim_data[metric].values
+            scaled_sim_values = sim_values * scale_factor
+            
+            # Get style for this metric
+            style = metric_styles.get(metric, {'color': 'black', 'marker': 'o', 'linestyle': '-'})
+            metric_label = metric.replace('_', ' ')
+            
+            # Plot experimental data with error bars if uncertainties are available
+            exp_mask = ~np.isnan(exp_values)
+            if np.any(exp_mask):
+                # Check if uncertainties are available - ensure we use the correct column
+                unc_col = f'{metric}_uncertainty'
+                if unc_col in exp_data.columns:
+                    exp_uncertainties = exp_data[unc_col].values
+                    # Filter out NaN and non-positive uncertainties
+                    exp_unc_mask = exp_mask & ~np.isnan(exp_uncertainties) & (exp_uncertainties > 0)
+                    if np.any(exp_unc_mask):
+                        # Sanity check: uncertainty should be reasonable (not orders of magnitude larger than value)
+                        # This helps catch cases where we might be using the wrong column
+                        reasonable_unc = exp_uncertainties[exp_unc_mask]
+                        reasonable_values = exp_values[exp_unc_mask]
+                        # Check if uncertainty is more than 5x the value (likely wrong column)
+                        ratio_mask = reasonable_unc <= 5 * np.abs(reasonable_values)
+                        
+                        if np.any(ratio_mask):
+                            # Use only reasonable uncertainties
+                            final_mask = exp_unc_mask.copy()
+                            final_mask[exp_unc_mask] = ratio_mask
+                            ax.errorbar(exp_days[final_mask], exp_values[final_mask],
+                                      yerr=exp_uncertainties[final_mask],
+                                      color=style['color'], marker=style['marker'],
+                                      linestyle=style['linestyle'], linewidth=2.5,
+                                      markersize=8, capsize=4, capthick=1.5,
+                                      label=f'Exp: {metric_label}', alpha=0.8, zorder=10)
+                        else:
+                            # Uncertainties seem unreasonable - likely wrong column, plot without error bars
+                            print(f"Warning: Uncertainties for {metric} seem unreasonable (too large), plotting without error bars")
+                            ax.plot(exp_days[exp_mask], exp_values[exp_mask], 
+                                   color=style['color'], marker=style['marker'], 
+                                   linestyle=style['linestyle'], linewidth=2.5, 
+                                   markersize=8, label=f'Exp: {metric_label}', 
+                                   alpha=0.8, zorder=10)
+                    else:
+                        # No valid uncertainties, plot without error bars
+                        ax.plot(exp_days[exp_mask], exp_values[exp_mask], 
+                               color=style['color'], marker=style['marker'], 
+                               linestyle=style['linestyle'], linewidth=2.5, 
+                               markersize=8, label=f'Exp: {metric_label}', 
+                               alpha=0.8, zorder=10)
+                else:
+                    # No uncertainty column, plot without error bars
+                    ax.plot(exp_days[exp_mask], exp_values[exp_mask], 
+                           color=style['color'], marker=style['marker'], 
+                           linestyle=style['linestyle'], linewidth=2.5, 
+                           markersize=8, label=f'Exp: {metric_label}', 
+                           alpha=0.8, zorder=10)
+            
+            # Plot full simulation curve (scaled)
+            # Convert steps to days for x-axis (step 0 = day 1, so step = day - 1)
+            sim_mask = ~np.isnan(sim_values)
+            if np.any(sim_mask):
+                sim_days = sim_steps[sim_mask] + 1  # Convert steps to days
+                ax.plot(sim_days, scaled_sim_values[sim_mask], 
+                       color=style['color'], linestyle='--', linewidth=2, 
+                       alpha=0.7, label=f'Sim: {metric_label} (scale={scale_factor:.2f})', 
+                       zorder=9)
+            
+            # Plot matched points (where step = day - 1, so step 0 = day 1)
+            matched_steps = []
+            matched_scaled_values = []
+            
+            for exp_idx, exp_day in enumerate(exp_days):
+                if np.isnan(exp_values[exp_idx]):
+                    continue
+                # Find simulation step that matches this day (step = day - 1, so step 0 = day 1)
+                step_match_idx = np.where(sim_steps == (exp_day - 1))[0]
+                if len(step_match_idx) > 0 and not np.isnan(sim_values[step_match_idx[0]]):
+                    matched_steps.append(exp_day)
+                    matched_scaled_values.append(scaled_sim_values[step_match_idx[0]])
+            
+            # Plot matched points
+            if len(matched_steps) > 0:
+                ax.scatter(matched_steps, matched_scaled_values, 
+                          color=style['color'], marker='s', s=100, 
+                          edgecolors='black', linewidths=2, alpha=0.9, 
+                          zorder=11, label=f'Matched: {metric_label}')
+        
+        # Format plot
+        ax.set_xlabel('Time (days)', fontsize=12)
+        ax.set_ylabel('Radius (μm)', fontsize=12)
+        
+        # Title with RMSE for all metrics
+        title_parts = []
+        if cell_line:
+            title_parts.append(f'Cell Line: {cell_line}')
+        title_parts.append(f'Seeding Density: {seeding_density}')
+        title_parts.append(f'Scale Factor: {scale_factor:.3f}')
+        
+        rmse_str = ', '.join([f'{m.replace("_", " ")}: {rmse_dict[m]:.2f} μm' 
+                              for m in metrics if m in rmse_dict])
+        if rmse_str:
+            title_parts.append(f'RMSE: {rmse_str}')
+        
+        ax.set_title(' | '.join(title_parts), fontsize=12, fontweight='bold')
+        
+        ax.legend(fontsize=9, loc='best', ncol=2)
+        ax.grid(True, alpha=0.3)
+        
+        plt.tight_layout()
+        
+        if save_plot and output_dir:
+            os.makedirs(output_dir, exist_ok=True)
+            cell_line_str = f"{cell_line}_" if cell_line else ""
+            filename = f'simulation_vs_experimental_{cell_line_str}{seeding_density}.png'
+            filepath = os.path.join(output_dir, filename)
+            plt.savefig(filepath, dpi=300, bbox_inches='tight')
+            print(f"Plot saved to {filepath}")
+        
+        if show_plot:
+            plt.show()
+        else:
+            plt.close()
+        
+        # Return results
+        return {
+            'experimental_data': exp_data,
+            'simulation_data': sim_data,
+            'scale_factor': scale_factor,
+            'rmse': rmse_dict,
+            'metrics': metrics
+        }
+    
+    def _load_experimental_data(self, experimental_data_path, cell_line=None, seeding_density='10k'):
+        """
+        Load experimental data from Excel file with uncertainties.
+        
+        Args:
+            experimental_data_path: Path to Excel file
+            cell_line: Cell line identifier or sheet name. If None, uses 'Summary' sheet.
+            seeding_density: Seeding density ('10k', '5k', or '2.5k')
+        
+        Returns:
+            DataFrame with columns: 'Day', 'Total_Radius', 'Total_Radius_uncertainty',
+            'Inhibited_Radius', 'Inhibited_Radius_uncertainty', 'Necrotic_Radius', 'Necrotic_Radius_uncertainty'
+        """
+        try:
+            # Try to read the specified sheet (or 'Summary' if cell_line is None)
+            sheet_name = cell_line if cell_line else 'Summary'
+            
+            # First, try to read the sheet
+            try:
+                df = pd.read_excel(experimental_data_path, sheet_name=sheet_name, header=None)
+            except ValueError:
+                # Sheet not found, try 'Summary' as fallback
+                print(f"Warning: Sheet '{sheet_name}' not found, trying 'Summary' sheet")
+                df = pd.read_excel(experimental_data_path, sheet_name='Summary', header=None)
+            
+            # Extract data based on seeding density
+            # New structure with uncertainties:
+            # 10k: Day (B=col 1), Total_Radius (C=col 2), Total_Radius_uncertainty (D=col 3),
+            #      Inhibited_Radius (E=col 4), Inhibited_Radius_uncertainty (F=col 5),
+            #      Necrotic_Radius (G=col 6), Necrotic_Radius_uncertainty (H=col 7)
+            # 5k: Day (K=col 10), Total_Radius (L=col 11), Total_Radius_uncertainty (M=col 12),
+            #     Inhibited_Radius (N=col 13), Inhibited_Radius_uncertainty (O=col 14),
+            #     Necrotic_Radius (P=col 15), Necrotic_Radius_uncertainty (Q=col 16)
+            # 2.5k: Day (S=col 18), Total_Radius (T=col 19), Total_Radius_uncertainty (U=col 20),
+            #       Inhibited_Radius (V=col 21), Inhibited_Radius_uncertainty (W=col 22),
+            #       Necrotic_Radius (X=col 23), Necrotic_Radius_uncertainty (Y=col 24)
+            
+            if seeding_density == '10k':
+                # 10k: B9 to H18 (rows 9-18, 1-indexed = rows 8-17, 0-indexed)
+                # Column mapping (0-indexed): B=1, C=2, D=3, E=4, F=5, G=6, H=7
+                # B (col 1): Day
+                # C (col 2): Total_Radius
+                # D (col 3): Total_Radius_uncertainty
+                # E (col 4): Inhibited_Radius
+                # F (col 5): Inhibited_Radius_uncertainty
+                # G (col 6): Necrotic_Radius
+                # H (col 7): Necrotic_Radius_uncertainty
+                data = df.iloc[8:18, 1:8].copy()
+                # Verify column order matches Excel: B=Day, C=Total_Radius, D=Total_Radius_uncertainty, etc.
+                data.columns = ['Day', 'Total_Radius', 'Total_Radius_uncertainty', 
+                               'Inhibited_Radius', 'Inhibited_Radius_uncertainty',
+                               'Necrotic_Radius', 'Necrotic_Radius_uncertainty']
+                data = data.dropna(subset=['Day'])
+                data = data.apply(pd.to_numeric, errors='coerce')
+                # Debug: verify first row to catch column misalignment
+                if len(data) > 0:
+                    first_row = data.iloc[0]
+                    if first_row['Total_Radius_uncertainty'] > 10 * first_row['Total_Radius']:
+                        print(f"WARNING: Total_Radius_uncertainty ({first_row['Total_Radius_uncertainty']:.2f}) seems too large compared to Total_Radius ({first_row['Total_Radius']:.2f})")
+                        print(f"  This suggests a column mapping issue. Please verify Excel column order.")
+            elif seeding_density == '5k':
+                # 5k: K9 to Q18 (columns 10-16, rows 8-17, 0-indexed) = rows 9-18 (1-indexed)
+                data = df.iloc[8:18, 10:17].copy()
+                data.columns = ['Day', 'Total_Radius', 'Total_Radius_uncertainty', 
+                               'Inhibited_Radius', 'Inhibited_Radius_uncertainty',
+                               'Necrotic_Radius', 'Necrotic_Radius_uncertainty']
+                data = data.dropna(subset=['Day'])
+                data = data.apply(pd.to_numeric, errors='coerce')
+            elif seeding_density == '2.5k' or seeding_density == '2k':
+                # 2.5k: S9 to Y18 (columns 18-24, rows 8-17, 0-indexed) = rows 9-18 (1-indexed)
+                # Also support '2k' for backward compatibility
+                data = df.iloc[8:18, 18:25].copy()
+                data.columns = ['Day', 'Total_Radius', 'Total_Radius_uncertainty', 
+                               'Inhibited_Radius', 'Inhibited_Radius_uncertainty',
+                               'Necrotic_Radius', 'Necrotic_Radius_uncertainty']
+                data = data.dropna(subset=['Day'])
+                data = data.apply(pd.to_numeric, errors='coerce')
+            else:
+                print(f"Error: Unknown seeding density '{seeding_density}'. Use '10k', '5k', or '2.5k'")
+                return None
+            
+            return data.reset_index(drop=True)
+            
+        except Exception as e:
+            print(f"Error loading experimental data: {e}")
+            return None
+    
+    def _calculate_optimal_scale(self, sim_values, exp_values, exp_uncertainties=None):
+        """
+        Find optimal scaling factor to minimize weighted RMSE between simulation and experimental data.
+        Uses uncertainties if provided for weighted least squares.
+        
+        Args:
+            sim_values: Simulation values (numpy array)
+            exp_values: Experimental values (numpy array)
+            exp_uncertainties: Experimental uncertainties (standard deviations) (numpy array, optional)
+        
+        Returns:
+            Optimal scale factor
+        """
+        # Remove NaN values
+        if exp_uncertainties is not None:
+            mask = ~(np.isnan(sim_values) | np.isnan(exp_values) | np.isnan(exp_uncertainties) | (exp_uncertainties <= 0))
+        else:
+            mask = ~(np.isnan(sim_values) | np.isnan(exp_values))
+        
+        if mask.sum() < 2:
+            return 1.0
+        
+        sim_clean = sim_values[mask]
+        exp_clean = exp_values[mask]
+        
+        # If all simulation values are zero or very small, return a default scale
+        if np.max(np.abs(sim_clean)) < 1e-10:
+            return 1.0
+        
+        if exp_uncertainties is not None:
+            # Weighted least squares: minimize sum((exp - scale * sim)^2 / uncertainty^2)
+            # scale = sum(exp * sim / uncertainty^2) / sum(sim^2 / uncertainty^2)
+            unc_clean = exp_uncertainties[mask]
+            weights = 1.0 / (unc_clean ** 2)
+            scale = np.sum(exp_clean * sim_clean * weights) / np.sum(sim_clean ** 2 * weights)
+        else:
+            # Unweighted least squares: minimize ||exp - scale * sim||^2
+            # scale = (exp^T * sim) / (sim^T * sim)
+            scale = np.dot(exp_clean, sim_clean) / np.dot(sim_clean, sim_clean)
+        
+        # Ensure scale is positive and reasonable
+        if scale <= 0 or scale > 1e6:
+            # Fallback: use ratio of means
+            scale = np.mean(exp_clean) / np.mean(sim_clean) if np.mean(sim_clean) > 0 else 1.0
+            if scale <= 0 or scale > 1e6:
+                scale = 1.0
+        
+        return scale
+    
+    def _calculate_optimal_scale_all_metrics(self, sim_data, exp_data, metrics):
+        """
+        Find a single optimal scaling factor across all metrics simultaneously.
+        This ensures consistency - all radii for a simulation are scaled by the same factor.
+        Uses uncertainties if available for weighted least squares.
+        
+        Args:
+            sim_data: Simulation observables DataFrame
+            exp_data: Experimental data DataFrame (with uncertainty columns if available)
+            metrics: List of metric names to include
+        
+        Returns:
+            Optimal scale factor (single value for all metrics)
+        """
+        all_sim_values = []
+        all_exp_values = []
+        all_exp_uncertainties = []
+        
+        sim_steps = sim_data['Step'].values
+        exp_days = exp_data['Day'].values
+        
+        # Check if uncertainties are available
+        has_uncertainties = any(f'{metric}_uncertainty' in exp_data.columns for metric in metrics)
+        
+        # Collect matched points from all metrics
+        for metric in metrics:
+            if metric not in sim_data.columns or metric not in exp_data.columns:
+                continue
+            
+            sim_values = sim_data[metric].values
+            exp_values = exp_data[metric].values
+            
+            # Get uncertainties if available
+            exp_uncertainties_metric = None
+            if has_uncertainties:
+                unc_col = f'{metric}_uncertainty'
+                if unc_col in exp_data.columns:
+                    exp_uncertainties_metric = exp_data[unc_col].values
+            
+            # Find matched points (step = day - 1, so step 0 = day 1)
+            for exp_idx, exp_day in enumerate(exp_days):
+                if np.isnan(exp_values[exp_idx]):
+                    continue
+                
+                step_match_idx = np.where(sim_steps == (exp_day - 1))[0]
+                if len(step_match_idx) > 0:
+                    sim_val = sim_values[step_match_idx[0]]
+                    if not np.isnan(sim_val):
+                        all_sim_values.append(sim_val)
+                        all_exp_values.append(exp_values[exp_idx])
+                        if exp_uncertainties_metric is not None:
+                            all_exp_uncertainties.append(exp_uncertainties_metric[exp_idx])
+        
+        # Convert to arrays
+        all_sim_values = np.array(all_sim_values)
+        all_exp_values = np.array(all_exp_values)
+        
+        if len(all_sim_values) < 2:
+            return 1.0
+        
+        # Use uncertainties if available
+        if has_uncertainties and len(all_exp_uncertainties) == len(all_exp_values):
+            all_exp_uncertainties = np.array(all_exp_uncertainties)
+            return self._calculate_optimal_scale(all_sim_values, all_exp_values, all_exp_uncertainties)
+        else:
+            return self._calculate_optimal_scale(all_sim_values, all_exp_values)
+    
+    def _calculate_rmse_metric(self, sim_data, exp_data, metric, scale_factor):
+        """
+        Calculate weighted RMSE (chi-squared) for a specific metric.
+        Uses uncertainties if available for weighted RMSE calculation.
+        
+        Args:
+            sim_data: Simulation data DataFrame
+            exp_data: Experimental data DataFrame (with uncertainty columns if available)
+            metric: Metric name
+            scale_factor: Scaling factor to apply to simulation data
+        
+        Returns:
+            Weighted RMSE value (or regular RMSE if no uncertainties)
+        """
+        if metric not in sim_data.columns or metric not in exp_data.columns:
+            return np.inf
+        
+        sim_steps = sim_data['Step'].values
+        sim_values = sim_data[metric].values
+        exp_days = exp_data['Day'].values
+        exp_values = exp_data[metric].values
+        
+        # Get uncertainties if available
+        exp_uncertainties = None
+        unc_col = f'{metric}_uncertainty'
+        if unc_col in exp_data.columns:
+            exp_uncertainties = exp_data[unc_col].values
+        
+        # Find matched points
+        matched_sim_values = []
+        matched_exp_values = []
+        matched_exp_uncertainties = []
+        
+        for exp_idx, exp_day in enumerate(exp_days):
+            if np.isnan(exp_values[exp_idx]):
+                continue
+            # Step 0 corresponds to day 1 (step = day - 1)
+            step_match_idx = np.where(sim_steps == (exp_day - 1))[0]
+            if len(step_match_idx) > 0 and not np.isnan(sim_values[step_match_idx[0]]):
+                matched_sim_values.append(sim_values[step_match_idx[0]] * scale_factor)
+                matched_exp_values.append(exp_values[exp_idx])
+                if exp_uncertainties is not None:
+                    matched_exp_uncertainties.append(exp_uncertainties[exp_idx])
+        
+        if len(matched_sim_values) < 2:
+            return np.inf
+        
+        # Calculate weighted RMSE (chi-squared per degree of freedom)
+        matched_sim_values = np.array(matched_sim_values)
+        matched_exp_values = np.array(matched_exp_values)
+        
+        if exp_uncertainties is not None and len(matched_exp_uncertainties) == len(matched_sim_values):
+            matched_exp_uncertainties = np.array(matched_exp_uncertainties)
+            # Check if uncertainties are valid (non-NaN, non-zero, positive)
+            valid_unc_mask = ~np.isnan(matched_exp_uncertainties) & (matched_exp_uncertainties > 0)
+            
+            if np.sum(valid_unc_mask) >= 2:
+                # Use weighted RMSE for valid uncertainties
+                valid_sim = matched_sim_values[valid_unc_mask]
+                valid_exp = matched_exp_values[valid_unc_mask]
+                valid_unc = matched_exp_uncertainties[valid_unc_mask]
+                
+                # Weighted RMSE: sqrt(mean((exp - sim)^2 / uncertainty^2))
+                # This is the square root of reduced chi-squared
+                weights = 1.0 / (valid_unc ** 2)
+                # Normalize weights so they sum to N (number of points)
+                weights = weights * len(weights) / np.sum(weights)
+                weighted_squared_errors = ((valid_exp - valid_sim) ** 2) * weights
+                rmse = np.sqrt(np.mean(weighted_squared_errors))
+            else:
+                # Not enough valid uncertainties, fall back to regular RMSE
+                rmse = np.sqrt(np.mean((matched_exp_values - matched_sim_values)**2))
+        else:
+            # Regular RMSE
+            rmse = np.sqrt(np.mean((matched_exp_values - matched_sim_values)**2))
+        
+        return rmse

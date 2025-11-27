@@ -5,6 +5,7 @@ from matplotlib.patches import FancyArrowPatch
 from mpl_toolkits.mplot3d import proj3d
 import os
 from pathlib import Path
+from zipfile import BadZipFile
 
 class PhysicsFieldsPlotter:
     def __init__(self, field_manager):
@@ -698,21 +699,51 @@ class PhysicsFieldsPlotter:
                 self.labels = [f"Population_{i}" for i in range(data["metadata"]["num_populations"])]
                 self.M = data["metadata"]["num_populations"]
                 
+                # Keep reference to npz file to prevent it from being closed
+                # This is critical for memory-mapped arrays
+                if "_npz_file" in data:
+                    self._npz_file = data["_npz_file"]
+                else:
+                    self._npz_file = None
+                
                 # Load field data
-                self.phi_hat = data["field_data"]["phi_hat"][step_idx]
-                self.nutrient_field = data["field_data"]["nutrient_fields"][step_idx]
+                # For memory-mapped arrays, we need to ensure the file handle stays open
+                # Copy the data to avoid issues with closed file handles
+                try:
+                    phi_hat_data = data["field_data"]["phi_hat"]
+                    self.phi_hat = np.asarray(phi_hat_data[step_idx], copy=True)
+                except (OSError, ValueError, KeyError, BadZipFile) as e:
+                    raise RuntimeError(f"Failed to load phi_hat for step {step_idx}. "
+                                     f"Make sure the simulation data file is still open. Error: {e}")
+                
+                try:
+                    nutrient_data = data["field_data"]["nutrient_fields"]
+                    self.nutrient_field = np.asarray(nutrient_data[step_idx], copy=True)
+                except (OSError, ValueError, KeyError, BadZipFile) as e:
+                    raise RuntimeError(f"Failed to load nutrient_fields for step {step_idx}. "
+                                     f"Make sure the simulation data file is still open. Error: {e}")
                 
                 # Load physics data if available
-                if "physics_data" in data:
-                    physics = data["physics_data"][step_idx]
-                    self.pressure = physics["pressure"]
-                    self.velocity = physics["velocity"]
-                    self.energy_derivative = physics["energy_derivative"]
-                    self.mass_flux = physics["mass_flux"]
-                    # Load source terms if available
-                    if "source_terms" in physics:
-                        self.source_terms = physics["source_terms"]
-                    else:
+                if "physics_data" in data and data["physics_data"] is not None:
+                    try:
+                        physics = data["physics_data"][step_idx]
+                        # Copy physics data to ensure it's in memory and file handle stays open
+                        self.pressure = np.asarray(physics["pressure"], copy=True)
+                        self.velocity = np.asarray(physics["velocity"], copy=True)
+                        self.energy_derivative = np.asarray(physics["energy_derivative"], copy=True)
+                        self.mass_flux = np.asarray(physics["mass_flux"], copy=True)
+                        # Load source terms if available
+                        if "source_terms" in physics:
+                            self.source_terms = np.asarray(physics["source_terms"], copy=True)
+                        else:
+                            self.source_terms = np.zeros((self.M,) + self.grid)
+                    except (KeyError, IndexError, TypeError, OSError, ValueError, BadZipFile) as e:
+                        # If physics data access fails, initialize empty fields
+                        print(f"Warning: Could not load physics data for step {step_idx}: {e}")
+                        self.pressure = np.zeros(self.grid)
+                        self.velocity = np.zeros((3,) + self.grid)
+                        self.energy_derivative = np.zeros(self.grid)
+                        self.mass_flux = np.zeros((self.M, 3) + self.grid)
                         self.source_terms = np.zeros((self.M,) + self.grid)
                 else:
                     # Initialize empty physics fields

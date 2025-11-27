@@ -727,7 +727,7 @@ class CellFieldPlotter:
     
     def plot_3d_populations(self, simulation_data, step_idx=0, isosurface_level=0.1,
                            population_colors=None, output_dir=None, save_plot=False, 
-                           show_plot=True, figsize=(12, 8), alpha=0.6, title_suffix="",
+                           show_plot=True, figsize=(12, 8), alpha=1, title_suffix="",
                            population_indices=None, s=20, cutout_center=None, 
                            cutout_angle=90, cutout_azimuth_start=0, cutout_buffer=5.0):
         """
@@ -861,36 +861,86 @@ class CellFieldPlotter:
                 pop_values = population_density[pop_mask]
                 
                 # Apply wedge cutout: remove points within the specified angular range
-                # For tumor cells (first population), expand the cutout with a buffer to prevent edge occlusion
-                # For necrotic cells (later populations), use the original cutout so they're fully visible
-                buffer_rad = np.deg2rad(cutout_buffer) if i == 0 else 0.0  # Only apply buffer to first population
+                # For tumor cells (first population), use a LARGER cutout angle to reveal more interior
+                # For necrotic cells (later populations), NO CUTOUT - show full structure
+                is_last_population = (i == len(population_indices) - 1)
                 
-                # Calculate azimuthal angle relative to cutout center
-                dx_rel = pop_x - cutout_center[0]
-                dy_rel = pop_y - cutout_center[1]
-                
-                # Calculate azimuthal angle (in radians, 0 = +X axis, increasing counterclockwise)
-                azimuth_angles = np.arctan2(dy_rel, dx_rel)
-                # Normalize to [0, 2π]
-                azimuth_angles = np.mod(azimuth_angles, 2 * np.pi)
-                
-                # Normalize cutout angles to [0, 2π] and apply buffer for tumor cells
-                start_angle = np.mod(cutout_azimuth_start_rad - buffer_rad, 2 * np.pi)
-                end_angle = np.mod(cutout_azimuth_end_rad + buffer_rad, 2 * np.pi)
-                
-                # Create mask for points to keep (outside the cutout wedge + buffer)
-                if end_angle > start_angle:
-                    # Normal case: cutout doesn't cross 0/2π boundary
-                    keep_mask = ~((azimuth_angles >= start_angle) & (azimuth_angles <= end_angle))
+                if i == 0:
+                    # First population (tumor): larger cutout angle (1.5x) plus buffer
+                    pop_cutout_angle = cutout_angle * 1.5
+                    buffer_rad = np.deg2rad(cutout_buffer)
+                    print(f"    Using larger cutout angle for tumor: {pop_cutout_angle:.1f}° (base: {cutout_angle}°)")
+                    
+                    # Convert population-specific cutout angle to radians
+                    pop_cutout_angle_rad = np.deg2rad(pop_cutout_angle)
+                    pop_cutout_azimuth_end_rad = cutout_azimuth_start_rad + pop_cutout_angle_rad
+                    
+                    # Calculate azimuthal angle relative to cutout center
+                    dx_rel = pop_x - cutout_center[0]
+                    dy_rel = pop_y - cutout_center[1]
+                    
+                    # Calculate azimuthal angle (in radians, 0 = +X axis, increasing counterclockwise)
+                    azimuth_angles = np.arctan2(dy_rel, dx_rel)
+                    # Normalize to [0, 2π]
+                    azimuth_angles = np.mod(azimuth_angles, 2 * np.pi)
+                    
+                    # Normalize cutout angles to [0, 2π] and apply buffer for tumor cells
+                    start_angle = np.mod(cutout_azimuth_start_rad - buffer_rad, 2 * np.pi)
+                    end_angle = np.mod(pop_cutout_azimuth_end_rad + buffer_rad, 2 * np.pi)
+                    
+                    # Create mask for points to keep (outside the cutout wedge + buffer)
+                    if end_angle > start_angle:
+                        # Normal case: cutout doesn't cross 0/2π boundary
+                        keep_mask = ~((azimuth_angles >= start_angle) & (azimuth_angles <= end_angle))
+                    else:
+                        # Cutout crosses 0/2π boundary
+                        keep_mask = ~((azimuth_angles >= start_angle) | (azimuth_angles <= end_angle))
+                    
+                    # Apply cutout mask
+                    pop_x = pop_x[keep_mask]
+                    pop_y = pop_y[keep_mask]
+                    pop_z = pop_z[keep_mask]
+                    pop_values = pop_values[keep_mask]
+                elif is_last_population:
+                    # Last population (necrotic): NO CUTOUT - show full structure
+                    print(f"    No cutout for necrotic core - showing full structure")
+                    # Keep all points, no cutout applied
                 else:
-                    # Cutout crosses 0/2π boundary
-                    keep_mask = ~((azimuth_angles >= start_angle) | (azimuth_angles <= end_angle))
-                
-                # Apply cutout mask
-                pop_x = pop_x[keep_mask]
-                pop_y = pop_y[keep_mask]
-                pop_z = pop_z[keep_mask]
-                pop_values = pop_values[keep_mask]
+                    # Middle populations: apply standard cutout
+                    pop_cutout_angle = cutout_angle
+                    buffer_rad = 0.0
+                    print(f"    Using standard cutout angle: {pop_cutout_angle:.1f}°")
+                    
+                    # Convert population-specific cutout angle to radians
+                    pop_cutout_angle_rad = np.deg2rad(pop_cutout_angle)
+                    pop_cutout_azimuth_end_rad = cutout_azimuth_start_rad + pop_cutout_angle_rad
+                    
+                    # Calculate azimuthal angle relative to cutout center
+                    dx_rel = pop_x - cutout_center[0]
+                    dy_rel = pop_y - cutout_center[1]
+                    
+                    # Calculate azimuthal angle (in radians, 0 = +X axis, increasing counterclockwise)
+                    azimuth_angles = np.arctan2(dy_rel, dx_rel)
+                    # Normalize to [0, 2π]
+                    azimuth_angles = np.mod(azimuth_angles, 2 * np.pi)
+                    
+                    # Normalize cutout angles to [0, 2π]
+                    start_angle = np.mod(cutout_azimuth_start_rad, 2 * np.pi)
+                    end_angle = np.mod(pop_cutout_azimuth_end_rad, 2 * np.pi)
+                    
+                    # Create mask for points to keep (outside the cutout wedge)
+                    if end_angle > start_angle:
+                        # Normal case: cutout doesn't cross 0/2π boundary
+                        keep_mask = ~((azimuth_angles >= start_angle) & (azimuth_angles <= end_angle))
+                    else:
+                        # Cutout crosses 0/2π boundary
+                        keep_mask = ~((azimuth_angles >= start_angle) | (azimuth_angles <= end_angle))
+                    
+                    # Apply cutout mask
+                    pop_x = pop_x[keep_mask]
+                    pop_y = pop_y[keep_mask]
+                    pop_z = pop_z[keep_mask]
+                    pop_values = pop_values[keep_mask]
                 
                 # Store plot data for later (we'll plot in reverse order)
                 if len(pop_x) > 0:
@@ -922,7 +972,9 @@ class CellFieldPlotter:
                         'colors': colors_with_alpha,
                         'label': f'{self.labels[pop_idx]} (density ≥ {level:.2f})',
                         'color_name': color,
-                        'count': len(pop_x)
+                        'count': len(pop_x),
+                        'pop_idx': pop_idx,  # Store actual population index
+                        'list_idx': i  # Store position in population_indices list
                     })
                     
                     print(f"    ✅ Prepared: {len(pop_x)} voxels with color {color}")
@@ -931,41 +983,41 @@ class CellFieldPlotter:
             else:
                 print(f"  {self.labels[pop_idx]}: No voxels above threshold {level:.2f}")
         
-        # Plot in normal order, but make tumor cells VERY transparent and sample fewer points
+        # Plot in normal order, with tumor cells at moderate opacity for compact appearance
         # Plot necrotic cells last with full opacity so they're visible through the tumor
         print(f"\nPlotting populations...")
+        print(f"Total populations to plot: {len(plot_data_list)}")
         for idx, plot_data in enumerate(plot_data_list):
             adjusted_colors = plot_data['colors'].copy()
+            pop_idx = plot_data['pop_idx']
+            list_idx = plot_data['list_idx']
             
-            if idx == 0:
-                # First population (tumor): Make it VERY transparent and sample fewer points
-                # Reduce alpha to 10-15% of original to let necrotic show through
-                adjusted_colors[:, 3] = adjusted_colors[:, 3] * 0.15  # Very transparent (15% of original)
+            # Determine if this is a tumor population (earlier in the list) or necrotic (later)
+            # Use the position in the original population_indices list, not the plot_data_list index
+            # Typically, earlier populations (lower indices) are tumor, later are necrotic
+            is_tumor_population = (list_idx == 0) or (list_idx < len(population_indices) - 1)
+            
+            if is_tumor_population:
+                # Tumor populations: Use moderate opacity for compact, solid appearance
+                # Keep most of the original alpha to show a solid tumor layer
+                adjusted_colors[:, 3] = adjusted_colors[:, 3] * 0.7  # 70% of original for solid appearance
                 adjusted_s = s
                 
-                # Sample every 2nd point to reduce occlusion while keeping structure visible
-                sample_rate = 2
-                if len(plot_data['x']) > 1000:  # Only sample if we have many points
-                    plot_x = plot_data['x'][::sample_rate]
-                    plot_y = plot_data['y'][::sample_rate]
-                    plot_z = plot_data['z'][::sample_rate]
-                    plot_colors = adjusted_colors[::sample_rate]
-                    print(f"  Plotting {plot_data['color_name']} (tumor): Very transparent (15% alpha), sampling every {sample_rate} points ({len(plot_x)}/{len(plot_data['x'])} points)")
-                else:
-                    plot_x = plot_data['x']
-                    plot_y = plot_data['y']
-                    plot_z = plot_data['z']
-                    plot_colors = adjusted_colors
-                    print(f"  Plotting {plot_data['color_name']} (tumor): Very transparent (15% alpha)")
+                # Don't sample points - show all voxels for compact appearance
+                plot_x = plot_data['x']
+                plot_y = plot_data['y']
+                plot_z = plot_data['z']
+                plot_colors = adjusted_colors
+                print(f"  Plotting {plot_data['label']} (tumor, pop_idx={pop_idx}): Moderate opacity (70% alpha) for compact appearance, all {len(plot_x)} points")
             else:
-                # Later populations (necrotic): Full opacity and larger size - plot ALL points
+                # Necrotic populations (last in list): Full opacity and larger size - plot ALL points
                 adjusted_colors[:, 3] = 1.0  # Full opacity for necrotic
                 adjusted_s = s * 2.5  # 2.5x larger for necrotic cells
                 plot_x = plot_data['x']
                 plot_y = plot_data['y']
                 plot_z = plot_data['z']
                 plot_colors = adjusted_colors
-                print(f"  Plotting {plot_data['color_name']} (necrotic): Full opacity, larger size (2.5x)")
+                print(f"  Plotting {plot_data['label']} (necrotic, pop_idx={pop_idx}): Full opacity, larger size (2.5x), all {len(plot_x)} points")
             
             print(f"    {len(plot_x)} points, size={adjusted_s:.1f}, alpha_range=[{plot_colors[:, 3].min():.2f}, {plot_colors[:, 3].max():.2f}]")
             
@@ -982,7 +1034,14 @@ class CellFieldPlotter:
             print("\n⚠️  WARNING: No populations were plotted! Check thresholds and density ranges above.")
         
         # Print summary
-        print(f"\nSummary: {len(legend_handles)}/{len(population_indices)} populations plotted")
+        plotted_pop_indices = [plot_data['pop_idx'] for plot_data in plot_data_list]
+        print(f"\n{'='*60}")
+        print(f"Summary: {len(legend_handles)}/{len(population_indices)} populations plotted")
+        print(f"  Plotted: {plotted_pop_indices} - {[self.labels[i] for i in plotted_pop_indices]}")
+        skipped = [i for i in population_indices if i not in plotted_pop_indices]
+        if skipped:
+            print(f"  Skipped: {skipped} - {[self.labels[i] for i in skipped]} (no voxels above threshold or all removed by cutout)")
+        print(f"{'='*60}")
         
         # Set labels and title
         ax.set_xlabel('X (μm)')
