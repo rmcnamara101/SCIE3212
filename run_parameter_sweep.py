@@ -1227,23 +1227,24 @@ def local_refinement_sweep():
     # Define parameter offsets for local refinement
     # Using percentage offsets (0.1 = ±10% around base value)
     parameter_offsets_dict = {
-        'populations.Tumour.dynamics.mu': 0.2,
-        'populations.Tumour.dynamics.nutrient_consumption': 0.2,
-        'populations.Tumour.dynamics.lambda': 0.2,
-        'populations.Tumour.dynamics.nutrient_production': 0.2,
-        'populations.Tumour.dynamics.nutrient_threshold': 0.2,
-        'nutrient.dynamics.k': 0.2,
+        'populations.Tumour.dynamics.mu': 0.3,
+        'populations.Tumour.dynamics.lambda': 0.3,
+        'populations.Tumour.dynamics.nutrient_consumption': 0.3,
+        'populations.Tumour.dynamics.nutrient_threshold': 0.3,
+        'populations.Tumour.dynamics.nutrient_production': 0.3,
+        'populations.Necrotic.dynamics.beta_N': 0.3,
+        'nutrient.dynamics.k': 0.3,
     }
     
     # Option 1: Grid search with 5 points per parameter
     print("Running grid search refinement...")
     csv_files_grid, summary_grid = run_local_refinement_sweep(
-        base_config_path='/Users/rileymcnamara/CODE/2025/silicokit/laboratory/saved_simulations/983_10k_best/983_10k.yaml',
+        base_config_path='/Users/rileymcnamara/CODE/2025/silicokit/laboratory/parameter_sweeps/local_refinement_sweep_20251129_180026/config_run_004.yaml',
         parameter_offsets_dict=parameter_offsets_dict,
         total_steps=20,  # Short runs for testing
         save_interval=1,
         threshold=0.1,
-        num_points_per_param=4,  # 5 values per parameter
+        num_points_per_param=5,  # 5 values per parameter
         use_percentage=True,  # Use percentage offsets
         random_sampling=True  # Use grid search
     )
@@ -1301,21 +1302,23 @@ def main():
         'populations.Tumour.dynamics.nutrient_threshold': (0.1, 0.99),
         # Tumor cell nutrient consumption: random between 0.01 and 0.1
         'populations.Tumour.dynamics.nutrient_consumption': (0.1, 15),
+        # Tumor cell nutrient production: random between 0.0 and 15.0
+        'populations.Tumour.dynamics.nutrient_production': (0.0, 15.0),
         # Necrotic cell beta_N: random between 0.00001 and 0.1
         'populations.Necrotic.dynamics.beta_N': (0.00001, 0.00001),
         # Necrotic cell death rate: random between 0.1 and 30
         'populations.Necrotic.dynamics.mu': (10.0, 100.0),
         # Nutrient switch steepness: random between 0.01 and 1.0
-        'nutrient.dynamics.k': (5.0, 20.0),
+        'nutrient.dynamics.k': (5.0, 30.0),
     }
     
     # Number of random samples to generate
     num_samples = 10000
     
     # Run random parameter sweep
-    csv_files, summary = run_random_parameter_sweep(base_config_path=base_config_path,parameter_bounds_dict=parameter_bounds_dict,num_samples=num_samples,total_steps=20,)  # Short runs for testingsave_interval=1,threshold=0.1,random_seed=1000  # For reproducible results
+    #csv_files, summary = run_random_parameter_sweep(base_config_path=base_config_path,parameter_bounds_dict=parameter_bounds_dict,num_samples=num_samples,total_steps=20,)  # Short runs for testingsave_interval=1,threshold=0.1,random_seed=1000  # For reproducible results
 
-    #local_refinement_sweep()
+    local_refinement_sweep()
     #example_single_parameter_sweep()
 
 if __name__ == "__main__":

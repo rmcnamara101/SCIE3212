@@ -71,37 +71,30 @@ populations:
     label: Tumour Cells
     color: Green
     dynamics:
-      lambda: 150.43211102659673
-      mu: 66.53632591876234
-      mobility: 100000000.0
-      nutrient_threshold: 0.40183127655648273
-      nutrient_consumption: 12.636226081896721
-      nutrient_production: 0.0
+      lambda: 158.46662740097292
+      mu: 47.493734676628755
+      mobility: 30000000.0
+      nutrient_threshold: 0.24235106220046104
+      nutrient_consumption: 12.795074141192964
+      nutrient_production: 0.7599295119848142
   Necrotic:
     label: Necrotic Cells
     color: Black
     dynamics:
       lambda: 0.0
-      mu: 44.439284623878535
+      mu: 24.094230749542838
       mobility: 0.0
       nutrient_threshold: 0.0
       nutrient_consumption: 0.0
       nutrient_production: 0.0
-      beta_N: 7.0e-05
-
+      beta_N: 6.451587705520818e-05
 nutrient:
   name: General
   label: General nutrient
   color: Orange
   dynamics:
-    # Diffusion coefficient (simulation units: length²/time)
-    # This value is calibrated for reference scale factor α_ref = 0.08 μm/simulation_unit
-    # To maintain constant diffusion length when using different scaling factors:
-    #   diffusion_adjusted = 2000000 × (0.08 / α_actual)²
-    # Example: if α_actual = 0.07, then diffusion = 2000000 × (0.08/0.07)² ≈ 2,612,000
-    diffusion: 2000000 # float (20× increase from original 100000, calibrated for α_ref = 0.08)
-    k: 13.405550918957573
-     # float defining the steepness of the nutrient switch 
+    diffusion: 2000000
+    k: 16.684245525494084
 
 physics:
   adhesion_energy:

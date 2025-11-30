@@ -39,10 +39,17 @@ class SweepDataComparator:
         Initialize the comparator.
         
         Args:
-            sweep_dir: Path to parameter sweep directory containing CSV files
+            sweep_dir: Path to parameter sweep directory containing CSV files, or list of paths
             experimental_data_path: Path to experimental data Excel file
         """
-        self.sweep_dir = Path(sweep_dir)
+        # Handle both single path and list of paths
+        if isinstance(sweep_dir, (list, tuple)):
+            self.sweep_dirs = [Path(d) for d in sweep_dir]
+            # Use first directory as primary for output paths
+            self.sweep_dir = self.sweep_dirs[0]
+        else:
+            self.sweep_dir = Path(sweep_dir)
+            self.sweep_dirs = [self.sweep_dir]
         
         # Load experimental data
         if experimental_data_path is None:
@@ -126,131 +133,196 @@ class SweepDataComparator:
         return experimental_data
     
     def load_simulation_data(self):
-        """Load all simulation CSV files from the sweep directory."""
-        print(f"\nLoading simulation data from {self.sweep_dir}...")
+        """Load all simulation CSV files from the sweep directory(ies)."""
+        if len(self.sweep_dirs) > 1:
+            print(f"\nLoading simulation data from {len(self.sweep_dirs)} sweep directories...")
+        else:
+            print(f"\nLoading simulation data from {self.sweep_dir}...")
         
-        # Find all CSV files
-        csv_files = sorted(self.sweep_dir.glob("observables_run_*.csv"))
+        total_csv_files = 0
         
-        # Fallback: check for observables_data.csv (single run or old format)
-        if len(csv_files) == 0:
-            csv_files = sorted(self.sweep_dir.glob("observables_data.csv"))
+        # Process each sweep directory
+        for sweep_idx, sweep_dir in enumerate(self.sweep_dirs):
+            if len(self.sweep_dirs) > 1:
+                print(f"\n  Processing directory {sweep_idx + 1}/{len(self.sweep_dirs)}: {sweep_dir}")
+            
+            # Find all CSV files
+            csv_files = sorted(sweep_dir.glob("observables_run_*.csv"))
+            
+            # Fallback: check for observables_data.csv (single run or old format)
             if len(csv_files) == 0:
-                print(f"Warning: No CSV files found in {self.sweep_dir}")
-                return
-        
-        print(f"Found {len(csv_files)} CSV files")
-        
-        for csv_file in csv_files:
-            try:
-                # Extract run ID from filename
-                if 'run_' in csv_file.stem:
-                    run_id = int(csv_file.stem.split('_')[-1])
-                else:
-                    run_id = len(self.simulation_data) + 1
-                
-                # Load CSV file - handle new format with metadata at top
-                # First, find where observables data starts
-                with open(csv_file, 'r') as f:
-                    lines = f.readlines()
-                
-                # Find where observables data starts
-                obs_start_idx = None
-                for i, line in enumerate(lines):
-                    if line.strip().startswith('# Observables Data'):
-                        # Find the next non-comment, non-blank line (should be header)
-                        for j in range(i+1, len(lines)):
-                            if lines[j].strip() and not lines[j].strip().startswith('#'):
-                                obs_start_idx = j
-                                break
-                        break
-                
-                if obs_start_idx is None:
-                    # Fallback: try reading normally (pandas will skip comment lines)
-                    try:
-                        df = pd.read_csv(csv_file, comment='#')
-                    except Exception:
-                        print(f"Warning: Could not parse {csv_file}")
-                        continue
-                else:
-                    df = pd.read_csv(csv_file, skiprows=obs_start_idx)
-                
-                # Extract observables (Step, Time, Total_Radius, Inhibited_Radius, Necrotic_Radius)
-                obs_cols = ['Step', 'Time', 'Total_Radius', 'Inhibited_Radius', 'Necrotic_Radius']
-                available_cols = [col for col in obs_cols if col in df.columns]
-                
-                if 'Step' not in df.columns:
-                    print(f"Warning: No 'Step' column in {csv_file}")
+                csv_files = sorted(sweep_dir.glob("observables_data.csv"))
+                if len(csv_files) == 0:
+                    if len(self.sweep_dirs) == 1:
+                        print(f"Warning: No CSV files found in {sweep_dir}")
+                    else:
+                        print(f"  Warning: No CSV files found in {sweep_dir}")
                     continue
-                
-                # Create observables dataframe
-                observables_df = df[available_cols].copy()
-                
-                # Extract config from metadata section (new format)
-                config = {}
-                varied_params = {}  # Separate varied parameters
+            
+            if len(self.sweep_dirs) > 1:
+                print(f"  Found {len(csv_files)} CSV files")
+            else:
+                print(f"Found {len(csv_files)} CSV files")
+            
+            total_csv_files += len(csv_files)
+            
+            # Generate a unique prefix for this sweep directory to avoid run ID conflicts
+            # Use the directory name as prefix
+            sweep_prefix = sweep_dir.name if len(self.sweep_dirs) > 1 else None
+            
+            for csv_file in csv_files:
                 try:
-                    # Look for config parameters in metadata section
-                    in_param_section = False
-                    in_config_section = False
-                    for line in lines:
-                        line_stripped = line.strip()
-                        
-                        if line_stripped.startswith('# Varied Parameters'):
-                            in_param_section = True
-                            in_config_section = False
-                            continue
-                        elif line_stripped.startswith('# Configuration Parameters'):
-                            in_param_section = False
-                            in_config_section = True
-                            continue
-                        elif line_stripped.startswith('# Observables Data'):
+                    # Extract run ID from filename
+                    if 'run_' in csv_file.stem:
+                        base_run_id = int(csv_file.stem.split('_')[-1])
+                    else:
+                        base_run_id = len(self.simulation_data) + 1
+                    
+                    # Create unique run ID: use prefix if multiple directories, otherwise use base ID
+                    if sweep_prefix:
+                        # Create a tuple (sweep_idx, base_run_id) as the run_id for uniqueness
+                        # Or use a string format that's easy to work with
+                        run_id = f"{sweep_prefix}_run_{base_run_id:03d}"
+                    else:
+                        run_id = base_run_id
+                    
+                    # Load CSV file - handle new format with metadata at top
+                    # First, find where observables data starts
+                    with open(csv_file, 'r') as f:
+                        lines = f.readlines()
+                    
+                    # Find where observables data starts
+                    obs_start_idx = None
+                    for i, line in enumerate(lines):
+                        if line.strip().startswith('# Observables Data'):
+                            # Find the next non-comment, non-blank line (should be header)
+                            for j in range(i+1, len(lines)):
+                                if lines[j].strip() and not lines[j].strip().startswith('#'):
+                                    obs_start_idx = j
+                                    break
                             break
-                        elif in_param_section or in_config_section:
-                            # Parse CSV-style lines: key, value
-                            if ',' in line_stripped and not line_stripped.startswith('#'):
-                                parts = line_stripped.split(',', 1)  # Split only on first comma
-                                if len(parts) >= 2:
-                                    key = parts[0].strip()
-                                    value_str = parts[1].strip()
-                                    
-                                    # Try to convert to numeric if possible
-                                    try:
-                                        # Try float first
-                                        value = float(value_str)
-                                        # If it's an integer, convert to int
-                                        if value.is_integer():
-                                            value = int(value)
-                                    except ValueError:
-                                        # Keep as string if not numeric
-                                        value = value_str
-                                    
-                                    if in_param_section:
-                                        varied_params[key] = value
-                                    elif in_config_section:
-                                        config[key] = value
                     
-                    # Store both varied params and config, with varied params taking precedence
-                    # This allows easy access to all parameters
-                    all_params = {**config, **varied_params}
-                    config = all_params
+                    if obs_start_idx is None:
+                        # Fallback: try reading normally (pandas will skip comment lines)
+                        try:
+                            df = pd.read_csv(csv_file, comment='#')
+                        except Exception:
+                            print(f"Warning: Could not parse {csv_file}")
+                            continue
+                    else:
+                        df = pd.read_csv(csv_file, skiprows=obs_start_idx)
                     
+                    # Extract observables (Step, Time, Total_Radius, Inhibited_Radius, Necrotic_Radius)
+                    obs_cols = ['Step', 'Time', 'Total_Radius', 'Inhibited_Radius', 'Necrotic_Radius']
+                    available_cols = [col for col in obs_cols if col in df.columns]
+                    
+                    if 'Step' not in df.columns:
+                        print(f"Warning: No 'Step' column in {csv_file}")
+                        continue
+                    
+                    # Create observables dataframe
+                    observables_df = df[available_cols].copy()
+                    
+                    # Extract config from metadata section (new format)
+                    config = {}
+                    varied_params = {}  # Separate varied parameters
+                    try:
+                        # Look for config parameters in metadata section
+                        in_param_section = False
+                        in_config_section = False
+                        for line in lines:
+                            line_stripped = line.strip()
+                            
+                            if line_stripped.startswith('# Varied Parameters'):
+                                in_param_section = True
+                                in_config_section = False
+                                continue
+                            elif line_stripped.startswith('# Configuration Parameters'):
+                                in_param_section = False
+                                in_config_section = True
+                                continue
+                            elif line_stripped.startswith('# Observables Data'):
+                                break
+                            elif in_param_section or in_config_section:
+                                # Parse CSV-style lines: key, value
+                                if ',' in line_stripped and not line_stripped.startswith('#'):
+                                    parts = line_stripped.split(',', 1)  # Split only on first comma
+                                    if len(parts) >= 2:
+                                        key = parts[0].strip()
+                                        value_str = parts[1].strip()
+                                        
+                                        # Try to convert to numeric if possible
+                                        try:
+                                            # Try float first
+                                            value = float(value_str)
+                                            # If it's an integer, convert to int
+                                            if value.is_integer():
+                                                value = int(value)
+                                        except ValueError:
+                                            # Keep as string if not numeric
+                                            value = value_str
+                                        
+                                        if in_param_section:
+                                            varied_params[key] = value
+                                        elif in_config_section:
+                                            config[key] = value
+                        
+                        # Store both varied params and config, with varied params taking precedence
+                        # This allows easy access to all parameters
+                        all_params = {**config, **varied_params}
+                        config = all_params
+                        
+                    except Exception as e:
+                        print(f"Warning: Could not parse metadata from {csv_file}: {e}")
+                        pass  # If we can't parse metadata, continue without it
+                    
+                    # Store data
+                    self.simulation_data[run_id] = {
+                        'observables': observables_df,
+                        'file_path': csv_file,
+                        'config': config if config else {},
+                        'varied_params': varied_params if varied_params else {},
+                        'sweep_dir': sweep_dir  # Store which sweep directory this came from
+                    }
+                        
                 except Exception as e:
-                    print(f"Warning: Could not parse metadata from {csv_file}: {e}")
-                    pass  # If we can't parse metadata, continue without it
-                
-                # Store data
-                self.simulation_data[run_id] = {
-                    'observables': observables_df,
-                    'file_path': csv_file,
-                    'config': config if config else {},
-                    'varied_params': varied_params if varied_params else {}
-                }
-                    
-            except Exception as e:
-                print(f"Error loading {csv_file}: {e}")
+                    print(f"Error loading {csv_file}: {e}")
         
-        print(f"Successfully loaded {len(self.simulation_data)} simulation runs")
+        if len(self.sweep_dirs) > 1:
+            print(f"\nSuccessfully loaded {len(self.simulation_data)} simulation runs from {len(self.sweep_dirs)} directories")
+        else:
+            print(f"Successfully loaded {len(self.simulation_data)} simulation runs")
+    
+    def _format_run_id(self, run_id):
+        """
+        Format run_id for display (handles both int and string run_ids).
+        
+        Args:
+            run_id: Run ID (int or string)
+        
+        Returns:
+            Formatted string for display
+        """
+        if isinstance(run_id, str):
+            return run_id
+        else:
+            return f"run_{run_id:03d}"
+    
+    def _format_run_id_filename(self, run_id):
+        """
+        Format run_id for use in filenames (handles both int and string run_ids).
+        
+        Args:
+            run_id: Run ID (int or string)
+        
+        Returns:
+            Formatted string safe for filenames
+        """
+        if isinstance(run_id, str):
+            # Replace any characters that might be problematic in filenames
+            return run_id.replace('/', '_').replace('\\', '_').replace(' ', '_')
+        else:
+            return f"{run_id:03d}"
     
     def calculate_optimal_scale(self, sim_values, exp_values, exp_uncertainties=None):
         """
@@ -677,7 +749,8 @@ class SweepDataComparator:
             
             plot_idx += 1
         
-        fig.suptitle(f'Run {run_id} vs {density} Experimental Data', fontsize=14, fontweight='bold')
+        run_id_display = self._format_run_id(run_id)
+        fig.suptitle(f'Run {run_id_display} vs {density} Experimental Data', fontsize=14, fontweight='bold')
         plt.tight_layout()
         
         if output_dir is None:
@@ -687,7 +760,8 @@ class SweepDataComparator:
         output_dir.mkdir(parents=True, exist_ok=True)
         
         if save_plot:
-            filename = f"best_match_run_{run_id:03d}_{density}.png"
+            run_id_filename = self._format_run_id_filename(run_id)
+            filename = f"best_match_{run_id_filename}_{density}.png"
             filepath = output_dir / filename
             plt.savefig(filepath, dpi=300, bbox_inches='tight')
             print(f"Saved plot to {filepath}")
@@ -707,14 +781,15 @@ class SweepDataComparator:
         """
         best_matches = self.find_best_matches(density, top_n)
         
-        print(f"\n{'='*80}")
+        print(f"\n{'='*120}")
         print(f"Top {len(best_matches)} matches for {density} seeding density:")
-        print(f"{'='*80}")
-        print(f"{'Rank':<6} {'Run ID':<8} {'Combined RMSE':<15} {'Scale':<10} {'Total_Radius':<20} {'Inhibited_Radius':<20} {'Necrotic_Radius':<20}")
-        print(f"{'-'*80}")
+        print(f"{'='*120}")
+        print(f"{'Rank':<6} {'Run ID':<30} {'Combined RMSE':<15} {'Scale':<10} {'Total_Radius':<20} {'Inhibited_Radius':<20} {'Necrotic_Radius':<20}")
+        print(f"{'-'*120}")
         
         for rank, match in enumerate(best_matches, 1):
             run_id = match['run_id']
+            run_id_display = self._format_run_id(run_id)
             combined_rmse = match['combined_rmse']
             scale = match.get('scale', 'N/A')
             
@@ -727,7 +802,7 @@ class SweepDataComparator:
                     metrics_str.append("N/A")
             
             scale_str = f"{scale:.2f}" if isinstance(scale, (int, float)) else str(scale)
-            print(f"{rank:<6} {run_id:<8} {combined_rmse:<15.2f} {scale_str:<10} {metrics_str[0]:<20} {metrics_str[1]:<20} {metrics_str[2]:<20}")
+            print(f"{rank:<6} {run_id_display:<30} {combined_rmse:<15.2f} {scale_str:<10} {metrics_str[0]:<20} {metrics_str[1]:<20} {metrics_str[2]:<20}")
         
         print(f"{'='*80}\n")
     
@@ -824,7 +899,8 @@ class SweepDataComparator:
                     alpha = 0.9
                     linewidth = 2.5
                     zorder = 50
-                    label = f'Best Match (Run {run_id})'
+                    run_id_display = self._format_run_id(run_id)
+                    label = f'Best Match (Run {run_id_display})'
                 else:
                     # Calculate single scale for this run across all metrics
                     scale = self.calculate_optimal_scale_all_metrics(sim_data, exp_data, metrics)
@@ -1658,8 +1734,8 @@ def main():
     import argparse
     
     parser = argparse.ArgumentParser(description='Compare parameter sweep results to experimental data')
-    parser.add_argument('--sweep-dir', type=str, default=None,
-                       help='Path to parameter sweep directory')
+    parser.add_argument('--sweep-dir', type=str, default=None, nargs='+',
+                       help='Path(s) to parameter sweep directory(ies). Can specify multiple directories to analyze together.')
     parser.add_argument('--experimental-data', type=str, default=None,
                        help='Path to experimental data Excel file')
     parser.add_argument('--densities', type=str, nargs='+', default=['10k', '5k', '2.5k'],
@@ -1686,8 +1762,29 @@ def main():
     # CONFIGURATION VARIABLES - Modify these to change analysis behavior
     # ============================================================================
     
-    # Path to parameter sweep directory
-    SWEEP_DIR = args.sweep_dir or "/Users/rileymcnamara/CODE/2025/silicokit/laboratory/parameter_sweeps/random_parameter_sweep_20251126_225253"
+    # Path(s) to parameter sweep directory(ies)
+    # Can be a single path (string) or a list of paths to analyze multiple sweeps together
+    if args.sweep_dir:
+        SWEEP_DIR = args.sweep_dir if isinstance(args.sweep_dir, list) else [args.sweep_dir]
+    else:
+        # Default: single directory (can be changed to a list to analyze multiple sweeps)
+        SWEEP_DIR = ["/Users/rileymcnamara/CODE/2025/silicokit/laboratory/parameter_sweeps/random_parameter_sweep_20251127_220513",
+        "/Users/rileymcnamara/CODE/2025/silicokit/laboratory/parameter_sweeps/random_parameter_sweep_20251125_214810",
+        "/Users/rileymcnamara/CODE/2025/silicokit/laboratory/parameter_sweeps/random_parameter_sweep_20251125_195936",
+        "/Users/rileymcnamara/CODE/2025/silicokit/laboratory/parameter_sweeps/random_parameter_sweep_20251125_214810",
+        "/Users/rileymcnamara/CODE/2025/silicokit/laboratory/parameter_sweeps/random_parameter_sweep_20251126_225253",
+        "/Users/rileymcnamara/CODE/2025/silicokit/laboratory/parameter_sweeps/local_refinement_sweep_20251128_141213",
+        "/Users/rileymcnamara/CODE/2025/silicokit/laboratory/parameter_sweeps/local_refinement_sweep_20251128_200026",
+        "/Users/rileymcnamara/CODE/2025/silicokit/laboratory/parameter_sweeps/local_refinement_sweep_20251128_153714",
+        "/Users/rileymcnamara/CODE/2025/silicokit/laboratory/parameter_sweeps/local_refinement_sweep_20251128_213646",
+        "/Users/rileymcnamara/CODE/2025/silicokit/laboratory/parameter_sweeps/random_parameter_sweep_20251128_225125",
+        "/Users/rileymcnamara/CODE/2025/silicokit/laboratory/parameter_sweeps/random_parameter_sweep_20251129_140711",
+        "/Users/rileymcnamara/CODE/2025/silicokit/laboratory/parameter_sweeps/local_refinement_sweep_20251129_180026",
+        "/Users/rileymcnamara/CODE/2025/silicokit/laboratory/parameter_sweeps/local_refinement_sweep_20251129_185853",
+        "/Users/rileymcnamara/CODE/2025/silicokit/laboratory/parameter_sweeps/local_refinement_sweep_20251129_211415"
+        ]
+        # Example for multiple directories:
+        #SWEEP_DIR = ["/Users/rileymcnamara/CODE/2025/silicokit/laboratory/parameter_sweeps/local_refinement_sweep_20251128_200026"]
     
     # Path to experimental data (None = use default)
     EXPERIMENTAL_DATA_PATH = args.experimental_data
@@ -1833,7 +1930,8 @@ def main():
     
     # Export results to CSV if requested
     if hasattr(args, 'export_csv') and args.export_csv:
-        export_results_to_csv(comparator, all_results, SWEEP_DIR)
+        # Use the primary sweep directory for output
+        export_results_to_csv(comparator, all_results, comparator.sweep_dir)
     
     # Suggest parameter bounds if enabled
     if SUGGEST_BOUNDS:
